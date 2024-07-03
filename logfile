@@ -1,0 +1,127 @@
+2024-06-27 10:34:50.275 CEST [1604143] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 10:34:50.278 CEST [1604143] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 10:34:50.299 CEST [1604145] LOG:  database system was shut down at 2024-06-27 10:01:16 CEST
+2024-06-27 10:34:50.299 CEST [1604146] FATAL:  unrecognized process type: 7
+2024-06-27 10:34:50.300 CEST [1604143] LOG:  pool manager process (PID 1604146) exited with exit code 1
+2024-06-27 10:34:50.300 CEST [1604143] LOG:  terminating any other active server processes
+2024-06-27 10:34:50.302 CEST [1604143] LOG:  startup process (PID 1604145) exited with exit code 2
+2024-06-27 10:34:50.302 CEST [1604143] LOG:  aborting startup due to startup process failure
+2024-06-27 10:34:50.305 CEST [1604143] LOG:  database system is shut down
+2024-06-27 10:40:41.654 CEST [1606018] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 10:40:41.657 CEST [1606018] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 10:40:41.675 CEST [1606021] FATAL:  unrecognized process type: 7
+2024-06-27 10:40:41.675 CEST [1606020] LOG:  database system was interrupted; last known up at 2024-06-27 10:34:50 CEST
+2024-06-27 10:40:41.675 CEST [1606018] LOG:  pool manager process (PID 1606021) exited with exit code 1
+2024-06-27 10:40:41.675 CEST [1606018] LOG:  terminating any other active server processes
+2024-06-27 10:40:41.676 CEST [1606018] LOG:  startup process (PID 1606020) exited with exit code 2
+2024-06-27 10:40:41.676 CEST [1606018] LOG:  aborting startup due to startup process failure
+2024-06-27 10:40:41.678 CEST [1606018] LOG:  database system is shut down
+2024-06-27 10:47:51.230 CEST [1608228] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 10:47:51.233 CEST [1608228] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 10:47:51.255 CEST [1608230] LOG:  database system was interrupted; last known up at 2024-06-27 10:34:50 CEST
+2024-06-27 10:47:51.256 CEST [1608231] FATAL:  setsid() failed: Operation not permitted
+2024-06-27 10:47:51.256 CEST [1608228] LOG:  pool manager process (PID 1608231) exited with exit code 1
+2024-06-27 10:47:51.256 CEST [1608228] LOG:  terminating any other active server processes
+2024-06-27 10:47:51.257 CEST [1608228] LOG:  startup process (PID 1608230) exited with exit code 2
+2024-06-27 10:47:51.257 CEST [1608228] LOG:  aborting startup due to startup process failure
+2024-06-27 10:47:51.259 CEST [1608228] LOG:  database system is shut down
+2024-06-27 11:06:15.318 CEST [1612623] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 11:06:15.321 CEST [1612623] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 11:06:15.341 CEST [1612625] WARNING:  DEBUG
+2024-06-27 11:06:15.341 CEST [1612626] WARNING:  DEBUG
+2024-06-27 11:06:15.341 CEST [1612625] LOG:  database system was interrupted; last known up at 2024-06-27 10:34:50 CEST
+2024-06-27 11:06:15.342 CEST [1612626] FATAL:  setsid() failed: Operation not permitted
+2024-06-27 11:06:15.342 CEST [1612623] LOG:  pool manager process (PID 1612626) exited with exit code 1
+2024-06-27 11:06:15.342 CEST [1612623] LOG:  terminating any other active server processes
+2024-06-27 11:06:15.343 CEST [1612623] LOG:  startup process (PID 1612625) exited with exit code 2
+2024-06-27 11:06:15.343 CEST [1612623] LOG:  aborting startup due to startup process failure
+2024-06-27 11:06:15.345 CEST [1612623] LOG:  database system is shut down
+2024-06-27 11:07:42.743 CEST [1613901] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 11:07:42.746 CEST [1613901] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 11:07:42.764 CEST [1613903] LOG:  database system was interrupted; last known up at 2024-06-27 10:34:50 CEST
+2024-06-27 11:07:42.764 CEST [1613904] WARNING:  DEBUG
+2024-06-27 11:07:42.764 CEST [1613904] FATAL:  setsid() failed: Operation not permitted
+2024-06-27 11:07:42.765 CEST [1613901] LOG:  pool manager process (PID 1613904) exited with exit code 1
+2024-06-27 11:07:42.765 CEST [1613901] LOG:  terminating any other active server processes
+2024-06-27 11:07:42.766 CEST [1613901] LOG:  startup process (PID 1613903) exited with exit code 2
+2024-06-27 11:07:42.766 CEST [1613901] LOG:  aborting startup due to startup process failure
+2024-06-27 11:07:42.768 CEST [1613901] LOG:  database system is shut down
+2024-06-27 11:11:13.388 CEST [1615832] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 11:11:13.392 CEST [1615832] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 11:11:13.411 CEST [1615834] LOG:  database system was interrupted; last known up at 2024-06-27 10:34:50 CEST
+2024-06-27 11:11:13.506 CEST [1615834] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-06-27 11:11:13.509 CEST [1615834] LOG:  invalid record length at 0/1624438: wanted 24, got 0
+2024-06-27 11:11:13.509 CEST [1615834] LOG:  redo is not required
+2024-06-27 11:11:13.522 CEST [1615832] LOG:  database system is ready to accept connections
+2024-06-27 11:11:16.230 CEST [1615876] FATAL:  role "mmuser" does not exist
+2024-06-27 11:11:26.237 CEST [1615913] FATAL:  role "mmuser" does not exist
+2024-06-27 11:11:36.254 CEST [1615932] FATAL:  role "mmuser" does not exist
+2024-06-27 11:11:46.260 CEST [1615936] FATAL:  role "mmuser" does not exist
+2024-06-27 11:11:56.269 CEST [1615941] FATAL:  role "mmuser" does not exist
+2024-06-27 11:12:06.798 CEST [1615968] FATAL:  role "mmuser" does not exist
+2024-06-27 11:12:13.606 CEST [1615832] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:12:13.607 CEST [1615832] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:12:13.607 CEST [1615832] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:12:13.607 CEST [1615832] FATAL:  Can not register Coordinator on GTM
+2024-06-27 11:12:13.607 CEST [1615832] LOG:  database system is shut down
+2024-06-27 11:12:13.608 CEST [1615926] FATAL:  terminating connection due to unexpected postmaster exit
+2024-06-27 11:12:51.731 CEST [1616540] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 11:12:51.734 CEST [1616540] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 11:12:51.754 CEST [1616542] LOG:  database system was interrupted; last known up at 2024-06-27 11:11:13 CEST
+2024-06-27 11:12:51.843 CEST [1616542] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-06-27 11:12:51.846 CEST [1616542] LOG:  redo starts at 0/16244A8
+2024-06-27 11:12:51.847 CEST [1616542] LOG:  invalid record length at 0/16244E0: wanted 24, got 0
+2024-06-27 11:12:51.847 CEST [1616542] LOG:  redo done at 0/16244A8
+2024-06-27 11:12:51.864 CEST [1616540] LOG:  database system is ready to accept connections
+2024-06-27 11:12:57.270 CEST [1616588] FATAL:  role "mmuser" does not exist
+2024-06-27 11:13:07.273 CEST [1616598] FATAL:  role "mmuser" does not exist
+2024-06-27 11:13:17.282 CEST [1617052] FATAL:  role "mmuser" does not exist
+2024-06-27 11:13:27.292 CEST [1617137] FATAL:  role "mmuser" does not exist
+2024-06-27 11:13:37.300 CEST [1617145] FATAL:  role "mmuser" does not exist
+2024-06-27 11:13:47.728 CEST [1617177] FATAL:  role "mmuser" does not exist
+2024-06-27 11:13:51.913 CEST [1616540] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:13:51.913 CEST [1616540] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:13:51.913 CEST [1616540] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:13:51.913 CEST [1616540] FATAL:  Can not register Coordinator on GTM
+2024-06-27 11:13:51.914 CEST [1616540] LOG:  database system is shut down
+2024-06-27 11:13:51.915 CEST [1616595] FATAL:  terminating connection due to unexpected postmaster exit
+2024-06-27 11:17:34.744 CEST [1617691] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 11:17:34.748 CEST [1617691] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 11:17:34.766 CEST [1617693] LOG:  database system was interrupted; last known up at 2024-06-27 11:12:51 CEST
+2024-06-27 11:17:34.844 CEST [1617693] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-06-27 11:17:34.847 CEST [1617693] LOG:  redo starts at 0/1624550
+2024-06-27 11:17:34.848 CEST [1617693] LOG:  invalid record length at 0/1624588: wanted 24, got 0
+2024-06-27 11:17:34.848 CEST [1617693] LOG:  redo done at 0/1624550
+2024-06-27 11:17:34.863 CEST [1617691] LOG:  database system is ready to accept connections
+2024-06-27 11:17:39.788 CEST [1617717] FATAL:  role "mmuser" does not exist
+2024-06-27 11:17:49.797 CEST [1617722] FATAL:  role "mmuser" does not exist
+2024-06-27 11:18:00.249 CEST [1617750] FATAL:  role "mmuser" does not exist
+2024-06-27 11:18:10.260 CEST [1617758] FATAL:  role "mmuser" does not exist
+2024-06-27 11:18:20.270 CEST [1617770] FATAL:  role "mmuser" does not exist
+2024-06-27 11:18:30.279 CEST [1617778] FATAL:  role "mmuser" does not exist
+2024-06-27 11:18:34.913 CEST [1617691] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:18:34.913 CEST [1617691] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:18:34.913 CEST [1617691] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:18:34.913 CEST [1617691] FATAL:  Can not register Datanode on GTM
+2024-06-27 11:18:34.914 CEST [1617691] LOG:  database system is shut down
+2024-06-27 11:18:34.915 CEST [1617716] FATAL:  terminating connection due to unexpected postmaster exit
+2024-06-27 11:23:21.994 CEST [1619043] LOG:  listening on IPv4 address "127.0.0.1", port 5432
+2024-06-27 11:23:21.999 CEST [1619043] LOG:  listening on Unix socket "/tmp/.s.PGSQL.5432"
+2024-06-27 11:23:22.020 CEST [1619045] LOG:  database system was interrupted; last known up at 2024-06-27 11:17:34 CEST
+2024-06-27 11:23:22.091 CEST [1619045] LOG:  database system was not properly shut down; automatic recovery in progress
+2024-06-27 11:23:22.094 CEST [1619045] LOG:  redo starts at 0/16245F8
+2024-06-27 11:23:22.094 CEST [1619045] LOG:  invalid record length at 0/1624630: wanted 24, got 0
+2024-06-27 11:23:22.094 CEST [1619045] LOG:  redo done at 0/16245F8
+2024-06-27 11:23:22.107 CEST [1619043] LOG:  database system is ready to accept connections
+2024-06-27 11:23:23.235 CEST [1619060] FATAL:  role "mmuser" does not exist
+2024-06-27 11:23:33.244 CEST [1619081] FATAL:  role "mmuser" does not exist
+2024-06-27 11:23:43.254 CEST [1619088] FATAL:  role "mmuser" does not exist
+2024-06-27 11:23:53.762 CEST [1619114] FATAL:  role "mmuser" does not exist
+2024-06-27 11:24:03.769 CEST [1619119] FATAL:  role "mmuser" does not exist
+2024-06-27 11:24:13.779 CEST [1619125] FATAL:  role "mmuser" does not exist
+2024-06-27 11:24:22.182 CEST [1619043] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:24:22.182 CEST [1619043] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:24:22.182 CEST [1619043] WARNING:  can not connect to GTM: Connection refused
+2024-06-27 11:24:22.182 CEST [1619043] FATAL:  Can not register Datanode on GTM
+2024-06-27 11:24:22.183 CEST [1619043] LOG:  database system is shut down
+2024-06-27 11:24:22.184 CEST [1619069] FATAL:  terminating connection due to unexpected postmaster exit

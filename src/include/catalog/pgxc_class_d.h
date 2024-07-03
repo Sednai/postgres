@@ -1,0 +1,1 @@
+/xc/git/postgres/src/backend/catalog/pgxc_class_d.h
