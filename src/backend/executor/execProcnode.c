@@ -115,6 +115,9 @@
 #include "executor/nodeWorktablescan.h"
 #include "nodes/nodeFuncs.h"
 #include "miscadmin.h"
+#ifdef PGXC
+#include "pgxc/execRemote.h"
+#endif
 
 
 static TupleTableSlot *ExecProcNodeFirst(PlanState *node);
@@ -364,6 +367,14 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 			result = (PlanState *) ExecInitLimit((Limit *) node,
 												 estate, eflags);
 			break;
+
+#ifdef PGXC
+		case T_RemoteQuery:
+			result = (PlanState *) ExecInitRemoteQuery((RemoteQuery *) node,
+													    estate, eflags);
+			break;
+#endif
+
 
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));
@@ -726,6 +737,12 @@ ExecEndNode(PlanState *node)
 		case T_LimitState:
 			ExecEndLimit((LimitState *) node);
 			break;
+
+#ifdef PGXC
+		case T_RemoteQueryState:
+			ExecEndRemoteQuery((RemoteQueryState *) node);
+			break;
+#endif
 
 		default:
 			elog(ERROR, "unrecognized node type: %d", (int) nodeTag(node));

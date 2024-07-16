@@ -901,6 +901,9 @@ stmt :
 /* PGXC_END */
 			| CallStmt
 			| CheckPointStmt
+/* PGXC_BEGIN */
+			| CleanConnStmt
+/* PGXC_END */
 			| ClosePortalStmt
 			| ClusterStmt
 			| CommentStmt

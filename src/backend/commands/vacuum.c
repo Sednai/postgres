@@ -11,7 +11,8 @@
  *
  * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
- *
+ * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
+ * 
  *
  * IDENTIFICATION
  *	  src/backend/commands/vacuum.c
@@ -51,6 +52,9 @@
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
 #include "utils/tqual.h"
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#endif
 
 
 /*
@@ -959,6 +963,9 @@ vac_update_relstats(Relation relation,
 	if (TransactionIdIsNormal(frozenxid) &&
 		pgcform->relfrozenxid != frozenxid &&
 		(TransactionIdPrecedes(pgcform->relfrozenxid, frozenxid) ||
+#ifdef PGXC
+		    !IsPostmasterEnvironment ||
+#endif
 		 TransactionIdPrecedes(ReadNewTransactionId(),
 							   pgcform->relfrozenxid)))
 	{
@@ -1121,6 +1128,9 @@ vac_update_datfrozenxid(void)
 	 */
 	if (dbform->datfrozenxid != newFrozenXid &&
 		(TransactionIdPrecedes(dbform->datfrozenxid, newFrozenXid) ||
+#ifdef PGXC
+        !IsPostmasterEnvironment || 
+#endif
 		 TransactionIdPrecedes(lastSaneFrozenXid, dbform->datfrozenxid)))
 	{
 		dbform->datfrozenxid = newFrozenXid;
@@ -1284,9 +1294,12 @@ vac_truncate_clog(TransactionId frozenXID,
 		ereport(WARNING,
 				(errmsg("some databases have not been vacuumed in over 2 billion transactions"),
 				 errdetail("You might have already suffered transaction-wraparound data loss.")));
+#ifndef PGXC
 		LWLockRelease(WrapLimitsVacuumLock);
 		return;
+#endif	
 	}
+
 
 	/* chicken out if data is bogus in any other way */
 	if (bogus)
@@ -1307,6 +1320,9 @@ vac_truncate_clog(TransactionId frozenXID,
 	/*
 	 * Truncate CLOG, multixact and CommitTs to the oldest computed value.
 	 */
+#ifdef PGXC
+	if (!frozenAlreadyWrapped)
+#endif
 	TruncateCLOG(frozenXID, oldestxid_datoid);
 	TruncateCommitTs(frozenXID);
 	TruncateMultiXact(minMulti, minmulti_datoid);
@@ -1364,7 +1380,9 @@ vacuum_rel(Oid relid, RangeVar *relation, int options, VacuumParams *params)
 	 * Functions in indexes may want a snapshot set.  Also, setting a snapshot
 	 * ensures that RecentGlobalXmin is kept truly recent.
 	 */
+#ifndef PGXC
 	PushActiveSnapshot(GetTransactionSnapshot());
+#endif
 
 	if (!(options & VACOPT_FULL))
 	{
@@ -1395,6 +1413,19 @@ vacuum_rel(Oid relid, RangeVar *relation, int options, VacuumParams *params)
 		LWLockRelease(ProcArrayLock);
 	}
 
+#ifdef PGXC
+	if (params->is_wraparound)
+		elog(DEBUG1, "Starting wraparound autovacuum");
+	else
+		elog(DEBUG1, "Starting autovacuum");
+
+	/* Now that flags have been set, we can take a snapshot correctly */
+	PushActiveSnapshot(GetTransactionSnapshot());
+	if (params->is_wraparound)
+		elog(DEBUG1, "Started wraparound autovacuum");
+	else
+		elog(DEBUG1, "Started autovacuum");
+#endif
 	/*
 	 * Check for user-requested abort.  Note we want this to be inside a
 	 * transaction, so xact.c doesn't issue useless WARNING.

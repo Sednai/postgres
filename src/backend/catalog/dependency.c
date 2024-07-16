@@ -438,6 +438,60 @@ performMultipleDeletions(const ObjectAddresses *objects,
 	heap_close(depRel, RowExclusiveLock);
 }
 
+
+#ifdef PGXC
+/*
+ * Check type and class of the given object and rename it properly on GTM
+ */
+static void
+doRename(const ObjectAddress *object, const char *oldname, const char *newname)
+{
+	switch (getObjectClass(object))
+	{
+		case OCLASS_CLASS:
+		{
+			char        relKind = get_rel_relkind(object->objectId);
+
+			/*
+			 * If we are here, a schema is being renamed, a sequence depends on it.
+			 * as sequences' global name use the schema name, this sequence
+			 * has also to be renamed on GTM.
+			 * An operation with GTM can just be done from a remote Coordinator.
+			 */
+			if (relKind == RELKIND_SEQUENCE &&
+				IS_PGXC_COORDINATOR &&
+				!IsConnFromCoord() &&
+				IsTempSequence(object->objectId))
+			{
+				Relation relseq = relation_open(object->objectId, AccessShareLock);
+				char *seqname = GetGlobalSeqName(relseq, NULL, oldname);
+				char *newseqname = GetGlobalSeqName(relseq, NULL, newname);
+
+				/* We also need to rename this sequence on GTM, it has a global name ! */
+				if (RenameSequenceGTM(seqname, newseqname) < 0)
+					ereport(ERROR,
+							(errcode(ERRCODE_CONNECTION_FAILURE),
+							 errmsg("GTM error, could not rename sequence")));
+
+				/* Register a rename callback in case transaction is dropped */
+				register_sequence_rename_cb(seqname, newseqname);
+
+				pfree(seqname);
+				pfree(newseqname);
+
+				relation_close(relseq, AccessShareLock);
+			}
+		}
+		default:
+			/* Nothing to do, this object has not to be renamed, end of the story... */
+			break;
+	}
+}
+
+
+#endif
+
+
 /*
  * findDependentObjects - find all objects that depend on 'object'
  *
@@ -1184,6 +1238,72 @@ doDeletion(const ObjectAddress *object, int flags)
 					else
 						heap_drop_with_catalog(object->objectId);
 				}
+
+#ifdef PGXC
+				/*
+				 * Do not do extra process if this session is connected to a remote
+				 * Coordinator.
+				 */
+				if (IsConnFromCoord())
+					break;
+
+				/*
+				 * This session is connected directly to application, so extra
+				 * process related to remote nodes and GTM is needed.
+				 */
+				switch (relKind)
+				{
+					case RELKIND_SEQUENCE:
+						/*
+						 * Drop the sequence on GTM.
+						 * Sequence is dropped on GTM by a remote Coordinator only
+						 * for a non temporary sequence.
+						 */
+						if (!IsTempSequence(object->objectId))
+						{
+							/*
+							 * The sequence has already been removed from Coordinator,
+							 * finish the stuff on GTM too
+							 */
+
+							Relation relseq;
+							char *seqname;
+							/*
+							 * A relation is opened to get the schema and database name as
+							 * such data is not available before when dropping a function.
+							 */
+							relseq = relation_open(object->objectId, AccessShareLock);
+							seqname = GetGlobalSeqName(relseq, NULL, NULL);
+
+							/*
+							 * Sequence is not immediately removed on GTM, but at the end
+							 * of the transaction block. In case this transaction fails,
+							 * all the data remains intact on GTM.
+							 */
+							register_sequence_cb(seqname, GTM_SEQ_FULL_NAME, GTM_DROP_SEQ);
+
+							pfree(seqname);
+
+							/* Then close the relation opened previously */
+							relation_close(relseq, AccessShareLock);
+						}
+						break;
+					case RELKIND_RELATION:
+					case RELKIND_VIEW:
+						/*
+						 * Flag temporary objects in use in case a temporary table or view
+						 * is dropped by dependency. This check is particularly useful with
+						 * CASCADE when temporary objects are removed by dependency in order
+						 * to avoid implicit 2PC would result in an error as temporary
+						 * objects cannot be prepared.
+						 */
+						if (IsTempTable(object->objectId))
+							ExecSetTempObjectIncluded();
+						break;
+					default:
+						break;
+				}
+#endif /* PGXC */
 
 				/*
 				 * for a sequence, in addition to dropping the heap, also

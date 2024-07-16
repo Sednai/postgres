@@ -58,6 +58,11 @@
 #include "utils/selfuncs.h"
 #include "utils/lsyscache.h"
 #include "utils/syscache.h"
+#ifdef PGXC
+#include "commands/prepare.h"
+#include "pgxc/pgxc.h"
+#include "optimizer/pgxcplan.h"
+#endif
 
 
 /* GUC parameters */
@@ -237,6 +242,9 @@ static void create_partitionwise_grouping_paths(PlannerInfo *root,
 static bool group_by_has_partkey(RelOptInfo *input_rel,
 					 List *targetList,
 					 List *groupClause);
+#ifdef PGXC
+static void separate_rowmarks(PlannerInfo *root);
+#endif
 
 
 /*****************************************************************************
@@ -260,6 +268,15 @@ planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	if (planner_hook)
 		result = (*planner_hook) (parse, cursorOptions, boundParams);
 	else
+#ifdef PGXC
+		/*
+		 * A Coordinator receiving a query from another Coordinator
+		 * is not allowed to go into PGXC planner.
+		 */
+		if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+			result = pgxc_planner(parse, cursorOptions, boundParams);
+		else
+#endif
 		result = standard_planner(parse, cursorOptions, boundParams);
 	return result;
 }
@@ -410,7 +427,8 @@ standard_planner(Query *parse, int cursorOptions, ParamListInfo boundParams)
 	best_path = get_cheapest_fractional_path(final_rel, tuple_fraction);
 
 	top_plan = create_plan(root, best_path);
-
+	
+	
 	/*
 	 * If creating a plan for a scrollable cursor, make sure it can run
 	 * backwards on demand.  Add a Material node at the top at need.
@@ -622,6 +640,9 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	root->minmax_aggs = NIL;
 	root->qual_security_level = 0;
 	root->inhTargetKind = INHKIND_NONE;
+#ifdef PGXC
+	root->rs_alias_index = 1;
+#endif
 	root->hasRecursion = hasRecursion;
 	if (hasRecursion)
 		root->wt_param_id = assign_special_exec_param(root);
@@ -699,6 +720,26 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	 * expand_inherited_tables to examine and modify).
 	 */
 	preprocess_rowmarks(root);
+
+#ifdef PGXC
+	/*
+	 * In Coordinators we separate row marks in two groups
+	 * one comprises of row marks of types ROW_MARK_EXCLUSIVE & ROW_MARK_SHARE
+	 * and the other contains the rest of the types of row marks
+	 * The former is handeled on Coordinator in such a way that
+	 * FOR UPDATE/SHARE gets added in the remote query, whereas
+	 * the later needs to be handeled the way pg does
+	 *
+	 * PGXCTODO : This is not a very efficient way of handling row marks
+	 * Consider this join query
+	 * select * from t1, t2 where t1.val = t2.val for update
+	 * It results in this query to be fired at the Datanodes
+	 * SELECT val, val2, ctid FROM ONLY t2 WHERE true FOR UPDATE OF t2
+	 * We are locking the complete table where as we should have locked
+	 * only the rows where t1.val = t2.val is met
+	 */
+	separate_rowmarks(root);
+#endif
 
 	/*
 	 * Expand any rangetable entries that are inheritance sets into "append
@@ -2051,9 +2092,18 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 			scanjoin_targets_contain_srfs = NIL;
 		}
 
+#ifdef PGXC
+//	if (IsA(top_plan, RemoteQuery) && parse->commandType == CMD_SELECT) {
+
+//						pgxc_rqplan_adjust_tlist((RemoteQuery *)top_plan);
+		elog(WARNING,"[DEBUG](grouping_planner) -> before: Apply scan/join target ");
+//	}
+#endif
+
 		/* Apply scan/join target. */
 		scanjoin_target_same_exprs = list_length(scanjoin_targets) == 1
 			&& equal(scanjoin_target->exprs, current_rel->reltarget->exprs);
+
 		apply_scanjoin_target_to_paths(root, current_rel, scanjoin_targets,
 									   scanjoin_targets_contain_srfs,
 									   scanjoin_target_parallel_safe,
@@ -2251,6 +2301,8 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 										rowMarks,
 										parse->onConflict,
 										assign_special_exec_param(root));
+
+
 		}
 
 		/* And shove it into final_rel */
@@ -2648,6 +2700,44 @@ preprocess_rowmarks(PlannerInfo *root)
 
 	root->rowMarks = prowmarks;
 }
+
+#ifdef PGXC
+/*
+ * separate_rowmarks - In XC Coordinators are supposed to skip handling
+ *                of type ROW_MARK_EXCLUSIVE & ROW_MARK_SHARE.
+ *                In order to do that we simply remove such type
+ *                of row marks from the list. Instead they are saved
+ *                in another list that is then handeled to add
+ *                FOR UPDATE/SHARE in the remote query
+ *                in the function create_remotequery_plan
+ */
+static void
+separate_rowmarks(PlannerInfo *root)
+{
+	List		*rml_1, *rml_2;
+	ListCell	*rm;
+
+	if (IS_PGXC_DATANODE || IsConnFromCoord() || root->rowMarks == NULL)
+		return;
+
+	rml_1 = NULL;
+	rml_2 = NULL;
+
+	foreach(rm, root->rowMarks)
+	{
+		PlanRowMark *prm = (PlanRowMark *) lfirst(rm);
+
+		if (prm->markType == ROW_MARK_EXCLUSIVE || prm->markType == ROW_MARK_SHARE)
+			rml_1 = lappend(rml_1, prm);
+		else
+			rml_2 = lappend(rml_2, prm);
+	}
+	list_free(root->rowMarks);
+	root->rowMarks = rml_2;
+	root->xc_rowMarks = rml_1;
+}
+
+#endif /*PGXC*/
 
 /*
  * Select RowMarkType to use for a given table

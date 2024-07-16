@@ -1165,6 +1165,8 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		case T_PlaceHolderVar:
 		case T_AppendRelInfo:
 		case T_PlaceHolderInfo:
+
+		case T_PathTarget: // That is the missing key
 		{
 			/* PGXCTODO: till we exhaust this list */
 			pgxc_set_shippability_reason(sc_context, SS_UNSUPPORTED_EXPR);
@@ -1971,7 +1973,7 @@ pgxc_replace_dist_vars_subquery(Query *query, ExecNodes *exec_nodes, Index varno
 
 		Assert(IsA(var, Var));
 
-		tle = tlist_member((Node *)var, query->targetList);
+		tle = tlist_member((Expr *)var, query->targetList);
 		if (tle)
 		{
 			Var *new_dist_var = makeVar(varno, tle->resno,

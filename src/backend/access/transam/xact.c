@@ -2262,14 +2262,16 @@ StartTransaction(void)
 	}
 	else
 		Assert(xactStartTimestamp != 0);
+
+	/* Mark xactStopTimestamp as unset. */
+	xactStopTimestamp = 0;
+
 #ifdef PGXC
 	/* For Postgres-XC, transaction start timestamp has to follow the GTM timeline */
 	pgstat_report_xact_timestamp(GTMxactStartTimestamp);
 #else
 	pgstat_report_xact_timestamp(xactStartTimestamp);
 #endif
-	/* Mark xactStopTimestamp as unset. */
-	xactStopTimestamp = 0;
 
 	/*
 	 * initialize other subsystems for new transaction
@@ -2680,6 +2682,17 @@ CommitTransaction(void)
 	s->state = TRANS_DEFAULT;
 
 	RESUME_INTERRUPTS();
+
+#ifdef PGXC
+	/*
+	 * XXX We now close the main and auxilliary transaction (if any) on the
+	 * GTM. We do this after resuming interrupts to ensure that we don't end
+	 * blocking forever on the communication channel. But we need to see if
+	 * this is safe in all cases (TODO)
+	 */
+	AtEOXact_GlobalTxn(true);
+	AtEOXact_Remote();
+#endif
 }
 
 #ifdef PGXC

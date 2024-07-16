@@ -7518,6 +7518,9 @@ exec_move_row_from_datum(PLpgSQL_execstate *estate,
 		tmptup.t_len = HeapTupleHeaderGetDatumLength(td);
 		ItemPointerSetInvalid(&(tmptup.t_self));
 		tmptup.t_tableOid = InvalidOid;
+#ifdef PGXC
+		tmptup.t_xc_node_id = 0;
+#endif
 		tmptup.t_data = td;
 
 		/* Extract rowtype info */

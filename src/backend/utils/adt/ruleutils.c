@@ -5199,7 +5199,7 @@ make_viewdef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
  * It calls get_query_def without pretty print flags.
  * ----------
  */
-void
+extern void
 deparse_query(Query *query, StringInfo buf, List *parentnamespace,
 				bool finalise_aggs, bool sortgroup_colno)
 {

@@ -40,6 +40,9 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parse_clause.h"
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#endif /* PGXC */
 #include "rewrite/rewriteHandler.h"
 #include "storage/smgr.h"
 #include "tcop/tcopprot.h"
@@ -356,6 +359,21 @@ ExecCreateTableAs(CreateTableAsStmt *stmt, const char *queryString,
 									GetActiveSnapshot(), InvalidSnapshot,
 									dest, params, queryEnv, 0);
 
+#ifdef PGXC
+	/* The data for materialized view comes from the initialising coordinator */
+	if (IS_PGXC_COORDINATOR &&
+		stmt->relkind == OBJECT_MATVIEW &&
+		IsConnFromCoord())
+	{
+		/* We need ExecutorStart to build the tuple descriptor only */
+		ExecutorStart(queryDesc, EXEC_FLAG_EXPLAIN_ONLY);
+		pgxc_fill_matview_by_copy(dest, into->skipData, queryDesc->operation,
+									queryDesc->tupDesc);
+	}
+	else
+	{
+#endif /* PGXC */
+
 		/* call ExecutorStart to prepare the plan for execution */
 		ExecutorStart(queryDesc, GetIntoRelEFlags(into));
 
@@ -373,6 +391,9 @@ ExecCreateTableAs(CreateTableAsStmt *stmt, const char *queryString,
 
 		/* and clean up */
 		ExecutorFinish(queryDesc);
+#ifdef PGXC
+	}
+#endif /* PGXC */
 		ExecutorEnd(queryDesc);
 
 		FreeQueryDesc(queryDesc);

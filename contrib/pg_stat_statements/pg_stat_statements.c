@@ -306,7 +306,11 @@ static void pgss_ExecutorEnd(QueryDesc *queryDesc);
 static void pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 					ProcessUtilityContext context, ParamListInfo params,
 					QueryEnvironment *queryEnv,
-					DestReceiver *dest, char *completionTag);
+					DestReceiver *dest, 
+#ifdef PGXC
+					bool sentToRemote,
+#endif /* PGXC */
+					char *completionTag);
 static uint64 pgss_hash_string(const char *str, int len);
 static void pgss_store(const char *query, uint64 queryId,
 		   int query_location, int query_len,
@@ -962,7 +966,11 @@ static void
 pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 					ProcessUtilityContext context,
 					ParamListInfo params, QueryEnvironment *queryEnv,
-					DestReceiver *dest, char *completionTag)
+					DestReceiver *dest, 
+#ifdef PGXC
+					bool sentToRemote,
+#endif /* PGXC */					
+					char *completionTag)
 {
 	Node	   *parsetree = pstmt->utilityStmt;
 	int			saved_stmt_location = pstmt->stmt_location;
@@ -1002,11 +1010,19 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 			if (prev_ProcessUtility)
 				prev_ProcessUtility(pstmt, queryString,
 									context, params, queryEnv,
-									dest, completionTag);
+									dest, 
+#ifdef PGXC
+									sentToRemote,
+#endif /* PGXC */
+									completionTag);
 			else
 				standard_ProcessUtility(pstmt, queryString,
 										context, params, queryEnv,
-										dest, completionTag);
+										dest, 
+#ifdef PGXC
+									sentToRemote,
+#endif /* PGXC */
+										completionTag);
 			nested_level--;
 		}
 		PG_CATCH();
@@ -1073,11 +1089,19 @@ pgss_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 		if (prev_ProcessUtility)
 			prev_ProcessUtility(pstmt, queryString,
 								context, params, queryEnv,
-								dest, completionTag);
+								dest, 
+#ifdef PGXC
+									sentToRemote,
+#endif /* PGXC */
+								completionTag);
 		else
 			standard_ProcessUtility(pstmt, queryString,
 									context, params, queryEnv,
-									dest, completionTag);
+									dest, 
+#ifdef PGXC
+									sentToRemote,
+#endif /* PGXC */
+									completionTag);
 	}
 }
 

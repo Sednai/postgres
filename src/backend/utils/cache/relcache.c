@@ -73,6 +73,10 @@
 #include "optimizer/cost.h"
 #include "optimizer/prep.h"
 #include "optimizer/var.h"
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#include "postmaster/autovacuum.h"
+#endif
 #include "partitioning/partbounds.h"
 #include "pgstat.h"
 #include "rewrite/rewriteDefine.h"
@@ -1257,6 +1261,12 @@ retry:
 	relation->rd_partcheckvalid = false;
 	relation->rd_partcheckcxt = NULL;
 
+#ifdef PGXC
+	if (IS_PGXC_COORDINATOR &&
+		relation->rd_id >= FirstNormalObjectId &&
+		!IsAutoVacuumWorkerProcess())
+		RelationBuildLocator(relation);
+#endif
 	/*
 	 * if it's an index, initialize index-related information
 	 */
@@ -6282,8 +6292,14 @@ RelationCacheInitFileRemove(void)
 		if (strspn(de->d_name, "0123456789") == strlen(de->d_name))
 		{
 			/* Scan the tablespace dir for per-database dirs */
+#ifdef PGXC
+			/* Postgres-XC tablespaces include node name in path */
+			snprintf(path, sizeof(path), "%s/%s/%s_%s",
+					 tblspcdir, de->d_name, TABLESPACE_VERSION_DIRECTORY, PGXCNodeName);
+#else
 			snprintf(path, sizeof(path), "%s/%s/%s",
 					 tblspcdir, de->d_name, TABLESPACE_VERSION_DIRECTORY);
+#endif
 			RelationCacheInitFileRemoveInDir(path);
 		}
 	}

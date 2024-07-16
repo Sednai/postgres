@@ -60,6 +60,9 @@
 #include "nodes/relation.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#ifdef PGXC
+#include "pgxc/execRemote.h"
+#endif
 
 
 static bool IndexSupportsBackwardScan(Oid indexid);
@@ -232,6 +235,12 @@ ExecReScan(PlanState *node)
 		case T_CustomScanState:
 			ExecReScanCustomScan((CustomScanState *) node);
 			break;
+
+#ifdef PGXC
+		case T_RemoteQueryState:
+			ExecRemoteQueryReScan((RemoteQueryState *) node, node->ps_ExprContext);
+			break;
+#endif
 
 		case T_NestLoopState:
 			ExecReScanNestLoop((NestLoopState *) node);

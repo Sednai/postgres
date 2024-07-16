@@ -140,7 +140,11 @@ InitMultinodeExecutor(bool is_force)
 
 	/* Update node table in the shared memory */
 elog(WARNING,"Before ListAndCount");
+StartTransactionCommand();
+
 	PgxcNodeListAndCount();
+CommitTransactionCommand();	
+
 elog(WARNING,"After ListAndCount");
 	
 	/* Get classified list of node Oids */
@@ -175,6 +179,10 @@ elog(WARNING,"After ListAndCount");
 	coord_count = 0;
 	PGXCNodeId = 0;
 
+elog(WARNING,"Before nodename");
+
+StartTransactionCommand();
+
 	/* Finally determine which is the node-self */
 	for (count = 0; count < NumCoords; count++)
 	{
@@ -183,6 +191,8 @@ elog(WARNING,"After ListAndCount");
 		
 			PGXCNodeId = count + 1;
 	}
+CommitTransactionCommand();	
+elog(WARNING,"After nodename");
 
 	/*
 	 * No node-self?
@@ -1099,6 +1109,7 @@ send_some(PGXCNodeHandle *handle, int len)
 					return -1;
 
 				default:
+					elog(WARNING,"[DEBUG]: send_some error %d",errno);
 					add_error_message(handle, "could not send data to server");
 					/* We don't assume it's a fatal error... */
 					handle->outEnd = 0;

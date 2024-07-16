@@ -27,6 +27,13 @@
 /* ----------------------------------------------------------------
  *		pg_aggregate definition.
  *		cpp turns this into typedef struct FormData_pg_aggregate
+ #ifdef PGXC
+ * 		Derived from pg_aggregate, added collection function, collection data
+ * type and collection initial value.
+ * 
+ * 	aggcollectfn		collectition function
+ * 	agginitcollect		initial value for collection state (can be NULL)
+#endif
  * ----------------------------------------------------------------
  */
 CATALOG(pg_aggregate,2600,AggregateRelationId) BKI_WITHOUT_OIDS
@@ -87,7 +94,7 @@ CATALOG(pg_aggregate,2600,AggregateRelationId) BKI_WITHOUT_OIDS
 
 	/* type of moving-aggregate state data (0 if none) */
 	Oid			aggmtranstype BKI_DEFAULT(0) BKI_LOOKUP(pg_type);
-
+ 
 	/* estimated size of moving-agg state (0 for default est) */
 	int32		aggmtransspace BKI_DEFAULT(0);
 
@@ -98,6 +105,7 @@ CATALOG(pg_aggregate,2600,AggregateRelationId) BKI_WITHOUT_OIDS
 
 	/* initial value for moving-agg state (can be NULL) */
 	text		aggminitval BKI_DEFAULT(_null_);
+
 #endif
 } FormData_pg_aggregate;
 

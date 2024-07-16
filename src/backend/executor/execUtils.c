@@ -116,6 +116,9 @@ CreateExecutorState(void)
 	estate->es_result_relations = NULL;
 	estate->es_num_result_relations = 0;
 	estate->es_result_relation_info = NULL;
+#ifdef PGXC	
+	estate->es_result_remoterel = NULL;
+#endif
 
 	estate->es_root_result_relations = NULL;
 	estate->es_num_root_result_relations = 0;

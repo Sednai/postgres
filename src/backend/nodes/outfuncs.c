@@ -36,6 +36,9 @@
 #include "nodes/relation.h"
 #include "utils/datum.h"
 #include "utils/rel.h"
+#ifdef PGXC
+#include "optimizer/pgxcplan.h"
+#endif
 
 static void outChar(StringInfo str, char c);
 
@@ -395,6 +398,9 @@ _outModifyTable(StringInfo str, const ModifyTable *node)
 	WRITE_NODE_FIELD(onConflictWhere);
 	WRITE_UINT_FIELD(exclRelRTI);
 	WRITE_NODE_FIELD(exclRelTlist);
+#ifdef PGXC
+	WRITE_NODE_FIELD(remote_plans);
+#endif
 }
 
 static void
@@ -572,6 +578,59 @@ _outIndexScan(StringInfo str, const IndexScan *node)
 	WRITE_NODE_FIELD(indexorderbyops);
 	WRITE_ENUM_FIELD(indexorderdir, ScanDirection);
 }
+
+#ifdef PGXC
+static void
+_outRemoteQuery(StringInfo str, const RemoteQuery *node)
+{
+	int			i;
+
+	WRITE_NODE_TYPE("REMOTEQUERY");
+
+	_outScanInfo(str, (Scan *) node);
+
+	WRITE_ENUM_FIELD(exec_direct_type, ExecDirectType);
+	WRITE_STRING_FIELD(sql_statement);
+	WRITE_NODE_FIELD(exec_nodes);
+	WRITE_ENUM_FIELD(combine_type, CombineType);
+	WRITE_BOOL_FIELD(read_only);
+	WRITE_BOOL_FIELD(force_autocommit);
+	WRITE_STRING_FIELD(statement);
+	WRITE_STRING_FIELD(cursor);
+	WRITE_INT_FIELD(rq_num_params);
+
+	appendStringInfo(str, " :rq_param_types");
+	for (i = 0; i < node->rq_num_params; i++)
+		appendStringInfo(str, " %d", node->rq_param_types[i]);
+
+	WRITE_ENUM_FIELD(exec_type, RemoteQueryExecType);
+	WRITE_BOOL_FIELD(is_temp);
+	WRITE_BOOL_FIELD(has_row_marks);
+	WRITE_BOOL_FIELD(rq_finalise_aggs);
+	WRITE_BOOL_FIELD(rq_sortgroup_colno);
+	WRITE_NODE_FIELD(remote_query);
+	WRITE_NODE_FIELD(coord_var_tlist);
+	WRITE_NODE_FIELD(query_var_tlist);
+	WRITE_BOOL_FIELD(rq_save_command_id);
+	WRITE_BOOL_FIELD(rq_params_internal);
+	WRITE_BOOL_FIELD(rq_use_pk_for_rep_change);
+	WRITE_BOOL_FIELD(rq_max_param_num);
+}
+
+static void
+_outExecNodes(StringInfo str, const ExecNodes *node)
+{
+	WRITE_NODE_TYPE("EXEC_NODES");
+
+	WRITE_NODE_FIELD(primarynodelist);
+	WRITE_NODE_FIELD(nodeList);
+	WRITE_CHAR_FIELD(baselocatortype);
+	WRITE_NODE_FIELD(en_expr);
+	WRITE_OID_FIELD(en_relid);
+	WRITE_ENUM_FIELD(accesstype, RelationAccessType);
+	WRITE_NODE_FIELD(en_dist_vars);
+}
+#endif
 
 static void
 _outIndexOnlyScan(StringInfo str, const IndexOnlyScan *node)
@@ -2323,6 +2382,10 @@ _outPlannerInfo(StringInfo str, const PlannerInfo *node)
 	WRITE_BOOL_FIELD(hasHavingQual);
 	WRITE_BOOL_FIELD(hasPseudoConstantQuals);
 	WRITE_BOOL_FIELD(hasRecursion);
+#ifdef PGXC
+	WRITE_INT_FIELD(rs_alias_index);
+	WRITE_NODE_FIELD(xc_rowMarks);
+#endif
 	WRITE_INT_FIELD(wt_param_id);
 	WRITE_BITMAPSET_FIELD(curOuterRels);
 	WRITE_NODE_FIELD(curOuterParams);
@@ -3129,6 +3192,9 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 	WRITE_NODE_FIELD(alias);
 	WRITE_NODE_FIELD(eref);
 	WRITE_ENUM_FIELD(rtekind, RTEKind);
+#ifdef PGXC
+	WRITE_STRING_FIELD(relname);
+#endif
 
 	switch (node->rtekind)
 	{
@@ -3174,6 +3240,11 @@ _outRangeTblEntry(StringInfo str, const RangeTblEntry *node)
 			WRITE_NODE_FIELD(coltypmods);
 			WRITE_NODE_FIELD(colcollations);
 			break;
+#ifdef PGXC
+		case RTE_REMOTE_DUMMY:
+			/* Everything relevant already copied */
+			break;
+#endif /* PGXC */
 		default:
 			elog(ERROR, "unrecognized RTE kind: %d", (int) node->rtekind);
 			break;
@@ -3775,6 +3846,11 @@ outNode(StringInfo str, const void *obj)
 			case T_SampleScan:
 				_outSampleScan(str, obj);
 				break;
+#ifdef PGXC
+			case T_RemoteQuery:
+				_outRemoteQuery(str, obj);
+				break;
+#endif
 			case T_IndexScan:
 				_outIndexScan(str, obj);
 				break;
@@ -4342,6 +4418,11 @@ outNode(StringInfo str, const void *obj)
 			case T_XmlSerialize:
 				_outXmlSerialize(str, obj);
 				break;
+#ifdef PGXC
+			case T_ExecNodes:
+				_outExecNodes(str, obj);
+				break;
+#endif
 			case T_ForeignKeyCacheInfo:
 				_outForeignKeyCacheInfo(str, obj);
 				break;

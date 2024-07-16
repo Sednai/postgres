@@ -1350,7 +1350,6 @@ exec_parse_message(const char *query_string,	/* string to execute */
 				   const char *stmt_name,	/* name for prepared stmt */
 				   Oid *paramTypes, /* parameter types */
 #ifdef PGXC
-				   int32 *paramTypMod,
    				   char **paramTypeNames,	/* parameter type names */
 #endif
 				   int numParams)	/* number of parameters */
@@ -1434,7 +1433,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 		int cnt_param;
 		/* we don't expect type mod */
 		for (cnt_param = 0; cnt_param < numParams; cnt_param++)
-			parseTypeString(paramTypeNames[cnt_param], &paramTypes[cnt_param],&paramTypMod[cnt_param],
+			parseTypeString(paramTypeNames[cnt_param], &paramTypes[cnt_param], NULL,
 							NULL);
 	}
 #endif /* PGXC */
@@ -4145,10 +4144,13 @@ PostgresMain(int argc, char *argv[],
 	/* If this postgres is launched from another Coord, do not initialize handles. skip it */
 	if (!am_walsender && IS_PGXC_COORDINATOR && !IsPoolHandle())
 	{
-		StartTransactionCommand();
-		InitMultinodeExecutor(false);
 		
 		//CurrentResourceOwner = ResourceOwnerCreate(NULL, "ForPGXCNodes");
+		InitMultinodeExecutor(false);
+		elog(WARNING,"OK");
+
+		elog(WARNING,"[DEBUG] -> pid: %d",MyProcPid);
+		//sleep(60);
 
 		if (!IsConnFromCoord())
 		{
@@ -4168,8 +4170,7 @@ PostgresMain(int argc, char *argv[],
 		//ResourceOwnerRelease(CurrentResourceOwner, RESOURCE_RELEASE_AFTER_LOCKS, true, true);
 		//CurrentResourceOwner = NULL;
 
-		CommitTransactionCommand();	
-
+		elog(WARNING,"DONE");
 		/* If we exit, first try and clean connections and send to pool */
 		on_proc_exit (PGXCNodeCleanAndRelease, 0);
 	}
@@ -4505,7 +4506,6 @@ PostgresMain(int argc, char *argv[],
 					Oid		   *paramTypes = NULL;
 #ifdef PGXC
 					char 	  **paramTypeNames = NULL;
-					int32 *paramTypMods = NULL;
 #endif			
 					forbidden_in_wal_sender(firstchar);
 
@@ -4518,10 +4518,11 @@ PostgresMain(int argc, char *argv[],
 					if (numParams > 0)
 					{
 						int			i;
+						paramTypes = (Oid *) palloc(numParams * sizeof(Oid));
+					
 #ifdef PGXC
 						if (IsConnFromCoord())
 						{
-							paramTypMods = (int32*)palloc(numParams*sizeof(int32));
 							paramTypeNames = (char **)palloc(numParams * sizeof(char *));
 							for (i = 0; i < numParams; i++)
 								paramTypeNames[i] = (char *)pq_getmsgstring(&input_message);
@@ -4529,7 +4530,6 @@ PostgresMain(int argc, char *argv[],
 						else
 #endif
 						{
-						paramTypes = (Oid *) palloc(numParams * sizeof(Oid));
 						for (i = 0; i < numParams; i++)
 							paramTypes[i] = pq_getmsgint(&input_message, 4);
 						}
@@ -4538,7 +4538,7 @@ PostgresMain(int argc, char *argv[],
 
 					exec_parse_message(query_string, stmt_name,
 #ifdef PGXC
-  									   paramTypes, paramTypMods, paramTypeNames, numParams);
+  									   paramTypes, paramTypeNames, numParams);
 #else
 									   paramTypes, numParams);
 #endif

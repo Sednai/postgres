@@ -34,6 +34,9 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#ifdef PGXC
+#include "pgxc/execRemote.h"
+#endif
 
 
 static void checkViewTupleDesc(TupleDesc newdesc, TupleDesc olddesc);
@@ -569,6 +572,11 @@ DefineView(ViewStmt *stmt, const char *queryString,
 						view->relname)));
 	}
 
+#ifdef PGXC
+	/* In case view is temporary, be sure not to use 2PC on such relations */
+	if (view->relpersistence == RELPERSISTENCE_TEMP)
+		ExecSetTempObjectIncluded();
+#endif
 	/*
 	 * Create the view relation
 	 *

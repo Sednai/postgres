@@ -22,6 +22,10 @@
 #include "access/htup_details.h"
 #include "access/parallel.h"
 #include "access/xact.h"
+#ifdef PGXC
+#include "access/transam.h"
+#include "pgxc/pgxc.h"
+#endif
 #include "access/xlog.h"
 #include "catalog/dependency.h"
 #include "catalog/objectaccess.h"
@@ -4182,6 +4186,14 @@ RemoveTempRelationsCallback(int code, Datum arg)
 	{
 		/* Need to ensure we have a usable transaction. */
 		AbortOutOfAnyTransaction();
+#ifdef PGXC
+		/*
+		 * When a backend closes, this insures that
+		 * transaction ID taken is unique in the cluster.
+		 */
+		if (IsConnFromCoord())
+			SetForceXidFromGTM(true);
+#endif
 		StartTransactionCommand();
 		PushActiveSnapshot(GetTransactionSnapshot());
 
@@ -4189,6 +4201,10 @@ RemoveTempRelationsCallback(int code, Datum arg)
 
 		PopActiveSnapshot();
 		CommitTransactionCommand();
+#ifdef PGXC
+		if (IsConnFromCoord())
+			SetForceXidFromGTM(false);
+#endif
 	}
 }
 

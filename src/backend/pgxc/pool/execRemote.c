@@ -1628,14 +1628,16 @@ pgxc_node_remote_prepare(char *prepareGID)
 		 * Now we are ready to PREPARE the transaction. Any error at this point
 		 * can be safely ereport-ed and the transaction will be aborted.
 		 */
-		if (pgxc_node_send_query(connections[i], prepare_cmd))
+		int err = pgxc_node_send_query(connections[i], prepare_cmd);
+		if (err)
 		{
+
 			remoteXactState.remoteNodeStatus[i] = RXACT_NODE_PREPARE_FAILED;
 			remoteXactState.status = RXACT_PREPARE_FAILED;
 			ereport(ERROR,
 					(errcode(ERRCODE_INTERNAL_ERROR),
 					 errmsg("failed to send PREPARE TRANSACTION command to "
-						"the node %u", connections[i]->nodeoid)));
+						"the node %u (%d,%s)", connections[i]->nodeoid,err,connections[i]->error)));
 		}
 		else
 		{
@@ -2569,6 +2571,7 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	remotestate = CreateResponseCombiner(0, node->combine_type);
 	remotestate->ss.ps.plan = (Plan *) node;
 	remotestate->ss.ps.state = estate;
+	remotestate->ss.ps.ExecProcNode = ExecRemoteQuery;
 
 	/*
 	 * Miscellaneous initialisation
@@ -2600,8 +2603,8 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	remotestate->tuplestorestate = NULL;
 
 	ExecInitResultTupleSlotTL(estate, &remotestate->ss.ps);
+	ExecInitScanTupleSlot(estate, &remotestate->ss, NULL);
 	scan_type = ExecTypeFromTL(node->base_tlist, false);
-	ExecInitScanTupleSlot(estate, &remotestate->ss,scan_type);
 	ExecAssignScanType(&remotestate->ss, scan_type);
 
 	/* PGXC 11 drop 

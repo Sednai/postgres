@@ -25,6 +25,15 @@
 #include "postgres.h"
 
 #include "access/sysattr.h"
+#ifdef PGXC
+#include "catalog/pg_inherits.h"
+#include "catalog/indexing.h"
+#include "utils/fmgroids.h"
+#include "utils/tqual.h"
+#include "access/genam.h"
+#include "access/heapam.h"
+#include "access/htup_details.h"
+#endif
 #include "catalog/pg_type.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -44,6 +53,20 @@
 #include "parser/parse_target.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
+#ifdef PGXC
+#include "miscadmin.h"
+#include "pgxc/pgxc.h"
+#include "pgxc/pgxcnode.h"
+#include "access/gtm.h"
+#include "utils/lsyscache.h"
+#include "optimizer/pgxcplan.h"
+#include "tcop/tcopprot.h"
+#include "nodes/nodes.h"
+#include "pgxc/poolmgr.h"
+#include "catalog/pgxc_node.h"
+#include "pgxc/xc_maintenance_mode.h"
+#include "access/xact.h"
+#endif
 #include "utils/rel.h"
 
 
@@ -78,6 +101,13 @@ static Query *transformCreateTableAsStmt(ParseState *pstate,
 						   CreateTableAsStmt *stmt);
 static Query *transformCallStmt(ParseState *pstate,
 				  CallStmt *stmt);
+#ifdef PGXC
+static Query *transformExecDirectStmt(ParseState *pstate, ExecDirectStmt *stmt);
+static bool IsExecDirectUtilityStmt(Node *node);
+static bool is_relation_child(RangeTblEntry *child_rte, List *rtable);
+static bool is_rel_child_of_rel(RangeTblEntry *child_rte, RangeTblEntry *parent_rte);
+#endif
+
 static void transformLockingClause(ParseState *pstate, Query *qry,
 					   LockingClause *lc, bool pushedDown);
 #ifdef RAW_EXPRESSION_COVERAGE_TEST
@@ -322,6 +352,13 @@ transformStmt(ParseState *pstate, Node *parseTree)
 										  (ExplainStmt *) parseTree);
 			break;
 
+#ifdef PGXC
+		case T_ExecDirectStmt:
+			result = transformExecDirectStmt(pstate,
+											 (ExecDirectStmt *) parseTree);
+			break;
+#endif
+
 		case T_CreateTableAsStmt:
 			result = transformCreateTableAsStmt(pstate,
 												(CreateTableAsStmt *) parseTree);
@@ -392,6 +429,16 @@ stmt_requires_parse_analysis(RawStmt *parseTree)
 		case T_CallStmt:
 			result = true;
 			break;
+#ifdef PGXC
+		case T_ExecDirectStmt:
+
+			/*
+			 * We will parse/analyze/plan inner query, which probably will
+			 * need a snapshot. Ensure it is set.
+			 */
+			result = true;
+			break;
+#endif
 
 		default:
 			/* all other statements just get wrapped in a CMD_UTILITY Query */
@@ -436,12 +483,55 @@ transformDeleteStmt(ParseState *pstate, DeleteStmt *stmt)
 	Query	   *qry = makeNode(Query);
 	ParseNamespaceItem *nsitem;
 	Node	   *qual;
+#ifdef PGXC
+	ListCell   *tl;
+#endif
+
 
 	qry->commandType = CMD_DELETE;
 
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
 	{
+#ifdef PGXC
+		/*
+		 * For a WITH query that deletes from a parent table in the
+		 * main query & inserts a row in the child table in the WITH query
+		 * we need to use command ID communication to remote nodes in order
+		 * to maintain global data visibility.
+		 * For example
+		 * CREATE TEMP TABLE parent ( id int, val text ) DISTRIBUTE BY REPLICATION;
+		 * CREATE TEMP TABLE child ( ) INHERITS ( parent ) DISTRIBUTE BY REPLICATION;
+		 * INSERT INTO parent VALUES ( 42, 'old' );
+		 * INSERT INTO child VALUES ( 42, 'older' );
+		 * WITH wcte AS ( INSERT INTO child VALUES ( 42, 'new' ) RETURNING id AS newid )
+		 * DELETE FROM parent USING wcte WHERE id = newid;
+		 * The last query gets translated into the following multi-statement
+		 * transaction on the primary datanode
+		 * (a) SELECT id, ctid FROM ONLY parent WHERE true
+		 * (b) START TRANSACTION ISOLATION LEVEL read committed READ WRITE
+		 * (c) INSERT INTO child (id, val) VALUES ($1, $2) RETURNING id -- (42, 'new')
+		 * (d) DELETE FROM ONLY parent parent WHERE (parent.ctid = $1)
+		 * (e) SELECT id, ctid FROM ONLY child parent WHERE true
+		 * (f) DELETE FROM ONLY child parent WHERE (parent.ctid = $1)
+		 * (g) COMMIT TRANSACTION
+		 * The command id of the select in step (e), should be such that
+		 * it does not see the insert of step (c)
+		 */
+		if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+		{
+			foreach(tl, stmt->withClause->ctes)
+			{
+				CommonTableExpr *cte = (CommonTableExpr *) lfirst(tl);
+				if (IsA(cte->ctequery, InsertStmt))
+				{
+					qry->has_to_save_cmd_id = true;
+					SetSendCommandId(true);
+					break;
+				}
+			}
+		}
+#endif
 		qry->hasRecursive = stmt->withClause->recursive;
 		qry->cteList = transformWithClause(pstate, stmt->withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
@@ -617,6 +707,9 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 		 */
 		ParseState *sub_pstate = make_parsestate(pstate);
 		Query	   *selectQuery;
+#ifdef PGXC
+		RangeTblEntry	*target_rte;
+#endif
 
 		/*
 		 * Process the source SELECT.
@@ -655,6 +748,23 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 											makeAlias("*SELECT*", NIL),
 											false,
 											false);
+#ifdef PGXC
+		/*
+		 * For an INSERT SELECT involving INSERT on a child after scanning
+		 * the parent, set flag to send command ID communication to remote
+		 * nodes in order to maintain global data visibility.
+		 */
+		if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+		{
+			target_rte = rt_fetch(qry->resultRelation, pstate->p_rtable);
+			if (is_relation_child(target_rte, selectQuery->rtable))
+			{
+				qry->has_to_save_cmd_id = true;
+				SetSendCommandId(true);
+			}
+		}
+#endif
+
 		rtr = makeNode(RangeTblRef);
 		/* assume new rte is at end */
 		rtr->rtindex = list_length(pstate->p_rtable);
@@ -2271,6 +2381,43 @@ transformUpdateStmt(ParseState *pstate, UpdateStmt *stmt)
 	/* process the WITH clause independently of all else */
 	if (stmt->withClause)
 	{
+#ifdef PGXC
+		/*
+		 * For a WITH query that updates a table in the main query and
+		 * inserts a row in the same table in the WITH query set flag
+		 * to send command ID communication to remote nodes in order to
+		 * maintain global data visibility.
+		 * For example
+		 * CREATE TEMP TABLE tab (id int,val text) DISTRIBUTE BY REPLICATION;
+		 * INSERT INTO tab VALUES (1,'p1');
+		 * WITH wcte AS (INSERT INTO tab VALUES(42,'new') RETURNING id AS newid)
+		 * UPDATE tab SET id = id + newid FROM wcte;
+		 * The last query gets translated into the following multi-statement
+		 * transaction on the primary datanode
+		 * (a) START TRANSACTION ISOLATION LEVEL read committed READ WRITE
+		 * (b) INSERT INTO tab (id, val) VALUES ($1, $2) RETURNING id -- (42,'new)'
+		 * (c) SELECT id, val, ctid FROM ONLY tab WHERE true
+		 * (d) UPDATE ONLY tab tab SET id = $1 WHERE (tab.ctid = $3) -- (43,(0,1)]
+		 * (e) COMMIT TRANSACTION
+		 * The command id of the select in step (c), should be such that
+		 * it does not see the insert of step (b)
+		 */
+		
+		if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+		{
+			ListCell   *tl;
+			foreach(tl, stmt->withClause->ctes)
+			{
+				CommonTableExpr *cte = (CommonTableExpr *) lfirst(tl);
+				if (IsA(cte->ctequery, InsertStmt))
+				{
+					qry->has_to_save_cmd_id = true;
+					SetSendCommandId(true);
+					break;
+				}
+			}
+		}
+#endif
 		qry->hasRecursive = stmt->withClause->recursive;
 		qry->cteList = transformWithClause(pstate, stmt->withClause);
 		qry->hasModifyingCTE = pstate->p_hasModifyingCTE;
@@ -2634,6 +2781,294 @@ transformCreateTableAsStmt(ParseState *pstate, CreateTableAsStmt *stmt)
 
 	return result;
 }
+
+#ifdef PGXC
+/*
+ * transformExecDirectStmt -
+ *	transform an EXECUTE DIRECT Statement
+ *
+ * Handling is depends if we should execute on nodes or on Coordinator.
+ * To execute on nodes we return CMD_UTILITY query having one T_RemoteQuery node
+ * with the inner statement as a sql_command.
+ * If statement is to run on Coordinator we should parse inner statement and
+ * analyze resulting query tree.
+ */
+static Query *
+transformExecDirectStmt(ParseState *pstate, ExecDirectStmt *stmt)
+{
+	Query		*result = makeNode(Query);
+	char		*query = stmt->query;
+	List		*nodelist = stmt->node_names;
+	RemoteQuery	*step = makeNode(RemoteQuery);
+	bool		is_local = false;
+	List		*raw_parsetree_list;
+	ListCell	*raw_parsetree_item;
+	char		*nodename;
+	Oid			nodeoid;
+	int			nodeIndex;
+	char		nodetype;
+
+	/* Support not available on Datanodes */
+	if (IS_PGXC_DATANODE)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("EXECUTE DIRECT cannot be executed on a Datanode")));
+
+	if (list_length(nodelist) > 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("Support for EXECUTE DIRECT on multiple nodes is not available yet")));
+
+	Assert(list_length(nodelist) == 1);
+	Assert(IS_PGXC_COORDINATOR);
+
+	/* There is a single element here */
+	nodename = strVal(linitial(nodelist));
+	nodeoid = get_pgxc_nodeoid(nodename);
+
+	if (!OidIsValid(nodeoid))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("PGXC Node %s: object not defined",
+						nodename)));
+
+	/* Get node type and index */
+	nodetype = get_pgxc_nodetype(nodeoid);
+	nodeIndex = PGXCNodeGetNodeId(nodeoid, get_pgxc_nodetype(nodeoid));
+
+	/* Check if node is requested is the self-node or not */
+	if (nodetype == PGXC_NODE_COORDINATOR && nodeIndex == PGXCNodeId - 1)
+		is_local = true;
+
+	/* Transform the query into a raw parse list */
+	raw_parsetree_list = pg_parse_query(query);
+
+	/* EXECUTE DIRECT can just be executed with a single query */
+	if (list_length(raw_parsetree_list) > 1)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("EXECUTE DIRECT cannot execute multiple queries")));
+
+	/*
+	 * Analyze the Raw parse tree
+	 * EXECUTE DIRECT is restricted to one-step usage
+	 */
+	foreach(raw_parsetree_item, raw_parsetree_list)
+	{
+		Node   *parsetree = (Node *) lfirst(raw_parsetree_item);
+		result = parse_analyze_varparams(parsetree, query, NULL, 0);
+	}
+
+	/* Needed by planner */
+	result->sql_statement = pstrdup(query);
+
+	/* Default list of parameters to set */
+	step->sql_statement = NULL;
+	step->exec_nodes = makeNode(ExecNodes);
+	step->combine_type = COMBINE_TYPE_NONE;
+	step->read_only = true;
+	step->force_autocommit = false;
+	step->cursor = NULL;
+
+	/* This is needed by executor */
+	step->sql_statement = pstrdup(query);
+	if (nodetype == PGXC_NODE_COORDINATOR)
+		step->exec_type = EXEC_ON_COORDS;
+	else
+		step->exec_type = EXEC_ON_DATANODES;
+
+	step->base_tlist = NIL;
+
+	/* Change the list of nodes that will be executed for the query and others */
+	step->force_autocommit = false;
+	step->combine_type = COMBINE_TYPE_SAME;
+	step->read_only = true;
+	step->exec_direct_type = EXEC_DIRECT_NONE;
+
+	/* Set up EXECUTE DIRECT flag */
+	if (is_local)
+	{
+		if (result->commandType == CMD_UTILITY)
+			step->exec_direct_type = EXEC_DIRECT_LOCAL_UTILITY;
+		else
+			step->exec_direct_type = EXEC_DIRECT_LOCAL;
+	}
+	else
+	{
+		switch(result->commandType)
+		{
+			case CMD_UTILITY:
+				step->exec_direct_type = EXEC_DIRECT_UTILITY;
+				break;
+			case CMD_SELECT:
+				step->exec_direct_type = EXEC_DIRECT_SELECT;
+				break;
+			case CMD_INSERT:
+				step->exec_direct_type = EXEC_DIRECT_INSERT;
+				break;
+			case CMD_UPDATE:
+				step->exec_direct_type = EXEC_DIRECT_UPDATE;
+				break;
+			case CMD_DELETE:
+				step->exec_direct_type = EXEC_DIRECT_DELETE;
+				break;
+			default:
+				Assert(0);
+		}
+	}
+
+	/*
+	 * Features not yet supported
+	 * DML can be launched without errors but this could compromise data
+	 * consistency, so block it.
+	 */
+	if (!xc_maintenance_mode && (step->exec_direct_type == EXEC_DIRECT_DELETE
+								 || step->exec_direct_type == EXEC_DIRECT_UPDATE
+								 || step->exec_direct_type == EXEC_DIRECT_INSERT))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("EXECUTE DIRECT cannot execute DML queries")));
+	else if (step->exec_direct_type == EXEC_DIRECT_UTILITY &&
+			 !IsExecDirectUtilityStmt(result->utilityStmt) && !xc_maintenance_mode)
+	{
+		/* In case this statement is an utility, check if it is authorized */
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("EXECUTE DIRECT cannot execute this utility query")));
+	}
+	else if (step->exec_direct_type == EXEC_DIRECT_LOCAL_UTILITY && !xc_maintenance_mode)
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("EXECUTE DIRECT cannot execute locally this utility query")));
+	}
+
+	/* Build Execute Node list, there is a unique node for the time being */
+	step->exec_nodes->nodeList = lappend_int(step->exec_nodes->nodeList, nodeIndex);
+
+	/* Associate newly-created RemoteQuery node to the returned Query result */
+	result->is_local = is_local;
+	if (!is_local)
+		result->utilityStmt = (Node *) step;
+
+	return result;
+}
+
+/*
+ * Check if given node is authorized to go through EXECUTE DURECT
+ */
+static bool
+IsExecDirectUtilityStmt(Node *node)
+{
+	bool res = true;
+
+	if (!node)
+		return res;
+
+	switch(nodeTag(node))
+	{
+		/*
+		 * CREATE/DROP TABLESPACE are authorized to control
+		 * tablespace at single node level.
+		 */
+		case T_CreateTableSpaceStmt:
+		case T_DropTableSpaceStmt:
+			res = true;
+			break;
+		default:
+			res = false;
+			break;
+	}
+
+	return res;
+}
+
+/*
+ * Returns whether or not the rtable (and its subqueries)
+ * contain any relation who is the parent of
+ * the passed relation
+ */
+static bool
+is_relation_child(RangeTblEntry *child_rte, List *rtable)
+{
+	ListCell *item;
+
+	if (child_rte == NULL || rtable == NULL)
+		return false;
+
+	if (child_rte->rtekind != RTE_RELATION)
+		return false;
+
+	foreach(item, rtable)
+	{
+		RangeTblEntry *rte = (RangeTblEntry *) lfirst(item);
+
+		if (rte->rtekind == RTE_RELATION)
+		{
+			if (is_rel_child_of_rel(child_rte, rte))
+				return true;
+		}
+		else if (rte->rtekind == RTE_SUBQUERY)
+		{
+			return is_relation_child(child_rte, rte->subquery->rtable);
+		}
+	}
+	return false;
+}
+
+/*
+ * Returns whether the passed RTEs have a parent child relationship
+ */
+static bool
+is_rel_child_of_rel(RangeTblEntry *child_rte, RangeTblEntry *parent_rte)
+{
+	Oid		parentOID;
+	bool		res;
+	Relation	relation;
+	SysScanDesc	scan;
+	ScanKeyData	key[1];
+	HeapTuple	inheritsTuple;
+	Oid		inhrelid;
+
+	/* Does parent RT entry allow inheritance? */
+	if (!parent_rte->inh)
+		return false;
+
+	/* Ignore any already-expanded UNION ALL nodes */
+	if (parent_rte->rtekind != RTE_RELATION)
+		return false;
+
+	/* Fast path for common case of childless table */
+	parentOID = parent_rte->relid;
+	if (!has_subclass(parentOID))
+		return false;
+
+	/* Assume we did not find any match */
+	res = false;
+
+	/* Scan pg_inherits and get all the subclass OIDs one by one. */
+	relation = heap_open(InheritsRelationId, AccessShareLock);
+	ScanKeyInit(&key[0], Anum_pg_inherits_inhparent, BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(parentOID));
+	scan = systable_beginscan(relation, InheritsParentIndexId, true, SnapshotSelf, 1, key);
+
+	while ((inheritsTuple = systable_getnext(scan)) != NULL)
+	{
+		inhrelid = ((Form_pg_inherits) GETSTRUCT(inheritsTuple))->inhrelid;
+
+		/* Did we find the Oid of the passed RTE in one of the children? */
+		if (child_rte->relid == inhrelid)
+		{
+			res = true;
+			break;
+		}
+	}
+
+	systable_endscan(scan);
+	heap_close(relation, AccessShareLock);
+	return res;
+}
+
+#endif
 
 /*
  * transform a CallStmt

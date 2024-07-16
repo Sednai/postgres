@@ -438,7 +438,7 @@ ac_pwd='/xc/git/postgres'
 srcdir='.'
 INSTALL='/usr/bin/install -c'
 MKDIR_P='/usr/bin/mkdir -p'
-AWK='mawk'
+AWK='gawk'
 test -n "$AWK" || AWK=awk
 # The default lists apply if the user does not specify any file.
 ac_need_defaults=:
@@ -733,7 +733,7 @@ S["LLVM_CPPFLAGS"]=""
 S["LLVM_LIBS"]=""
 S["CLANG"]=""
 S["LLVM_CONFIG"]=""
-S["AWK"]="mawk"
+S["AWK"]="gawk"
 S["with_llvm"]="no"
 S["SUN_STUDIO_CC"]="no"
 S["ac_ct_CXX"]="g++"

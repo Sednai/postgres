@@ -61,6 +61,11 @@ extern bool is_projection_capable_plan(Plan *plan);
 
 /* External use of these functions is deprecated: */
 extern Sort *make_sort_from_sortclauses(List *sortcls, Plan *lefttree);
+#ifdef PGXC
+extern Sort *make_sort_from_groupcols(List *groupcls,
+						 AttrNumber *grpColIdx,
+						 Plan *lefttree);
+#endif
 extern Agg *make_agg(List *tlist, List *qual,
 		 AggStrategy aggstrategy, AggSplit aggsplit,
 		 int numGroupCols, AttrNumber *grpColIdx, Oid *grpOperators,
@@ -127,7 +132,7 @@ extern void extract_query_dependencies(Node *query,
 /*
  * prototypes for plan/pgxcplan.c
  */
-extern Plan *create_remotedml_plan(PlannerInfo *root, Plan *topplan,
+extern ModifyTable *create_remotedml_plan(PlannerInfo *root, ModifyTable *topplan,
 									CmdType cmdtyp);
 extern Plan *create_remotegrouping_plan(PlannerInfo *root, Plan *local_plan);
 extern Plan *create_remotequery_plan(PlannerInfo *root, RemoteQueryPath *best_path);
@@ -138,6 +143,7 @@ extern List *pgxc_build_relation_tlist(PlannerInfo *root, Path *plan);
 extern void pgxc_copy_path_costsize(Plan *dest, Path *src);
 extern Plan *pgxc_create_gating_plan(PlannerInfo *root, Path *path, Plan *plan, List *quals);
 extern Node *pgxc_replace_nestloop_params(PlannerInfo *root, Node *expr);
+
 #endif
 
 #endif							/* PLANMAIN_H */

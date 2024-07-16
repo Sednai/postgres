@@ -3399,66 +3399,6 @@ UnsetGlobalSnapshotData(void)
 	elog (DEBUG1, "unset snapshot info");
 }
 
-
-/*
- * Entry of snapshot obtention for Postgres-XC node
- */
-static bool
-GetPGXCSnapshotData(Snapshot snapshot)
-{
-	/*
-	 * If this node is in recovery phase,
-	 * snapshot has to be taken directly from WAL information.
-	 */
-	if (RecoveryInProgress())
-		return false;
-
-	/*
-	 * The typical case is that the local Coordinator passes down the snapshot to the
-	 * remote nodes to use, while it itself obtains it from GTM. Autovacuum processes
-	 * need however to connect directly to GTM themselves to obtain XID and snapshot
-	 * information for autovacuum worker threads.
-	 * A vacuum analyze uses a special function to get a transaction ID and signal
-	 * GTM not to include this transaction ID in snapshot.
-	 * A vacuum worker starts as a normal transaction would.
-	 */
-	if (IS_PGXC_DATANODE || IsConnFromCoord() || IsAutoVacuumWorkerProcess())
-	{
-		if (GetSnapshotDataDataNode(snapshot))
-			return true;
-		/* else fallthrough */
-	}
-	else if (IS_PGXC_COORDINATOR && !IsConnFromCoord() && IsNormalProcessingMode())
-	{
-		/* Snapshot has ever been received from remote Coordinator */
-		if (GetSnapshotDataCoordinator(snapshot))
-			return true;
-		/* else fallthrough */
-	}
-
-	/*
-	 * If we have no snapshot, we will use a local one.
-	 * If we are in normal mode, we output a warning though.
-	 * We currently fallback and use a local one at initdb time,
-	 * as well as when a new connection occurs.
-	 * This is also the case for autovacuum launcher.
-	 *
-	 * IsPostmasterEnvironment - checks for initdb
-	 * IsNormalProcessingMode() - checks for new connections
-	 * IsAutoVacuumLauncherProcess - checks for autovacuum launcher process
-	 */
-	if (IS_PGXC_DATANODE && !isRestoreMode &&
-		snapshot_source == SNAPSHOT_UNDEFINED &&
-		IsPostmasterEnvironment &&
-		IsNormalProcessingMode() &&
-		!IsAutoVacuumLauncherProcess())
-	{
-		elog(WARNING, "Do not have a GTM snapshot available");
-	}
-
-	return false;
-}
-
 /*
  * Get snapshot data for Datanode
  * This is usually passed down from the Coordinator

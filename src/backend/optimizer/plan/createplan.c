@@ -42,8 +42,10 @@
 #include "parser/parsetree.h"
 #include "partitioning/partprune.h"
 #include "utils/lsyscache.h"
-
-
+#ifdef PGXC
+#include "optimizer/pgxcplan.h"
+#include "pgxc/pgxc.h"
+#endif 
 /*
  * Flag bits that can appear in the flags argument of create_plan_recurse().
  * These can be OR-ed together.
@@ -254,9 +256,6 @@ static Sort *make_sort_from_pathkeys(Plan *lefttree, List *pathkeys,
 						Relids relids);
 
 #ifdef PGXC
-extern Sort *make_sort_from_groupcols(List *groupcls,
-						 AttrNumber *grpColIdx,
-						 Plan *lefttree);
 #else
 static Sort *make_sort_from_groupcols(List *groupcls,
 						 AttrNumber *grpColIdx,
@@ -365,7 +364,7 @@ static Plan *
 create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 {
 	Plan	   *plan;
-
+	
 	/* Guard against stack overflow due to overly complex plans */
 	check_stack_depth();
 
@@ -501,6 +500,11 @@ create_plan_recurse(PlannerInfo *root, Path *best_path, int flags)
 			plan = (Plan *) create_gather_merge_plan(root,
 													 (GatherMergePath *) best_path);
 			break;
+#ifdef PGXC
+		case T_RemoteQuery:
+			plan =  (Plan *) create_remotequery_plan(root, (RemoteQueryPath*) best_path);
+			break;
+#endif
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) best_path->pathtype);
@@ -2465,6 +2469,10 @@ create_modifytable_plan(PlannerInfo *root, ModifyTablePath *best_path)
 							best_path->onconflict,
 							best_path->epqParam);
 
+#ifdef PGXC
+	plan = (ModifyTable *) pgxc_make_modifytable(root, plan);
+#endif
+
 	copy_generic_path_info(&plan->plan, &best_path->path);
 
 	return plan;
@@ -2488,6 +2496,12 @@ create_limit_plan(PlannerInfo *root, LimitPath *best_path, int flags)
 	plan = make_limit(subplan,
 					  best_path->limitOffset,
 					  best_path->limitCount);
+
+#ifdef PGXC
+		/* See if we can push LIMIT or OFFSET clauses to Datanodes */
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+		plan = (Limit *) create_remotelimit_plan(root, plan);
+#endif /* PGXC */
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -5909,7 +5923,7 @@ make_sort_from_sortclauses(List *sortcls, Plan *lefttree)
  * is used from the SortGroupClause entries.
  */
 #ifdef PGXC
-Sort *
+extern Sort *
 #else
 static Sort *
 #endif

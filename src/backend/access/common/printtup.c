@@ -239,6 +239,9 @@ SendRowDescriptionCols_3(StringInfo buf, TupleDesc typeinfo, List *targetlist, i
 	 * character set overhead.
 	 */
 	enlargeStringInfo(buf, (NAMEDATALEN * MAX_CONVERSION_GROWTH /* attname */
+	#ifdef PGXC
+							+ NAMEDATALEN * MAX_CONVERSION_GROWTH /* typename */
+	#endif
 							+ sizeof(Oid)	/* resorigtbl */
 							+ sizeof(AttrNumber)	/* resorigcol */
 							+ sizeof(Oid)	/* atttypid */
@@ -287,6 +290,18 @@ SendRowDescriptionCols_3(StringInfo buf, TupleDesc typeinfo, List *targetlist, i
 			format = 0;
 
 		pq_writestring(buf, NameStr(att->attname));
+#ifdef PGXC
+		/*
+		 * Send the type name from a Postgres-XC backend node.
+		 * This preserves from OID inconsistencies as architecture is shared nothing.
+		 */
+		if (IsConnFromCoord())
+		{
+			char	   *typename;
+			typename = get_typename(atttypid);
+			pq_writestring(buf, typename);
+		}
+#endif
 		pq_writeint32(buf, resorigtbl);
 		pq_writeint16(buf, resorigcol);
 		pq_writeint32(buf, atttypid);
@@ -315,6 +330,18 @@ SendRowDescriptionCols_2(StringInfo buf, TupleDesc typeinfo, List *targetlist, i
 		atttypid = getBaseTypeAndTypmod(atttypid, &atttypmod);
 
 		pq_sendstring(buf, NameStr(att->attname));
+#ifdef PGXC
+		/*
+		 * Send the type name from a Postgres-XC backend node.
+		 * This preserves from OID inconsistencies as architecture is shared nothing.
+		 */
+		if (IsConnFromCoord())
+		{
+			char	   *typename;
+			typename = get_typename(atttypid);
+			pq_sendstring(&buf, typename);
+		}
+#endif
 		/* column ID only info appears in protocol 3.0 and up */
 		pq_sendint32(buf, atttypid);
 		pq_sendint16(buf, att->attlen);

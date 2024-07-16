@@ -39,6 +39,10 @@
 #include "utils/tuplesort.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
+#ifdef PGXC
+#include "catalog/pgxc_node.h"
+#include "optimizer/pgxcplan.h"
+#endif
 
 
 /* Hook for plugins to get control in ExplainOneQuery() */
@@ -116,6 +120,10 @@ static void ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
 static void ExplainScanTarget(Scan *plan, ExplainState *es);
 static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
+#ifdef PGXC
+#else
+static void show_modifytable_info(ModifyTableState *mtstate, ExplainState *es);
+#endif
 static void show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 					  ExplainState *es);
 static void ExplainMemberNodes(PlanState **planstates, int nplans,
@@ -129,6 +137,11 @@ static void ExplainProperty(const char *qlabel, const char *unit,
 				const char *value, bool numeric, ExplainState *es);
 static void ExplainDummyGroup(const char *objtype, const char *labelname,
 				  ExplainState *es);
+#ifdef PGXC
+static void ExplainExecNodes(ExecNodes *en, ExplainState *es);
+static void ExplainRemoteQuery(RemoteQuery *plan, PlanState *planstate,
+								List *ancestors, ExplainState *es);
+#endif
 static void ExplainXMLTag(const char *tagname, int flags, ExplainState *es);
 static void ExplainJSONLineEnding(ExplainState *es);
 static void ExplainYAMLLineStarting(ExplainState *es);
@@ -165,6 +178,12 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt, const char *queryString,
 			es->costs = defGetBoolean(opt);
 		else if (strcmp(opt->defname, "buffers") == 0)
 			es->buffers = defGetBoolean(opt);
+#ifdef PGXC
+		else if (strcmp(opt->defname, "nodes") == 0)
+			es->nodes = defGetBoolean(opt);
+		else if (strcmp(opt->defname, "num_nodes") == 0)
+			es->num_nodes = defGetBoolean(opt);
+#endif /* PGXC */
 		else if (strcmp(opt->defname, "timing") == 0)
 		{
 			timing_set = true;
@@ -287,6 +306,9 @@ NewExplainState(void)
 
 	/* Set default options (most fields can be left as zeroes). */
 	es->costs = true;
+#ifdef PGXC
+	es->nodes = true;
+#endif /* PGXC */
 	/* Prepare output buffer. */
 	es->str = makeStringInfo();
 
@@ -1102,6 +1124,11 @@ ExplainNode(PlanState *planstate, List *ancestors,
 		case T_WorkTableScan:
 			pname = sname = "WorkTable Scan";
 			break;
+#ifdef PGXC
+		case T_RemoteQuery:
+			pname = sname = "Data Node Scan";
+			break;
+#endif
 		case T_ForeignScan:
 			sname = "Foreign Scan";
 			switch (((ForeignScan *) plan)->operation)
@@ -1285,6 +1312,13 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			if (((Scan *) plan)->scanrelid > 0)
 				ExplainScanTarget((Scan *) plan, es);
 			break;
+#ifdef PGXC
+		case T_RemoteQuery:
+			/* Emit node execution list */
+			ExplainExecNodes(((RemoteQuery *)plan)->exec_nodes, es);
+			ExplainScanTarget((Scan *) plan, es);
+			break;
+#endif
 		case T_IndexScan:
 			{
 				IndexScan  *indexscan = (IndexScan *) plan;
@@ -1541,6 +1575,13 @@ ExplainNode(PlanState *planstate, List *ancestors,
 			show_scan_qual(((BitmapIndexScan *) plan)->indexqualorig,
 						   "Index Cond", planstate, ancestors, es);
 			break;
+#ifdef PGXC
+		case T_RemoteQuery:
+			/* Remote query */
+			ExplainRemoteQuery((RemoteQuery *)plan, planstate, ancestors, es);
+			show_scan_qual(plan->qual, "Coordinator quals", planstate, ancestors, es);
+			break;
+#endif
 		case T_BitmapHeapScan:
 			show_scan_qual(((BitmapHeapScan *) plan)->bitmapqualorig,
 						   "Recheck Cond", planstate, ancestors, es);
@@ -1781,8 +1822,18 @@ ExplainNode(PlanState *planstate, List *ancestors,
 										   planstate, es);
 			break;
 		case T_ModifyTable:
+#ifdef PGXC
+			{
+				/* Remote query planning on DMLs */
+				ModifyTable *mt = (ModifyTable *)plan;
+				ListCell *elt;
+				foreach(elt, mt->remote_plans)
+					ExplainRemoteQuery((RemoteQuery *) lfirst(elt), planstate, ancestors, es);
+			}
+#else
 			show_modifytable_info(castNode(ModifyTableState, planstate), ancestors,
 								  es);
+#endif
 			break;
 		case T_Hash:
 			show_hash_info(castNode(HashState, planstate), es);
@@ -3256,6 +3307,39 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 }
 
 /*
+ * Show extra information for a ModifyTable node
+ */
+#ifdef PGXC
+#else
+static void
+show_modifytable_info(ModifyTableState *mtstate, ExplainState *es)
+{
+	FdwRoutine *fdwroutine = mtstate->resultRelInfo->ri_FdwRoutine;
+
+	/*
+	 * If the first target relation is a foreign table, call its FDW to
+	 * display whatever additional fields it wants to.	For now, we ignore the
+	 * possibility of other targets being foreign tables, although the API for
+	 * ExplainForeignModify is designed to allow them to be processed.
+	 */
+	if (fdwroutine != NULL &&
+		fdwroutine->ExplainForeignModify != NULL)
+	{
+		ModifyTable *node = (ModifyTable *) mtstate->ps.plan;
+		List	   *fdw_private = (List *) linitial(node->fdwPrivLists);
+
+		fdwroutine->ExplainForeignModify(mtstate,
+										 mtstate->resultRelInfo,
+										 fdw_private,
+										 0,
+										 es);
+	}
+}
+#endif
+
+
+
+/*
  * Explain the constituent plans of a ModifyTable, Append, MergeAppend,
  * BitmapAnd, or BitmapOr node.
  *
@@ -3793,6 +3877,83 @@ ExplainSeparatePlans(ExplainState *es)
 			break;
 	}
 }
+
+#ifdef PGXC
+/*
+ * Emit execution node list number.
+ */
+static void
+ExplainExecNodes(ExecNodes *en, ExplainState *es)
+{
+	int primary_node_count = en ? list_length(en->primarynodelist) : 0;
+	int node_count = en ? list_length(en->nodeList) : 0;
+
+	if (!es->num_nodes)
+		return;
+
+	if (es->format == EXPLAIN_FORMAT_TEXT)
+	{
+		appendStringInfo(es->str, " (primary node count=%d, node count=%d)",
+						 primary_node_count, node_count);
+	}
+	else
+	{
+		ExplainPropertyInteger("Primary node count", NULL, primary_node_count, es);
+		ExplainPropertyInteger("Node count", NULL, node_count, es);
+	}
+}
+
+/*
+ * Emit remote query planning details
+ */
+static void
+ExplainRemoteQuery(RemoteQuery *plan, PlanState *planstate, List *ancestors, ExplainState *es)
+{
+	ExecNodes	*en = plan->exec_nodes;
+	/* add names of the nodes if they exist */
+	if (en && es->nodes)
+	{
+		StringInfo node_names = makeStringInfo();
+		ListCell *lcell;
+		char	*sep;
+		int		node_no;
+		if (en->primarynodelist)
+		{
+			sep = "";
+			foreach(lcell, en->primarynodelist)
+			{
+				node_no = lfirst_int(lcell);
+				appendStringInfo(node_names, "%s%s", sep,
+									get_pgxc_nodename(PGXCNodeGetNodeOid(node_no, PGXC_NODE_DATANODE)));
+				sep = ", ";
+			}
+			ExplainPropertyText("Primary node/s", node_names->data, es);
+		}
+		if (en->nodeList)
+		{
+			resetStringInfo(node_names);
+			sep = "";
+			foreach(lcell, en->nodeList)
+			{
+				node_no = lfirst_int(lcell);
+				appendStringInfo(node_names, "%s%s", sep,
+									get_pgxc_nodename(PGXCNodeGetNodeOid(node_no, PGXC_NODE_DATANODE)));
+				sep = ", ";
+			}
+			ExplainPropertyText("Node/s", node_names->data, es);
+		}
+	}
+
+	if (en && en->en_expr)
+		show_expression((Node *)en->en_expr, "Node expr", planstate, ancestors,
+						es->verbose, es);
+
+	/* Remote query statement */
+	if (es->verbose)
+		ExplainPropertyText("Remote query", plan->sql_statement, es);
+}
+#endif
+
 
 /*
  * Emit opening or closing XML tag.

@@ -46,7 +46,10 @@
 #include "partitioning/partprune.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/lsyscache.h"
-
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#include "optimizer/pgxcplan.h"
+#endif
 
 /* results of subquery_is_pushdown_safe */
 typedef struct pushdown_safety_info
@@ -718,6 +721,11 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	 * its tlist.
 	 */
 	required_outer = rel->lateral_relids;
+#ifdef PGXC
+	elog(WARNING,"[DEBUG](set_plain_rel_pathlist)->create_plainrel_rqpath");
+	if (!create_plainrel_rqpath(root, rel, rte, required_outer))
+	{
+#endif
 
 	/* Consider sequential scan */
 	add_path(rel, create_seqscan_path(root, rel, required_outer, 0));
@@ -731,6 +739,11 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 
 	/* Consider TID scans */
 	create_tidscan_paths(root, rel);
+
+#ifdef PGXC
+	}
+#endif
+
 }
 
 /*

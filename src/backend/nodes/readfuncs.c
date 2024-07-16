@@ -35,6 +35,9 @@
 #include "nodes/plannodes.h"
 #include "nodes/readfuncs.h"
 #include "utils/builtins.h"
+#ifdef PGXC
+#include "access/htup.h"
+#endif
 
 
 /*
@@ -1345,6 +1348,9 @@ _readRangeTblEntry(void)
 	READ_NODE_FIELD(alias);
 	READ_NODE_FIELD(eref);
 	READ_ENUM_FIELD(rtekind, RTEKind);
+#ifdef PGXC
+	READ_STRING_FIELD(relname);
+#endif
 
 	switch (local_node->rtekind)
 	{
@@ -1399,6 +1405,11 @@ _readRangeTblEntry(void)
 			READ_NODE_FIELD(coltypmods);
 			READ_NODE_FIELD(colcollations);
 			break;
+#ifdef PGXC
+		case RTE_REMOTE_DUMMY:
+			/* Nothing to do */
+			break;
+#endif /* PGXC */
 		default:
 			elog(ERROR, "unrecognized RTE kind: %d",
 				 (int) local_node->rtekind);

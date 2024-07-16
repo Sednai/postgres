@@ -29,6 +29,12 @@
 #include "rewrite/rewriteManip.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#include "access/htup.h"
+#include "catalog/pg_aggregate.h"
+#include "utils/syscache.h"
+#endif
 
 
 typedef struct
@@ -306,6 +312,10 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 	const char *err;
 	bool		errkind;
 	bool		isAgg = IsA(expr, Aggref);
+#ifdef PGXC
+	HeapTuple	aggTuple;
+	Form_pg_aggregate aggform;
+#endif /* PGXC */
 
 	if (isAgg)
 	{
@@ -316,6 +326,32 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 		filter = agg->aggfilter;
 		location = agg->location;
 		p_levelsup = &agg->agglevelsup;
+
+#ifdef PGXC
+	/*
+	 * Return data type of PGXC Datanode's aggregate should always return the
+	 * result of transition function, that is expected by collection function
+	 * on the Coordinator.
+	 * Look up the aggregate definition and replace agg->aggtype
+	 */
+/*
+NEED TO ADD INFO TO PG_AGGREGATE.DAT FIRST !!
+	aggTuple = SearchSysCache(AGGFNOID,
+					  ObjectIdGetDatum(agg->aggfnoid),
+					  0, 0, 0);
+	if (!HeapTupleIsValid(aggTuple))
+		elog(ERROR, "cache lookup failed for aggregate %u",
+			 agg->aggfnoid);
+	aggform = (Form_pg_aggregate) GETSTRUCT(aggTuple);
+	agg->aggtrantype = aggform->aggtranstype;
+	agg->agghas_collectfn = OidIsValid(aggform->aggcollectfn);
+	if (IS_PGXC_DATANODE)
+		agg->aggtype = agg->aggtrantype;
+
+	ReleaseSysCache(aggTuple);
+*/
+#endif
+
 	}
 	else
 	{
@@ -341,6 +377,7 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 	while (min_varlevel-- > 0)
 		pstate = pstate->parentParseState;
 	pstate->p_hasAggs = true;
+
 
 	/*
 	 * Check to see if the aggregate function is in an invalid place within

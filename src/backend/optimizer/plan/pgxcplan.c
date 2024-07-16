@@ -55,6 +55,7 @@
 #include "utils/syscache.h"
 #include "utils/fmgroids.h"
 #include "utils/tqual.h"
+#include "utils/ruleutils.h"
 #include "access/htup_details.h"
 #include "nodes/relation.h"
 
@@ -200,7 +201,7 @@ pgxc_build_shippable_tlist(List *tlist, List *unshippabl_quals, bool has_aggs)
 	 * expressions (from targetlist and unshippable quals and add them to
 	 * remote targetlist.
 	 */
-	int flags =  (has_aggs ? PVC_INCLUDE_AGGREGATES : NULL);
+	int flags =  (has_aggs ? PVC_INCLUDE_AGGREGATES : 0);
 
 	aggs_n_vars = pull_var_clause((Node *)unshippable_expr,flags | PVC_RECURSE_PLACEHOLDERS);
 	
@@ -274,7 +275,7 @@ pgxc_build_shippable_query_baserel(PlannerInfo *root, RemoteQueryPath *rqpath,
 	 * Build the target list for this relation. We included only the Vars to
 	 * start with.
 	 */
-	tlist = pgxc_build_relation_tlist(baserel,&rqpath->path);
+	tlist = pgxc_build_relation_tlist(root,&rqpath->path);
 	/* Take care of parameterization in the target list */
 	if (rqpath->path.param_info)
 		tlist = (List *) pgxc_replace_nestloop_params(root, (Node *) tlist);
@@ -471,7 +472,7 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 	 * targetlist need to be restamped with the right varno (left or right) and
 	 * varattno to match the columns of the JOINing queries.
 	 */
-	tlist = pgxc_build_relation_tlist(rqpath->path.parent,&rqpath->path);
+	tlist = pgxc_build_relation_tlist(root,&rqpath->path);
 	varlist = list_concat(pull_var_clause((Node *)tlist, PVC_RECURSE_PLACEHOLDERS),
 						pull_var_clause((Node *)*unshippable_quals,  PVC_RECURSE_PLACEHOLDERS));
 	*rep_tlist = add_to_flat_tlist(NIL, varlist);
@@ -486,7 +487,7 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 		TargetEntry *tle;
 		Assert(IsA(var, Var));
 
-		tle = tlist_member((Node *)var, left_rep_tlist);
+		tle = tlist_member((Expr *)var, left_rep_tlist);
 		if (tle)
 		{
 			var->varno = left_rtr->rtindex;
@@ -494,7 +495,7 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 		}
 		else
 		{
-			tle = tlist_member((Node *)var, right_rep_tlist);
+			tle = tlist_member((Expr *)var, right_rep_tlist);
 			if (tle)
 			{
 				var->varno = right_rtr->rtindex;
@@ -603,7 +604,7 @@ pgxc_rqplan_adjust_vars(RemoteQuery *rqplan, Node *node)
 		TargetEntry	*qry_tle;
 		Var *var = (Var *)lfirst(lcell_var);
 
-		ref_tle = tlist_member((Node *)var, rqplan->coord_var_tlist);
+		ref_tle = tlist_member((Expr *)var, rqplan->coord_var_tlist);
 		qry_tle = get_tle_by_resno(rqplan->query_var_tlist, ref_tle->resno);
 		if (!IsA(qry_tle->expr, Var))
 			elog(ERROR, "expected a VAR node but got node of type %d", nodeTag(qry_tle->expr));
@@ -710,7 +711,7 @@ create_remotequery_plan(PlannerInfo *root, RemoteQueryPath *best_path)
 	char			*rte_name;
 
 	/* Get the target list required from this plan */
-	tlist = pgxc_build_relation_tlist(rel,&best_path->path);
+	tlist = pgxc_build_relation_tlist(root,&best_path->path);
 	/* Replace the lateral refrences if any */
 	if (best_path->path.param_info)
 		tlist = (List *)pgxc_replace_nestloop_params(root, (Node *)tlist);
@@ -842,7 +843,7 @@ pgxc_add_returning_list(RemoteQuery *rq, List *ret_list, int rel_index)
 	 * Returning lists cannot contain aggregates and
 	 * we are not supporting place holders for now
 	 */
-	varlist = pull_var_clause((Node *)ret_list, NULL);
+	varlist = pull_var_clause((Node *)ret_list, 0);
 
 	/*
 	 * For every entry in the returning list if the entry belongs to the
@@ -887,12 +888,15 @@ pgxc_add_returning_list(RemoteQuery *rq, List *ret_list, int rel_index)
 Plan *
 pgxc_make_modifytable(PlannerInfo *root, Plan *topplan)
 {
+	elog(WARNING,"[DEBUG]: pgxc_make_modifytable (coord: %d | cfc: %d)",(int) IS_PGXC_COORDINATOR,IsConnFromCoord());
+
 	ModifyTable *mt = (ModifyTable *)topplan;
 
 	/* We expect to work only on ModifyTable node */
-	if (!IsA(topplan, ModifyTable))
-		elog(ERROR, "Unexpected node type: %d", topplan->type);
-
+	if (!IsA(topplan, ModifyTable)) {
+		elog(WARNING, "Unexpected node type: %d", topplan->type);
+		return topplan;
+	}
 	/*
 	 * PGXC should apply INSERT/UPDATE/DELETE to a Datanode. We are overriding
 	 * normal Postgres behavior by modifying final plan or by adding a node on
@@ -902,10 +906,11 @@ pgxc_make_modifytable(PlannerInfo *root, Plan *topplan)
 	 * table plan on the top. We should send queries to the remote nodes only
 	 * when there is something to modify.
 	 */
-	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-		topplan = create_remotedml_plan(root, topplan, mt->operation);
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord()) {
+		mt = create_remotedml_plan(root, mt, mt->operation);
+	}
 
-	return topplan;
+	return mt;
 }
 
 /*
@@ -1354,17 +1359,20 @@ pgxc_build_dml_statement(PlannerInfo *root, CmdType cmdtype,
  * For every target relation, add a remote query node to carry out remote
  * operations.
  */
-Plan *
-create_remotedml_plan(PlannerInfo *root, Plan *topplan, CmdType cmdtyp)
+ModifyTable *
+create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 {
-	ModifyTable			*mt = (ModifyTable *)topplan;
 	ListCell			*rel;
 	int					relcount = -1;
 	RelationAccessType	accessType;
+	elog(WARNING,"[DEBUG](create_remotedml_plan)");
+	
 
 	/* We expect to work only on ModifyTable node */
+	/*
 	if (!IsA(topplan, ModifyTable))
 		elog(ERROR, "Unexpected node type: %d", topplan->type);
+	*/
 
 	switch(cmdtyp)
 	{
@@ -1381,12 +1389,15 @@ create_remotedml_plan(PlannerInfo *root, Plan *topplan, CmdType cmdtyp)
 			elog(ERROR, "Unexpected command type: %d", cmdtyp);
 			return NULL;
 	}
+	
+	elog(WARNING,"[DEBUG](create_remotedml_plan): # relations: %d", list_length(mt->resultRelations));
 
 	/*
 	 * For every result relation, build a remote plan to execute remote DML.
 	 */
 	foreach(rel, mt->resultRelations)
 	{
+		elog(WARNING,"[DEBUG](create_remotedml_plan): remote_plan start add");
 		Index			resultRelationIndex = lfirst_int(rel);
 		RangeTblEntry	*res_rel;
 		RelationLocInfo	*rel_loc_info;
@@ -1400,16 +1411,18 @@ create_remotedml_plan(PlannerInfo *root, Plan *topplan, CmdType cmdtyp)
 		res_rel = rt_fetch(resultRelationIndex, root->parse->rtable);
 
 		/* Bad relation ? */
-		if (res_rel == NULL || res_rel->rtekind != RTE_RELATION)
+		if (res_rel == NULL || res_rel->rtekind != RTE_RELATION) {
+			elog(WARNING,"[DEBUG]: Bad relation");
 			continue;
-
+		}
 		relname = get_rel_name(res_rel->relid);
 
 		/* Get location info of the target table */
 		rel_loc_info = GetRelationLocInfo(res_rel->relid);
-		if (rel_loc_info == NULL)
+		if (rel_loc_info == NULL) {
+			elog(WARNING,"[DEBUG]: GetRelationLocInfo failed: %d",res_rel->relid);
 			continue;
-
+		}
 		fstep = make_remotequery(NIL, NIL, resultRelationIndex);
 
 		/*
@@ -1460,9 +1473,10 @@ create_remotedml_plan(PlannerInfo *root, Plan *topplan, CmdType cmdtyp)
 		fstep->scan.scanrelid = list_length(root->parse->rtable);
 
 		mt->remote_plans = lappend(mt->remote_plans, fstep);
+		elog(WARNING,"[DEBUG](create_remotedml_plan): remote_plan added");
 	}
 
-	return (Plan *)mt;
+	return mt;
 }
 
 /*
@@ -1789,11 +1803,11 @@ pgxc_add_to_flat_tlist(List *remote_tlist, Node *expr, Index ressortgroupref)
 	TargetEntry *remote_tle;
 
 
-	remote_tle = tlist_member(expr, remote_tlist);
+	remote_tle = tlist_member((Expr*) expr, remote_tlist);
 
 	if (!remote_tle)
 	{
-		remote_tle = makeTargetEntry(copyObject(expr),
+		remote_tle = makeTargetEntry(copyObject((Expr*) expr),
 							  list_length(remote_tlist) + 1,
 							  NULL,
 							  false);
@@ -3011,7 +3025,7 @@ create_remotesort_plan(PlannerInfo *root, Plan *local_plan)
 			break;
 		}
 
-		remote_base_tle = tlist_member((Node *)remote_tle->expr,
+		remote_base_tle = tlist_member((Expr *)remote_tle->expr,
 										remote_scan->base_tlist);
 		/*
 		 * If we didn't find the sorting expression in base_tlist, can't ship

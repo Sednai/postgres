@@ -654,6 +654,7 @@ GetAllCoordNodes(void)
 void
 RelationBuildLocator(Relation rel)
 {
+	elog(WARNING,"[DEBUG](RelationBuildLocator)");
 	Relation	pcrel;
 	ScanKeyData	skey;
 	SysScanDesc	pcscan;
@@ -681,6 +682,8 @@ RelationBuildLocator(Relation rel)
 		heap_close(pcrel, AccessShareLock);
 		return;
 	}
+
+	elog(WARNING,"[DEBUG](RelationBuildLocator) -> HeapTupleIsValid");
 
 	pgxc_class = (Form_pgxc_class) GETSTRUCT(htup);
 

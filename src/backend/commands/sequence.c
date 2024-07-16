@@ -44,6 +44,12 @@
 #include "utils/resowner.h"
 #include "utils/syscache.h"
 #include "utils/varlena.h"
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+/* PGXC_COORD */
+#include "access/gtm.h"
+#include "utils/memutils.h"
+#endif
 
 
 /*
@@ -86,6 +92,28 @@ typedef SeqTableData *SeqTable;
 
 static HTAB *seqhashtab = NULL; /* hash table for SeqTable items */
 
+#ifdef PGXC
+/*
+ * Arguments for callback of sequence drop on GTM
+ */
+typedef struct drop_sequence_callback_arg
+{
+	char *seqname;
+	GTM_SequenceDropType type;
+	GTM_SequenceKeyType key;
+} drop_sequence_callback_arg;
+
+/*
+ * Arguments for callback of sequence rename on GTM
+ */
+typedef struct rename_sequence_callback_arg
+{
+	char *newseqname;
+	char *oldseqname;
+} rename_sequence_callback_arg;
+#endif
+
+
 /*
  * last_used_seq is updated by nextval() to point to the last used
  * sequence.
@@ -98,12 +126,22 @@ static void create_seq_hashtable(void);
 static void init_sequence(Oid relid, SeqTable *p_elm, Relation *p_rel);
 static Form_pg_sequence_data read_seq_tuple(Relation rel,
 			   Buffer *buf, HeapTuple seqdatatuple);
+
+#ifdef PGXC
+static void init_params(ParseState *pstate, List *options, bool for_identity,
+			bool isInit,
+			Form_pg_sequence seqform,
+			Form_pg_sequence_data seqdataform,
+			bool *need_seq_rewrite,
+			List **owned_by, bool *is_restart);
+#else
 static void init_params(ParseState *pstate, List *options, bool for_identity,
 			bool isInit,
 			Form_pg_sequence seqform,
 			Form_pg_sequence_data seqdataform,
 			bool *need_seq_rewrite,
 			List **owned_by);
+#endif
 static void do_setval(Oid relid, int64 next, bool iscalled);
 static void process_owned_by(Relation seqrel, List *owned_by, bool for_identity);
 
@@ -130,6 +168,14 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	Datum		pgs_values[Natts_pg_sequence];
 	bool		pgs_nulls[Natts_pg_sequence];
 	int			i;
+#ifdef PGXC /* PGXC_COORD */
+	GTM_Sequence	start_value = 1;
+	GTM_Sequence	min_value = 1;
+	GTM_Sequence	max_value = InvalidSequenceValue;
+	GTM_Sequence	increment = 1;
+	bool		cycle = false;
+	bool		is_restart;
+#endif
 
 	/* Unlogged sequences are not implemented -- not clear if useful. */
 	if (seq->sequence->relpersistence == RELPERSISTENCE_UNLOGGED)
@@ -164,10 +210,15 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	}
 
 	/* Check and set all option values */
+#ifdef PGXC
+	init_params(pstate, seq->options, seq->for_identity, true,
+				&seqform, &seqdataform,
+				&need_seq_rewrite, &owned_by, &is_restart);
+#else
 	init_params(pstate, seq->options, seq->for_identity, true,
 				&seqform, &seqdataform,
 				&need_seq_rewrite, &owned_by);
-
+#endif
 	/*
 	 * Create relation (and fill value[] and null[] for the tuple)
 	 */
@@ -233,7 +284,7 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	/* process OWNED BY if given */
 	if (owned_by)
 		process_owned_by(rel, owned_by, seq->for_identity);
-
+	
 	heap_close(rel, NoLock);
 
 	/* fill in pg_sequence */
@@ -256,6 +307,43 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 
 	heap_freetuple(tuple);
 	heap_close(rel, RowExclusiveLock);
+
+	increment = seqform.seqincrement;
+	min_value = seqform.seqmin;
+	max_value = seqform.seqmax;
+	start_value = seqform.seqstart;
+	cycle = seqform.seqcycle;
+
+#ifdef PGXC  /* PGXC_COORD */
+	/*
+	 * Remote Coordinator is in charge of creating sequence in GTM.
+	 * If sequence is temporary, it is not necessary to create it on GTM.
+	 */
+	if (IS_PGXC_COORDINATOR &&
+		!IsConnFromCoord() &&
+		(seq->sequence->relpersistence == RELPERSISTENCE_PERMANENT ||
+		 seq->sequence->relpersistence == RELPERSISTENCE_UNLOGGED))
+	{
+		char *seqname = GetGlobalSeqName(rel, NULL, NULL);
+
+		/* We also need to create it on the GTM */
+		if (CreateSequenceGTM(seqname,
+							  increment,
+							  min_value,
+							  max_value,
+				start_value, cycle) < 0)
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_CONNECTION_FAILURE),
+					 errmsg("GTM error, could not create sequence")));
+		}
+
+		/* Define a callback to drop sequence on GTM in case transaction fails  */
+		register_sequence_cb(seqname, GTM_SEQ_FULL_NAME, GTM_CREATE_SEQ);
+
+		pfree(seqname);
+	}
+#endif
 
 	return address;
 }
@@ -435,6 +523,15 @@ AlterSequence(ParseState *pstate, AlterSeqStmt *stmt)
 	Relation	rel;
 	HeapTuple	seqtuple;
 	HeapTuple	newdatatuple;
+#ifdef PGXC
+	GTM_Sequence	start_value;
+	GTM_Sequence	last_value;
+	GTM_Sequence	min_value;
+	GTM_Sequence	max_value;
+	GTM_Sequence	increment;
+	bool			cycle;
+	bool			is_restart;
+#endif
 
 	/* Open and lock sequence, and check for ownership along the way. */
 	relid = RangeVarGetRelidExtended(stmt->sequence,
@@ -471,10 +568,24 @@ AlterSequence(ParseState *pstate, AlterSeqStmt *stmt)
 	UnlockReleaseBuffer(buf);
 
 	/* Check and set new values */
+#ifdef PGXC
+	init_params(pstate, stmt->options, stmt->for_identity, false,
+				seqform, newdataform,
+				&need_seq_rewrite, &owned_by,&is_restart);
+#else
 	init_params(pstate, stmt->options, stmt->for_identity, false,
 				seqform, newdataform,
 				&need_seq_rewrite, &owned_by);
+#endif
 
+#ifdef PGXC
+	increment = seqform->seqincrement;
+	min_value = seqform->seqmin;
+	max_value = seqform->seqmax;
+	start_value = seqform->seqstart;
+	last_value = newdataform->last_value;
+	cycle = seqform->seqcycle;
+#endif
 	/* Clear local cache so that we don't think we have cached numbers */
 	/* Note that we do not change the currval() state */
 	elm->cached = elm->last;
@@ -514,6 +625,33 @@ AlterSequence(ParseState *pstate, AlterSeqStmt *stmt)
 
 	heap_close(rel, RowExclusiveLock);
 	relation_close(seqrel, NoLock);
+
+#ifdef PGXC
+	/*
+	 * Remote Coordinator is in charge of create sequence in GTM
+	 * If sequence is temporary, no need to go through GTM.
+	 */
+	if (IS_PGXC_COORDINATOR &&
+		!IsConnFromCoord() &&
+		seqrel->rd_backend != MyBackendId)
+	{
+		char *seqname = GetGlobalSeqName(seqrel, NULL, NULL);
+
+		/* We also need to create it on the GTM */
+		if (AlterSequenceGTM(seqname,
+							 increment,
+							 min_value,
+							 max_value,
+							 start_value,
+							 last_value,
+							 cycle,
+							 is_restart) < 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_CONNECTION_FAILURE),
+					 errmsg("GTM error, could not alter sequence")));
+		pfree(seqname);
+	}
+#endif
 
 	return address;
 }
@@ -594,7 +732,9 @@ nextval_internal(Oid relid, bool check_permissions)
 				rescnt = 0;
 	bool		cycle;
 	bool		logit = false;
-
+#ifdef PGXC
+	bool		is_temp;
+#endif
 	/* open and lock sequence */
 	init_sequence(relid, &elm, &seqrel);
 
@@ -609,6 +749,10 @@ nextval_internal(Oid relid, bool check_permissions)
 	/* read-only transactions may only modify temp sequences */
 	if (!seqrel->rd_islocaltemp)
 		PreventCommandIfReadOnly("nextval()");
+
+#ifdef PGXC
+	is_temp = seqrel->rd_backend == MyBackendId;
+#endif
 
 	/*
 	 * Forbid this during parallel operation because, to make it work, the
@@ -641,9 +785,37 @@ nextval_internal(Oid relid, bool check_permissions)
 	/* lock page' buffer and read tuple */
 	seq = read_seq_tuple(seqrel, &buf, &seqdatatuple);
 	page = BufferGetPage(buf);
+#ifdef PGXC  /* PGXC_COORD */
+	if (IS_PGXC_COORDINATOR && !is_temp)
+	{
+		char *seqname = GetGlobalSeqName(seqrel, NULL, NULL);
 
+		/*
+		 * Above, we still use the page as a locking mechanism to handle
+		 * concurrency
+		 */
+		result = (int64) GetNextValGTM(seqname);
+		pfree(seqname);
+
+		/* Update the on-disk data */
+		seq->last_value = result; /* last fetched number */
+		seq->is_called = true;
+
+		/* save info in local cache */
+		elm->last = result;			/* last returned number */
+		elm->cached = result;		/* last fetched number */
+		elm->last_valid = true;
+
+		last_used_seq = elm;
+	}
+	else
+	{
+#endif
 	elm->increment = incby;
 	last = next = result = seq->last_value;
+#ifdef PGXC
+	}
+#endif
 	fetch = cache;
 	log = seq->log_cnt;
 
@@ -687,6 +859,11 @@ nextval_internal(Oid relid, bool check_permissions)
 		 * Check MAXVALUE for ascending sequences and MINVALUE for descending
 		 * sequences
 		 */
+#ifdef PGXC
+		/* Temporary sequences go through normal process */
+		if (is_temp)
+		{
+#endif
 		if (incby > 0)
 		{
 			/* ascending sequence */
@@ -733,20 +910,36 @@ nextval_internal(Oid relid, bool check_permissions)
 			else
 				next += incby;
 		}
+#ifdef PGXC
+		}
+#endif
 		fetch--;
 		if (rescnt < cache)
 		{
 			log--;
 			rescnt++;
+#ifdef PGXC
+			/* Temporary sequences can go through normal process */
+			if (is_temp)
+			{
+#endif
 			last = next;
 			if (rescnt == 1)	/* if it's first result - */
 				result = next;	/* it's what to return */
+#ifdef PGXC
+			}
+#endif
 		}
 	}
 
 	log -= fetch;				/* adjust for any unfetched numbers */
 	Assert(log >= 0);
 
+#ifdef PGXC
+	/* Temporary sequences go through normal process */
+	if (is_temp)
+	{
+#endif
 	/* save info in local cache */
 	elm->last = result;			/* last returned number */
 	elm->cached = last;			/* last fetched number */
@@ -814,7 +1007,13 @@ nextval_internal(Oid relid, bool check_permissions)
 	seq->log_cnt = log;			/* how much is logged */
 
 	END_CRIT_SECTION();
-
+#ifdef PGXC
+	}
+	else
+	{
+		seq->log_cnt = log;
+	}
+#endif
 	UnlockReleaseBuffer(buf);
 
 	relation_close(seqrel, NoLock);
@@ -913,6 +1112,9 @@ do_setval(Oid relid, int64 next, bool iscalled)
 	Form_pg_sequence pgsform;
 	int64		maxv,
 				minv;
+#ifdef PGXC
+	bool		is_temp;
+#endif
 
 	/* open and lock sequence */
 	init_sequence(relid, &elm, &seqrel);
@@ -942,6 +1144,10 @@ do_setval(Oid relid, int64 next, bool iscalled)
 	 */
 	PreventCommandIfParallelMode("setval()");
 
+#ifdef PGXC
+	is_temp = seqrel->rd_backend == MyBackendId;
+#endif
+
 	/* lock page' buffer and read tuple */
 	seq = read_seq_tuple(seqrel, &buf, &seqdatatuple);
 
@@ -960,6 +1166,33 @@ do_setval(Oid relid, int64 next, bool iscalled)
 						bufv, RelationGetRelationName(seqrel),
 						bufm, bufx)));
 	}
+
+#ifdef PGXC
+	if (IS_PGXC_COORDINATOR && !is_temp)
+	{
+		char *seqname = GetGlobalSeqName(seqrel, NULL, NULL);
+
+		if (SetValGTM(seqname, next, iscalled) < 0)
+			ereport(ERROR,
+					(errcode(ERRCODE_CONNECTION_FAILURE),
+					 errmsg("GTM error, could not obtain sequence value")));
+		pfree(seqname);
+		/* Update the on-disk data */
+		seq->last_value = next; /* last fetched number */
+		seq->is_called = iscalled;
+		seq->log_cnt = (iscalled) ? 0 : 1;
+
+		if (iscalled)
+		{
+			elm->last = next;		/* last returned number */
+			elm->last_valid = true;
+		}
+
+		elm->cached = elm->last;
+	}
+	else
+	{
+#endif
 
 	/* Set the currval() state only if iscalled = true */
 	if (iscalled)
@@ -1004,6 +1237,10 @@ do_setval(Oid relid, int64 next, bool iscalled)
 	}
 
 	END_CRIT_SECTION();
+
+#ifdef PGXC
+	}
+#endif
 
 	UnlockReleaseBuffer(buf);
 
@@ -1229,12 +1466,21 @@ read_seq_tuple(Relation rel, Buffer *buf, HeapTuple seqdatatuple)
  * break pg_upgrade by causing unwanted changes in the sequence's relfilenode.
  */
 static void
+#ifdef PGXC
+init_params(ParseState *pstate, List *options, bool for_identity,
+			bool isInit,
+			Form_pg_sequence seqform,
+			Form_pg_sequence_data seqdataform,
+			bool *need_seq_rewrite,
+			List **owned_by, bool *is_restart)
+#else
 init_params(ParseState *pstate, List *options, bool for_identity,
 			bool isInit,
 			Form_pg_sequence seqform,
 			Form_pg_sequence_data seqdataform,
 			bool *need_seq_rewrite,
 			List **owned_by)
+#endif
 {
 	DefElem    *as_type = NULL;
 	DefElem    *start_value = NULL;
@@ -1250,7 +1496,9 @@ init_params(ParseState *pstate, List *options, bool for_identity,
 
 	*need_seq_rewrite = false;
 	*owned_by = NIL;
-
+#ifdef PGXC
+	*is_restart = false;
+#endif
 	foreach(option, options)
 	{
 		DefElem    *defel = (DefElem *) lfirst(option);
@@ -1568,6 +1816,9 @@ init_params(ParseState *pstate, List *options, bool for_identity,
 			seqdataform->last_value = defGetInt64(restart_value);
 		else
 			seqdataform->last_value = seqform->seqstart;
+#ifdef PGXC
+		*is_restart = true;
+#endif
 		seqdataform->is_called = false;
 		seqdataform->log_cnt = 0;
 	}
@@ -1624,6 +1875,75 @@ init_params(ParseState *pstate, List *options, bool for_identity,
 		seqform->seqcache = 1;
 	}
 }
+
+#ifdef PGXC
+/*
+ * GetGlobalSeqName
+ *
+ * Returns a global sequence name adapted to GTM
+ * Name format is dbname.schemaname.seqname
+ * so as to identify in a unique way in the whole cluster each sequence
+ */
+char *
+GetGlobalSeqName(Relation seqrel, const char *new_seqname, const char *new_schemaname)
+{
+	char *seqname, *dbname, *schemaname, *relname;
+	int charlen;
+
+	/* Get all the necessary relation names */
+	dbname = get_database_name(seqrel->rd_node.dbNode);
+
+	if (new_seqname)
+		relname = (char *) new_seqname;
+	else
+		relname = RelationGetRelationName(seqrel);
+
+	if (new_schemaname)
+		schemaname = (char *) new_schemaname;
+	else
+		schemaname = get_namespace_name(RelationGetNamespace(seqrel));
+
+	/* Calculate the global name size including the dots and \0 */
+	charlen = strlen(dbname) + strlen(schemaname) + strlen(relname) + 3;
+	seqname = (char *) palloc(charlen);
+
+	/* Form a unique sequence name with schema and database name for GTM */
+	snprintf(seqname,
+			 charlen,
+			 "%s.%s.%s",
+			 dbname,
+			 schemaname,
+			 relname);
+
+	if (dbname)
+		pfree(dbname);
+	if (schemaname)
+		pfree(schemaname);
+
+	return seqname;
+}
+
+/*
+ * IsTempSequence
+ *
+ * Determine if given sequence is temporary or not.
+ */
+bool
+IsTempSequence(Oid relid)
+{
+	Relation seqrel;
+	bool res;
+	SeqTable	elm;
+
+	/* open and AccessShareLock sequence */
+	init_sequence(relid, &elm, &seqrel);
+
+	res = seqrel->rd_backend == MyBackendId;
+	relation_close(seqrel, NoLock);
+	return res;
+}
+#endif
+
 
 /*
  * Process an OWNED BY option for CREATE/ALTER SEQUENCE
@@ -1950,3 +2270,134 @@ seq_mask(char *page, BlockNumber blkno)
 
 	mask_unused_space(page);
 }
+
+#ifdef PGXC
+/*
+ * Register a callback for a sequence rename drop on GTM
+ */
+void
+register_sequence_rename_cb(char *oldseqname, char *newseqname)
+{
+	rename_sequence_callback_arg *args;
+	char *oldseqnamearg = NULL;
+	char *newseqnamearg = NULL;
+
+	/* All the arguments are transaction-dependent, so save them in TopTransactionContext */
+	args = (rename_sequence_callback_arg *)
+		MemoryContextAlloc(TopTransactionContext, sizeof(rename_sequence_callback_arg));
+
+	oldseqnamearg = MemoryContextAlloc(TopTransactionContext, strlen(oldseqname) + 1);
+	newseqnamearg = MemoryContextAlloc(TopTransactionContext, strlen(newseqname) + 1);
+	sprintf(oldseqnamearg, "%s", oldseqname);
+	sprintf(newseqnamearg, "%s", newseqname);
+
+	args->oldseqname = oldseqnamearg;
+	args->newseqname = newseqnamearg;
+
+	RegisterGTMCallback(rename_sequence_cb, (void *) args);
+}
+
+/*
+ * Callback a sequence rename
+ */
+void
+rename_sequence_cb(GTMEvent event, void *args)
+{
+	rename_sequence_callback_arg *cbargs = (rename_sequence_callback_arg *) args;
+	char *newseqname = cbargs->newseqname;
+	char *oldseqname = cbargs->oldseqname;
+	int err = 0;
+
+	/*
+	 * A sequence is here renamed to its former name only when a transaction
+	 * that involved a sequence rename was dropped.
+	 */
+	switch (event)
+	{
+		case GTM_EVENT_ABORT:
+			/*
+			 * Here sequence is renamed to its former name
+			 * so what was new becomes old.
+			 */
+			err = RenameSequenceGTM(newseqname, oldseqname);
+			break;
+		case GTM_EVENT_COMMIT:
+		case GTM_EVENT_PREPARE:
+			/* Nothing to do */
+			break;
+		default:
+			Assert(0);
+	}
+
+	/* Report error if necessary */
+	if (err < 0 && event != GTM_EVENT_ABORT)
+		ereport(ERROR,
+				(errcode(ERRCODE_CONNECTION_FAILURE),
+				 errmsg("GTM error, could not rename sequence")));
+}
+
+
+/*
+ * Register a callback for a sequence drop on GTM
+ */
+void
+register_sequence_cb(char *seqname, GTM_SequenceKeyType key, GTM_SequenceDropType type)
+{
+	drop_sequence_callback_arg *args;
+	char *seqnamearg = NULL;
+
+	/* All the arguments are transaction-dependent, so save them in TopTransactionContext */
+	args = (drop_sequence_callback_arg *)
+		MemoryContextAlloc(TopTransactionContext, sizeof(drop_sequence_callback_arg));
+
+	seqnamearg = MemoryContextAlloc(TopTransactionContext, strlen(seqname) + 1);
+	sprintf(seqnamearg, "%s", seqname);
+	args->seqname = seqnamearg;
+	args->key = key;
+	args->type = type;
+
+	RegisterGTMCallback(drop_sequence_cb, (void *) args);
+}
+
+/*
+ * Callback of sequence drop
+ */
+void
+drop_sequence_cb(GTMEvent event, void *args)
+{
+	drop_sequence_callback_arg *cbargs = (drop_sequence_callback_arg *) args;
+	char *seqname = cbargs->seqname;
+	GTM_SequenceKeyType key = cbargs->key;
+	GTM_SequenceDropType type = cbargs->type;
+	int err = 0;
+
+	/*
+	 * A sequence is dropped on GTM if the transaction that created sequence
+	 * aborts or if the transaction that dropped the sequence commits. This mechanism
+	 * insures that sequence information is consistent on all the cluster nodes including
+	 * GTM. This callback is done before transaction really commits so it can still fail
+	 * if an error occurs.
+	 */
+	switch (event)
+	{
+		case GTM_EVENT_COMMIT:
+		case GTM_EVENT_PREPARE:
+			if (type == GTM_DROP_SEQ)
+				err = DropSequenceGTM(seqname, key);
+			break;
+		case GTM_EVENT_ABORT:
+			if (type == GTM_CREATE_SEQ)
+				err = DropSequenceGTM(seqname, key);
+			break;
+		default:
+			/* Should not come here */
+			Assert(0);
+	}
+
+	/* Report error if necessary */
+	if (err < 0 && event != GTM_EVENT_ABORT)
+		ereport(ERROR,
+				(errcode(ERRCODE_CONNECTION_FAILURE),
+				 errmsg("GTM error, could not drop sequence")));
+}
+#endif

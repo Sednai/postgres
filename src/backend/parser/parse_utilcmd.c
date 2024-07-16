@@ -58,6 +58,13 @@
 #include "parser/parse_target.h"
 #include "parser/parse_type.h"
 #include "parser/parse_utilcmd.h"
+#ifdef PGXC
+#include "optimizer/pgxcship.h"
+#include "pgxc/locator.h"
+#include "pgxc/pgxc.h"
+#include "optimizer/pgxcplan.h"
+#include "pgxc/execRemote.h"
+#endif
 #include "parser/parser.h"
 #include "rewrite/rewriteManip.h"
 #include "utils/acl.h"
@@ -95,6 +102,11 @@ typedef struct
 	bool		ispartitioned;	/* true if table is partitioned */
 	PartitionBoundSpec *partbound;	/* transformed FOR VALUES */
 	bool		ofType;			/* true if statement contains OF typename */
+#ifdef PGXC
+	char	  *fallback_dist_col;	/* suggested column to distribute on */
+	DistributeBy	*distributeby;		/* original distribute by column of CREATE TABLE */
+	PGXCSubCluster	*subcluster;		/* original subcluster option of CREATE TABLE */
+#endif
 } CreateStmtContext;
 
 /* State shared by transformCreateSchemaStmtElements and its subroutines */
@@ -269,6 +281,10 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	 * anyway.
 	 */
 	cxt.hasoids = interpretOidsOption(stmt->options, !cxt.isforeign);
+#ifdef PGXC
+	cxt.fallback_dist_col = NULL;
+	cxt.distributeby = stmt->distributeby;
+#endif
 
 	Assert(!stmt->ofTypename || !stmt->inhRelations);	/* grammar enforces */
 
@@ -380,6 +396,19 @@ transformCreateStmt(CreateStmt *stmt, const char *queryString)
 	result = list_concat(result, cxt.alist);
 	result = list_concat(result, save_alist);
 
+#ifdef PGXC
+	/*
+	 * If the user did not specify any distribution clause and there is no
+	 * inherits clause, try and use PK or unique index
+	 */
+	if (!stmt->distributeby && !stmt->inhRelations && cxt.fallback_dist_col)
+	{
+		stmt->distributeby = (DistributeBy *) palloc0(sizeof(DistributeBy));
+		stmt->distributeby->disttype = DISTTYPE_HASH;
+		stmt->distributeby->colname = cxt.fallback_dist_col;
+	}
+#endif
+
 	return result;
 }
 
@@ -485,6 +514,9 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 	seqstmt->for_identity = for_identity;
 	seqstmt->sequence = makeRangeVar(snamespace, sname, -1);
 	seqstmt->options = seqoptions;
+#ifdef PGXC
+	seqstmt->is_serial = true;
+#endif
 
 	/*
 	 * If a sequence data type was specified, add it to the options.  Prepend
@@ -527,6 +559,9 @@ generateSerialExtraStmts(CreateStmtContext *cxt, ColumnDef *column,
 	 */
 	altseqstmt = makeNode(AlterSeqStmt);
 	altseqstmt->sequence = makeRangeVar(snamespace, sname, -1);
+#ifdef PGXC
+		altseqstmt->is_serial = true;
+#endif
 	attnamelist = list_make3(makeString(snamespace),
 							 makeString(cxt->relation->relname),
 							 makeString(column->colname));
@@ -967,6 +1002,31 @@ transformTableLikeClause(CreateStmtContext *cxt, TableLikeClause *table_like_cla
 						RelationGetRelationName(relation))));
 
 	cancel_parser_errposition_callback(&pcbstate);
+#ifdef PGXC
+	/*
+	 * Check if relation is temporary and assign correct flag.
+	 * This will override transaction direct commit as no 2PC
+	 * can be used for transactions involving temporary objects.
+	 */
+	if (IsTempTable(RelationGetRelid(relation)))
+		ExecSetTempObjectIncluded();
+
+	/*
+	 * Block the creation of tables using views in their LIKE clause.
+	 * Views are not created on Datanodes, so this will result in an error
+	 * PGXCTODO: In order to fix this problem, it will be necessary to
+	 * transform the query string of CREATE TABLE into something not using
+	 * the view definition. Now Postgres-XC only uses the raw string...
+	 * There is some work done with event triggers in 9.3, so it might
+	 * be possible to use that code to generate the SQL query to be sent to
+	 * remote nodes. When this is done, this error will be removed.
+	 */
+	if (relation->rd_rel->relkind == RELKIND_VIEW)
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("Postgres-XC does not support VIEW in LIKE clauses"),
+				 errdetail("The feature is not currently supported")));
+#endif
 
 	/*
 	 * Check for privileges
@@ -2377,6 +2437,19 @@ transformIndexConstraint(Constraint *constraint, CreateStmtContext *cxt)
 								 parser_errposition(cxt->pstate, constraint->location)));
 				}
 			}
+#ifdef PGXC
+		if (IS_PGXC_COORDINATOR)
+		{
+			/*
+			 * Set fallback distribution column.
+			 * If not set, set it to first column in index.
+			 * If primary key, we prefer that over a unique constraint.
+			 */
+			if (index->indexParams == NIL &&
+				(index->primary || !cxt->fallback_dist_col))
+				cxt->fallback_dist_col = pstrdup(key);
+		}
+#endif
 
 			/* OK, add it to the index definition */
 			iparam = makeNode(IndexElem);
@@ -2567,6 +2640,30 @@ transformFKConstraints(CreateStmtContext *cxt,
 
 			constraint->skip_validation = true;
 			constraint->initially_valid = true;
+#ifdef PGXC
+			/*
+			 * Set fallback distribution column.
+			 * If not yet set, set it to first column in FK constraint
+			 * if it references a partitioned table
+			 */
+			if (IS_PGXC_COORDINATOR &&
+				!cxt->fallback_dist_col &&
+				list_length(constraint->pk_attrs) != 0)
+			{
+				Oid pk_rel_id = RangeVarGetRelid(constraint->pktable, NoLock, false);
+				AttrNumber attnum = get_attnum(pk_rel_id,
+											   strVal(list_nth(constraint->fk_attrs, 0)));
+
+				/* Make sure key is done on a partitioned column */
+				if (IsDistribColumn(pk_rel_id, attnum))
+				{
+					/* take first column */
+					char *colstr = strdup(strVal(list_nth(constraint->fk_attrs,0)));
+					cxt->fallback_dist_col = pstrdup(colstr);
+				}
+			}
+#endif
+
 		}
 	}
 
@@ -2837,6 +2934,13 @@ transformRuleStmt(RuleStmt *stmt, const char *queryString,
 			bool		has_old,
 						has_new;
 
+#ifdef PGXC
+			if (IsA(action, NotifyStmt))
+				ereport(ERROR,
+						(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+						 errmsg("Rule may not use NOTIFY, it is not yet supported")));
+#endif
+
 			/*
 			 * Since outer ParseState isn't parent of inner, have to pass down
 			 * the query text by hand.
@@ -3090,6 +3194,11 @@ transformAlterTableStmt(Oid relid, AlterTableStmt *stmt,
 	cxt.ispartitioned = (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE);
 	cxt.partbound = NULL;
 	cxt.ofType = false;
+#ifdef PGXC
+	cxt.fallback_dist_col = NULL;
+	cxt.distributeby = NULL;
+	cxt.subcluster = NULL;
+#endif
 
 	/*
 	 * The only subtypes that currently require parse transformation handling
