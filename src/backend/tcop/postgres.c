@@ -4147,9 +4147,8 @@ PostgresMain(int argc, char *argv[],
 		
 		//CurrentResourceOwner = ResourceOwnerCreate(NULL, "ForPGXCNodes");
 		InitMultinodeExecutor(false);
-		elog(WARNING,"OK");
-
-		elog(WARNING,"[DEBUG] -> pid: %d",MyProcPid);
+	
+		//elog(WARNING,"[DEBUG] -> pid: %d",MyProcPid);
 		//sleep(60);
 
 		if (!IsConnFromCoord())
@@ -4170,7 +4169,6 @@ PostgresMain(int argc, char *argv[],
 		//ResourceOwnerRelease(CurrentResourceOwner, RESOURCE_RELEASE_AFTER_LOCKS, true, true);
 		//CurrentResourceOwner = NULL;
 
-		elog(WARNING,"DONE");
 		/* If we exit, first try and clean connections and send to pool */
 		on_proc_exit (PGXCNodeCleanAndRelease, 0);
 	}

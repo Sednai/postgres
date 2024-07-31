@@ -276,7 +276,7 @@ SELECT b <> '08:00:2b:01:02:03:04:05' FROM macaddr8_data WHERE a = 15; -- false
  f
 (1 row)
 
-SELECT ~b                       FROM macaddr8_data;
+SELECT ~b                       FROM macaddr8_data ORDER BY a;
         ?column?         
 -------------------------
  f7:ff:d4:00:01:fe:fd:fc
@@ -301,7 +301,7 @@ SELECT ~b                       FROM macaddr8_data;
  f7:ff:d4:fe:fd:fc:fb:fa
 (20 rows)
 
-SELECT  b & '00:00:00:ff:ff:ff' FROM macaddr8_data;
+SELECT  b & '00:00:00:ff:ff:ff' FROM macaddr8_data ORDER BY a;
         ?column?         
 -------------------------
  00:00:00:ff:fe:01:02:03
@@ -326,7 +326,7 @@ SELECT  b & '00:00:00:ff:ff:ff' FROM macaddr8_data;
  00:00:00:01:02:03:04:05
 (20 rows)
 
-SELECT  b | '01:02:03:04:05:06' FROM macaddr8_data;
+SELECT  b | '01:02:03:04:05:06' FROM macaddr8_data ORDER BY a;
         ?column?         
 -------------------------
  09:02:2b:ff:fe:05:07:07

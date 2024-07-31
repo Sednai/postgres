@@ -2619,6 +2619,40 @@ alter_table_cmd:
 					n->def = (Node *)$1;
 					$$ = (Node *) n;
 				}
+/* PGXC_BEGIN */
+			/* ALTER TABLE <name> DISTRIBUTE BY ... */
+			| OptDistributeByInternal
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DistributeBy;
+					n->def = (Node *)$1;
+					$$ = (Node *)n;
+				}
+			/* ALTER TABLE <name> TO [ NODE (nodelist) | GROUP groupname ] */
+			| OptSubClusterInternal
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_SubCluster;
+					n->def = (Node *)$1;
+					$$ = (Node *)n;
+				}
+			/* ALTER TABLE <name> ADD NODE (nodelist) */
+			| ADD_P NODE pgxcnodes
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_AddNodeList;
+					n->def = (Node *)$3;
+					$$ = (Node *)n;
+				}
+			/* ALTER TABLE <name> DELETE NODE (nodelist) */
+			| DELETE_P NODE pgxcnodes
+				{
+					AlterTableCmd *n = makeNode(AlterTableCmd);
+					n->subtype = AT_DeleteNodeList;
+					n->def = (Node *)$3;
+					$$ = (Node *)n;
+				}
+/* PGXC_END */
 		;
 
 alter_column_default:
@@ -11194,6 +11228,11 @@ ExecuteStmt: EXECUTE name execute_param_clause
 					ctas->if_not_exists = false;
 					/* cram additional flags into the IntoClause */
 					$4->rel->relpersistence = $2;
+#ifdef PGXC
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("CREATE TABLE AS EXECUTE not yet supported")));
+#endif
 					$4->skipData = !($9);
 					$$ = (Node *) ctas;
 				}
@@ -11211,6 +11250,11 @@ ExecuteStmt: EXECUTE name execute_param_clause
 					ctas->if_not_exists = true;
 					/* cram additional flags into the IntoClause */
 					$7->rel->relpersistence = $2;
+#ifdef PGXC
+					ereport(ERROR,
+							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+							 errmsg("CREATE TABLE AS EXECUTE not yet supported")));
+#endif
 					$7->skipData = !($12);
 					$$ = (Node *) ctas;
 				}
@@ -15502,6 +15546,9 @@ unreserved_keyword:
 			| DEPENDS
 			| DETACH
 			| DICTIONARY
+/* PGXC_BEGIN */
+			| DIRECT
+/* PGXC_END */
 			| DISABLE_P
 			| DISCARD
 /* PGXC_BEGIN */

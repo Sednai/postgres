@@ -4406,6 +4406,7 @@ QueryRewriteCTAS(Query *parsetree)
 {
 	RangeVar *relation;
 	CreateStmt *create_stmt;
+	PlannedStmt *wrapper;
 	List *tableElts = NIL;
 	StringInfoData cquery;
 	ListCell *col;
@@ -4522,8 +4523,16 @@ QueryRewriteCTAS(Query *parsetree)
 	initStringInfo(&cquery);
 	deparse_query(cparsetree, &cquery, NIL, false, false);
 
+  	/* wrap it in a dummy PlannedStmt */
+    wrapper = makeNode(PlannedStmt);
+    wrapper->commandType = CMD_UTILITY;
+    wrapper->canSetTag = false;
+    wrapper->utilityStmt = (Node *) create_stmt;
+    wrapper->stmt_location = -1;
+    wrapper->stmt_len = -1;
+
 	/* Finally, fire off the query to run the DDL */
-	ProcessUtility(cparsetree->utilityStmt, cquery.data, PROCESS_UTILITY_TOPLEVEL, NULL, NULL, NULL,  /* Tentative fix.  Nedd a review.  K.Suzuki */
+	ProcessUtility(wrapper, cquery.data, PROCESS_UTILITY_TOPLEVEL, NULL, NULL, NULL,  /* Tentative fix.  Nedd a review.  K.Suzuki */
 					false,
 					NULL);
 

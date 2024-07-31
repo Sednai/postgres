@@ -201,7 +201,7 @@ ORDER BY enumsortorder;
 CREATE TABLE enumtest (col rainbow);
 INSERT INTO enumtest values ('red'), ('orange'), ('yellow'), ('green');
 COPY enumtest FROM stdin;
-SELECT * FROM enumtest;
+SELECT * FROM enumtest ORDER BY col;
   col   
 --------
  red
@@ -224,45 +224,45 @@ SELECT * FROM enumtest WHERE col = 'orange';
 SELECT * FROM enumtest WHERE col <> 'orange' ORDER BY col;
   col   
 --------
+ blue
+ green
+ purple
  red
  yellow
- green
- blue
- purple
 (5 rows)
 
 SELECT * FROM enumtest WHERE col > 'yellow' ORDER BY col;
   col   
 --------
- green
  blue
+ green
  purple
 (3 rows)
 
 SELECT * FROM enumtest WHERE col >= 'yellow' ORDER BY col;
   col   
 --------
- yellow
- green
  blue
+ green
  purple
+ yellow
 (4 rows)
 
 SELECT * FROM enumtest WHERE col < 'green' ORDER BY col;
   col   
 --------
- red
  orange
+ red
  yellow
 (3 rows)
 
 SELECT * FROM enumtest WHERE col <= 'green' ORDER BY col;
   col   
 --------
- red
- orange
- yellow
  green
+ orange
+ red
+ yellow
 (4 rows)
 
 --

@@ -1244,11 +1244,54 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 		case T_RenameStmt:
 			{
 				RenameStmt *stmt = (RenameStmt *) parsetree;
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+				{
+					RemoteQueryExecType exec_type;
+					bool is_temp = false;
+
+					/* Try to use the object relation if possible */
+					if (stmt->relation)
+					{
+						/*
+						 * When a relation is defined, it is possible that this object does
+						 * not exist but an IF EXISTS clause might be used. So we do not do
+						 * any error check here but block the access to remote nodes to
+						 * this object as it does not exisy
+						 */
+						Oid relid = RangeVarGetRelid(stmt->relation, NoLock, true);
+
+						if (OidIsValid(relid))
+							exec_type = ExecUtilityFindNodes(stmt->renameType,
+															 relid,
+															 &is_temp);
+						else
+							exec_type = EXEC_ON_NONE;
+					}
+					else
+					{
+						exec_type = ExecUtilityFindNodes(stmt->renameType,
+														 InvalidOid,
+														 &is_temp);
+					}
+
+					ExecUtilityStmtOnNodes(queryString,
+										   NULL,
+										   sentToRemote,
+										   false,
+										   exec_type,
+										   is_temp);
+				}
+#endif
 
 				if (EventTriggerSupportsObjectType(stmt->renameType))
 					ProcessUtilitySlow(pstate, pstmt, queryString,
 									   context, params, queryEnv,
-									   dest, sentToRemote, completionTag);
+									   dest,
+#ifdef PGXC
+									   sentToRemote,
+#endif
+									   completionTag);
 				else
 					ExecRenameStmt(stmt);
 			}
@@ -1271,10 +1314,54 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			{
 				AlterObjectSchemaStmt *stmt = (AlterObjectSchemaStmt *) parsetree;
 
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+				{
+					RemoteQueryExecType exec_type;
+					bool is_temp = false;
+
+					/* Try to use the object relation if possible */
+					if (stmt->relation)
+					{
+						/*
+						 * When a relation is defined, it is possible that this object does
+						 * not exist but an IF EXISTS clause might be used. So we do not do
+						 * any error check here but block the access to remote nodes to
+						 * this object as it does not exisy
+						 */
+						Oid relid = RangeVarGetRelid(stmt->relation, NoLock, true);
+
+						if (OidIsValid(relid))
+							exec_type = ExecUtilityFindNodes(stmt->objectType,
+															 relid,
+															 &is_temp);
+						else
+							exec_type = EXEC_ON_NONE;
+					}
+					else
+					{
+						exec_type = ExecUtilityFindNodes(stmt->objectType,
+														 InvalidOid,
+														 &is_temp);
+					}
+
+					ExecUtilityStmtOnNodes(queryString,
+										   NULL,
+										   sentToRemote,
+										   false,
+										   exec_type,
+										   is_temp);
+				}
+#endif
+
 				if (EventTriggerSupportsObjectType(stmt->objectType))
 					ProcessUtilitySlow(pstate, pstmt, queryString,
 									   context, params, queryEnv,
-									   dest, sentToRemote, completionTag);
+									   dest, 
+#ifdef PGXC
+									   sentToRemote, 
+#endif
+									   completionTag);
 				else
 					ExecAlterObjectSchemaStmt(stmt, NULL);
 			}
@@ -1291,6 +1378,11 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 				else
 					ExecAlterOwnerStmt(stmt);
 			}
+#ifdef PGXC
+			if (IS_PGXC_COORDINATOR)
+				ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
+
 			break;
 
 		case T_CommentStmt:
@@ -1397,11 +1489,18 @@ ProcessUtilitySlow(ParseState *pstate,
 				 * relation and attribute manipulation
 				 */
 			case T_CreateSchemaStmt:
+
+#ifdef PGXC
+				CreateSchemaCommand((CreateSchemaStmt *) parsetree,
+									queryString,
+									pstmt->stmt_location,
+									pstmt->stmt_len, sentToRemote);
+#else
 				CreateSchemaCommand((CreateSchemaStmt *) parsetree,
 									queryString,
 									pstmt->stmt_location,
 									pstmt->stmt_len);
-
+#endif
 				/*
 				 * EventTriggerCollectSimpleCommand called by
 				 * CreateSchemaCommand
@@ -1829,14 +1928,40 @@ ProcessUtilitySlow(ParseState *pstate,
 							break;
 					}
 				}
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 			case T_IndexStmt:	/* CREATE INDEX */
 				{
 					IndexStmt  *stmt = (IndexStmt *) parsetree;
-					Oid			relid;
+					Oid			relid;		
 					LOCKMODE	lockmode;
 					bool		is_alter_table;
+
+#ifdef PGXC
+					bool is_temp = false;
+					RemoteQueryExecType exec_type = EXEC_ON_ALL_NODES;
+
+					if (stmt->concurrent)
+					{
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("PGXC does not support concurrent INDEX yet"),
+								 errdetail("The feature is not currently supported")));
+					}
+
+					/* INDEX on a temporary table cannot use 2PC at commit */
+					relid = RangeVarGetRelid(stmt->relation, NoLock, true);
+
+					if (OidIsValid(relid))
+						exec_type = ExecUtilityFindNodes(OBJECT_INDEX, relid, &is_temp);
+					else
+						exec_type = EXEC_ON_NONE;
+#endif
+
 
 					if (stmt->concurrent)
 						PreventInTransactionBlock(isTopLevel,
@@ -1926,6 +2051,11 @@ ProcessUtilitySlow(ParseState *pstate,
 									false,	/* skip_build */
 									false); /* quiet */
 
+#ifdef PGXC
+					if (IS_PGXC_COORDINATOR && !stmt->isconstraint && !IsConnFromCoord())
+						ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote,
+											   stmt->concurrent, exec_type, is_temp);
+#endif
 					/*
 					 * Add the CREATE INDEX node itself to stash right away;
 					 * if there were any commands stashed in the ALTER TABLE
@@ -1940,6 +2070,11 @@ ProcessUtilitySlow(ParseState *pstate,
 
 			case T_CreateExtensionStmt:
 				address = CreateExtension(pstate, (CreateExtensionStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
+
 				break;
 
 			case T_AlterExtensionStmt:
@@ -1994,24 +2129,51 @@ ProcessUtilitySlow(ParseState *pstate,
 					address = DefineCompositeType(stmt->typevar,
 												  stmt->coldeflist);
 				}
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 			case T_CreateEnumStmt:	/* CREATE TYPE AS ENUM */
 				address = DefineEnum((CreateEnumStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 			case T_CreateRangeStmt: /* CREATE TYPE AS RANGE */
 				address = DefineRange((CreateRangeStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 			case T_AlterEnumStmt:	/* ALTER TYPE (enum) */
 				address = AlterEnum((AlterEnumStmt *) parsetree, isTopLevel);
+#ifdef PGXC
+				/*
+				 * In this case force autocommit, this transaction cannot be launched
+				 * inside a transaction block.
+				 */
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 			case T_ViewStmt:	/* CREATE VIEW */
 				EventTriggerAlterTableStart(parsetree);
 				address = DefineView((ViewStmt *) parsetree, queryString,
 									 pstmt->stmt_location, pstmt->stmt_len);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+				{
+					if (!ExecIsTempObjectIncluded())
+						ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_COORDS, false);
+				}
+#endif
 				EventTriggerCollectSimpleCommand(address, secondaryObject,
 												 parsetree);
 				/* stashed internally */

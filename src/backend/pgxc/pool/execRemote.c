@@ -546,7 +546,7 @@ HandleCopyDataRow(RemoteQueryState *combiner, char *msg_body, size_t len)
 				bool   *nulls;
 				TupleDesc   tupdesc = combiner->tuple_desc;
 				int i, dropped;
-				Form_pg_attribute *attr = tupdesc->attrs;
+				Form_pg_attribute attr = tupdesc->attrs;
 				FmgrInfo *in_functions;
 				Oid *typioparams;
 				char **fields;
@@ -562,10 +562,10 @@ HandleCopyDataRow(RemoteQueryState *combiner, char *msg_body, size_t len)
 					Oid         in_func_oid;
 
 					/* Do not need any information for dropped attributes */
-					if (attr[i]->attisdropped)
+					if (attr[i].attisdropped)
 						continue;
 
-					getTypeInputInfo(attr[i]->atttypid,
+					getTypeInputInfo(attr[i].atttypid,
 									 &in_func_oid, &typioparams[i]);
 					fmgr_info(in_func_oid, &in_functions[i]);
 				}
@@ -582,7 +582,7 @@ HandleCopyDataRow(RemoteQueryState *combiner, char *msg_body, size_t len)
 				{
 					char	*string = fields[i - dropped];
 					/* Do not need any information for dropped attributes */
-					if (attr[i]->attisdropped)
+					if (attr[i].attisdropped)
 					{
 						dropped++;
 						nulls[i] = true; /* Consider dropped parameter as NULL */
@@ -593,7 +593,7 @@ HandleCopyDataRow(RemoteQueryState *combiner, char *msg_body, size_t len)
 					values[i] = InputFunctionCall(&in_functions[i],
 												  string,
 												  typioparams[i],
-												  attr[i]->atttypmod);
+												  attr[i].atttypmod);
 					/* Setup value with NULL flag if necessary */
 					if (string == NULL)
 						nulls[i] = true;

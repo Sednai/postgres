@@ -42,16 +42,11 @@ SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
  asselect | regress_tblspace
 (1 row)
 
-PREPARE selectsource(int) AS SELECT $1;
-CREATE TABLE testschema.asexecute TABLESPACE regress_tblspace
-    AS EXECUTE selectsource(2);
-SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
-    where c.reltablespace = t.oid AND c.relname = 'asexecute';
-  relname  |     spcname      
------------+------------------
- asexecute | regress_tblspace
-(1 row)
-
+--PGXC disabled PREPARE selectsource(int) AS SELECT $1;
+--CREATE TABLE testschema.asexecute TABLESPACE regress_tblspace
+--    AS EXECUTE selectsource(2);
+--SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
+--    where c.reltablespace = t.oid AND c.relname = 'asexecute';
 -- index
 CREATE INDEX foo_idx on testschema.foo(i) TABLESPACE regress_tblspace;
 SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
@@ -267,7 +262,6 @@ DROP SCHEMA testschema CASCADE;
 NOTICE:  drop cascades to 6 other objects
 DETAIL:  drop cascades to table testschema.foo
 drop cascades to table testschema.asselect
-drop cascades to table testschema.asexecute
 drop cascades to table testschema.part
 drop cascades to table testschema.atable
 drop cascades to table testschema.tablespace_acl

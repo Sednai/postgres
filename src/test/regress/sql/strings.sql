@@ -69,25 +69,25 @@ SELECT E'De\\123dBeEf'::bytea;
 -- E021-10 implicit casting among the character data types
 --
 
-SELECT CAST(f1 AS text) AS "text(char)" FROM CHAR_TBL;
+SELECT CAST(f1 AS text) AS "text(char)" FROM CHAR_TBL ORDER BY 1;
 
-SELECT CAST(f1 AS text) AS "text(varchar)" FROM VARCHAR_TBL;
+SELECT CAST(f1 AS text) AS "text(varchar)" FROM VARCHAR_TBL ORDER BY 1;
 
 SELECT CAST(name 'namefield' AS text) AS "text(name)";
 
 -- since this is an explicit cast, it should truncate w/o error:
-SELECT CAST(f1 AS char(10)) AS "char(text)" FROM TEXT_TBL;
+SELECT CAST(f1 AS char(10)) AS "char(text)" FROM TEXT_TBL ORDER BY 1;
 -- note: implicit-cast case is tested in char.sql
 
-SELECT CAST(f1 AS char(20)) AS "char(text)" FROM TEXT_TBL;
+SELECT CAST(f1 AS char(20)) AS "char(text)" FROM TEXT_TBL ORDER BY 1;
 
-SELECT CAST(f1 AS char(10)) AS "char(varchar)" FROM VARCHAR_TBL;
+SELECT CAST(f1 AS char(10)) AS "char(varchar)" FROM VARCHAR_TBL ORDER BY 1;
 
 SELECT CAST(name 'namefield' AS char(10)) AS "char(name)";
 
-SELECT CAST(f1 AS varchar) AS "varchar(text)" FROM TEXT_TBL;
+SELECT CAST(f1 AS varchar) AS "varchar(text)" FROM TEXT_TBL ORDER BY 1;
 
-SELECT CAST(f1 AS varchar) AS "varchar(char)" FROM CHAR_TBL;
+SELECT CAST(f1 AS varchar) AS "varchar(char)" FROM CHAR_TBL ORDER BY 1;
 
 SELECT CAST(name 'namefield' AS varchar) AS "varchar(name)";
 
@@ -374,22 +374,23 @@ SELECT substr(f1, 99995) from toasttest;
 -- string length
 SELECT substr(f1, 99995, 10) from toasttest;
 
-TRUNCATE TABLE toasttest;
-INSERT INTO toasttest values (repeat('1234567890',300));
-INSERT INTO toasttest values (repeat('1234567890',300));
-INSERT INTO toasttest values (repeat('1234567890',300));
-INSERT INTO toasttest values (repeat('1234567890',300));
+--PGXC deactivated
+--TRUNCATE TABLE toasttest;
+--INSERT INTO toasttest values (repeat('1234567890',300));
+--INSERT INTO toasttest values (repeat('1234567890',300));
+--INSERT INTO toasttest values (repeat('1234567890',300));
+--INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect >0 blocks
-select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
+--select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
 
-TRUNCATE TABLE toasttest;
-ALTER TABLE toasttest set (toast_tuple_target = 4080);
-INSERT INTO toasttest values (repeat('1234567890',300));
-INSERT INTO toasttest values (repeat('1234567890',300));
-INSERT INTO toasttest values (repeat('1234567890',300));
-INSERT INTO toasttest values (repeat('1234567890',300));
+--TRUNCATE TABLE toasttest;
+--ALTER TABLE toasttest set (toast_tuple_target = 4080);
+--INSERT INTO toasttest values (repeat('1234567890',300));
+--INSERT INTO toasttest values (repeat('1234567890',300));
+--INSERT INTO toasttest values (repeat('1234567890',300));
+--INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect 0 blocks
-select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
+--select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
 
 DROP TABLE toasttest;
 

@@ -35,6 +35,10 @@
 #include "utils/builtins.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#include "optimizer/pgxcplan.h"
+#endif
 
 
 static void AlterSchemaOwner_internal(HeapTuple tup, Relation rel, Oid newOwnerId);
@@ -49,8 +53,13 @@ static void AlterSchemaOwner_internal(HeapTuple tup, Relation rel, Oid newOwnerI
  * a subquery.
  */
 Oid
+#ifdef PGXC
+CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
+					int stmt_location, int stmt_len, bool sentToRemote)
+#else
 CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
 					int stmt_location, int stmt_len)
+#endif
 {
 	const char *schemaName = stmt->schemaname;
 	Oid			namespaceId;
@@ -197,6 +206,16 @@ CreateSchemaCommand(CreateSchemaStmt *stmt, const char *queryString,
 	parsetree_list = transformCreateSchemaStmtElements(stmt->schemaElts,
 													   schemaName);
 
+#ifdef PGXC
+	/*
+	 * Add a RemoteQuery node for a query at top level on a remote Coordinator,
+	 * if not done already.
+	 */
+	if (!sentToRemote)
+		parsetree_list = AddRemoteQueryNode(parsetree_list, queryString,
+											EXEC_ON_ALL_NODES, false);
+#endif
+
 	/*
 	 * Execute each command contained in the CREATE SCHEMA.  Since the grammar
 	 * allows only utility commands in CREATE SCHEMA, there is no need to pass
@@ -315,6 +334,27 @@ RenameSchema(const char *oldname, const char *newname)
 	/* rename */
 	namestrcpy(&(((Form_pg_namespace) GETSTRUCT(tup))->nspname), newname);
 	CatalogTupleUpdate(rel, &tup->t_self, tup);
+
+#ifdef PGXC
+	if (IS_PGXC_COORDINATOR)
+	{
+		ObjectAddress		object;
+		Oid					namespaceId;
+
+		/* Check object dependency and see if there is a sequence. If yes rename it */
+		namespaceId = GetSysCacheOid(NAMESPACENAME,
+									 CStringGetDatum(oldname),
+									 0, 0, 0);
+		/* Create the object that will be checked for the dependencies */
+		object.classId = NamespaceRelationId;
+		object.objectId = namespaceId;
+		object.objectSubId = 0;
+
+		/* Rename all the objects depending on this schema */
+		performRename(&object, oldname, newname);
+	}
+#endif
+
 
 	InvokeObjectPostAlterHook(NamespaceRelationId, HeapTupleGetOid(tup), 0);
 

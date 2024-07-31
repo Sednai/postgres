@@ -595,7 +595,7 @@ INSERT INTO serializable_update_tab SELECT a, repeat('xyzxz', 100), 'new'
 
 BEGIN;
 SET TRANSACTION ISOLATION LEVEL SERIALIZABLE;
-UPDATE serializable_update_tab SET description = 'no no', id = 1 WHERE id = 1;
+UPDATE serializable_update_tab SET description = 'no no' WHERE id = 1;
 COMMIT;
 SELECT description FROM serializable_update_tab WHERE id = 1;
 DROP TABLE serializable_update_tab;
@@ -1824,13 +1824,13 @@ $$;
 --
 
 -- set up a partition hierarchy with some different TupleDescriptors
-create table parent (a text, b int) partition by list (a);
+create table parent (a text, b int) partition by list (a) distribute by hash(b);
 
 -- a child matching parent
 create table child1 partition of parent for values in ('AAA');
 
 -- a child with a dropped column
-create table child2 (x int, a text, b int);
+create table child2 (x int, a text, b int)  distribute by hash(b);
 alter table child2 drop column x;
 alter table parent attach partition child2 for values in ('BBB');
 

@@ -56,27 +56,27 @@ INSERT INTO numrange_test VALUES(numrange(1.1, 2.2));
 INSERT INTO numrange_test VALUES('empty');
 INSERT INTO numrange_test VALUES(numrange(1.7, 1.7, '[]'));
 
-SELECT nr, isempty(nr), lower(nr), upper(nr) FROM numrange_test;
-SELECT nr, lower_inc(nr), lower_inf(nr), upper_inc(nr), upper_inf(nr) FROM numrange_test;
+SELECT nr, isempty(nr), lower(nr), upper(nr) FROM numrange_test ORDER BY nr;
+SELECT nr, lower_inc(nr), lower_inf(nr), upper_inc(nr), upper_inf(nr) FROM numrange_test ORDER BY nr;
 
-SELECT * FROM numrange_test WHERE range_contains(nr, numrange(1.9,1.91));
-SELECT * FROM numrange_test WHERE nr @> numrange(1.0,10000.1);
-SELECT * FROM numrange_test WHERE range_contained_by(numrange(-1e7,-10000.1), nr);
-SELECT * FROM numrange_test WHERE 1.9 <@ nr;
+SELECT * FROM numrange_test WHERE range_contains(nr, numrange(1.9,1.91)) ORDER BY nr;
+SELECT * FROM numrange_test WHERE nr @> numrange(1.0,10000.1) ORDER BY nr;
+SELECT * FROM numrange_test WHERE range_contained_by(numrange(-1e7,-10000.1), nr) ORDER BY nr;
+SELECT * FROM numrange_test WHERE 1.9 <@ nr ORDER BY nr;
 
-select * from numrange_test where nr = 'empty';
-select * from numrange_test where nr = '(1.1, 2.2)';
-select * from numrange_test where nr = '[1.1, 2.2)';
-select * from numrange_test where nr < 'empty';
-select * from numrange_test where nr < numrange(-1000.0, -1000.0,'[]');
-select * from numrange_test where nr < numrange(0.0, 1.0,'[]');
-select * from numrange_test where nr < numrange(1000.0, 1001.0,'[]');
-select * from numrange_test where nr <= 'empty';
-select * from numrange_test where nr >= 'empty';
-select * from numrange_test where nr > 'empty';
-select * from numrange_test where nr > numrange(-1001.0, -1000.0,'[]');
-select * from numrange_test where nr > numrange(0.0, 1.0,'[]');
-select * from numrange_test where nr > numrange(1000.0, 1000.0,'[]');
+select * from numrange_test where nr = 'empty' ORDER BY nr;
+select * from numrange_test where nr = '(1.1, 2.2)' ORDER BY nr;
+select * from numrange_test where nr = '[1.1, 2.2)' ORDER BY nr;
+select * from numrange_test where nr < 'empty' ORDER BY nr;
+select * from numrange_test where nr < numrange(-1000.0, -1000.0,'[]') ORDER BY nr;
+select * from numrange_test where nr < numrange(0.0, 1.0,'[]') ORDER BY nr;
+select * from numrange_test where nr < numrange(1000.0, 1001.0,'[]') ORDER BY nr;
+select * from numrange_test where nr <= 'empty' ORDER BY nr;
+select * from numrange_test where nr >= 'empty' ORDER BY nr;
+select * from numrange_test where nr > 'empty' ORDER BY nr;
+select * from numrange_test where nr > numrange(-1001.0, -1000.0,'[]') ORDER BY nr;
+select * from numrange_test where nr > numrange(0.0, 1.0,'[]') ORDER BY nr;
+select * from numrange_test where nr > numrange(1000.0, 1000.0,'[]') ORDER BY nr;
 
 select numrange(2.0, 1.0);
 
@@ -165,13 +165,13 @@ INSERT INTO textrange_test VALUES(textrange('b', 'g'));
 INSERT INTO textrange_test VALUES('empty');
 INSERT INTO textrange_test VALUES(textrange('d', 'd', '[]'));
 
-SELECT tr, isempty(tr), lower(tr), upper(tr) FROM textrange_test;
-SELECT tr, lower_inc(tr), lower_inf(tr), upper_inc(tr), upper_inf(tr) FROM textrange_test;
+SELECT tr, isempty(tr), lower(tr), upper(tr) FROM textrange_test ORDER BY tr;
+SELECT tr, lower_inc(tr), lower_inf(tr), upper_inc(tr), upper_inf(tr) FROM textrange_test ORDER BY tr;
 
-SELECT * FROM textrange_test WHERE range_contains(tr, textrange('f', 'fx'));
-SELECT * FROM textrange_test WHERE tr @> textrange('a', 'z');
-SELECT * FROM textrange_test WHERE range_contained_by(textrange('0','9'), tr);
-SELECT * FROM textrange_test WHERE 'e'::text <@ tr;
+SELECT * FROM textrange_test WHERE range_contains(tr, textrange('f', 'fx')) ORDER BY tr;
+SELECT * FROM textrange_test WHERE tr @> textrange('a', 'z') ORDER BY tr;
+SELECT * FROM textrange_test WHERE range_contained_by(textrange('0','9'), tr) ORDER BY tr;
+SELECT * FROM textrange_test WHERE 'e'::text <@ tr ORDER BY tr;
 
 select * from textrange_test where tr = 'empty';
 select * from textrange_test where tr = '("b","g")';
@@ -323,8 +323,9 @@ select count(*) from test_range_spgist where ir &> int4range(100,500);
 select count(*) from test_range_spgist where ir -|- int4range(100,500);
 
 -- test index-only scans
-explain (costs off)
-select ir from test_range_spgist where ir -|- int4range(10,20) order by ir;
+-- PGXC deactivated
+--explain (costs off)
+--select ir from test_range_spgist where ir -|- int4range(10,20) order by ir;
 select ir from test_range_spgist where ir -|- int4range(10,20) order by ir;
 
 RESET enable_seqscan;

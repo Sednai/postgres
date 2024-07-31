@@ -18,10 +18,15 @@
 #include "catalog/objectaddress.h"
 #include "nodes/parsenodes.h"
 
+#ifdef PGXC
+extern Oid CreateSchemaCommand(CreateSchemaStmt *parsetree,
+					const char *queryString,
+					int stmt_location, int stmt_len, bool sentToRemote);
+#else
 extern Oid CreateSchemaCommand(CreateSchemaStmt *parsetree,
 					const char *queryString,
 					int stmt_location, int stmt_len);
-
+#endif
 extern void RemoveSchemaById(Oid schemaOid);
 
 extern ObjectAddress RenameSchema(const char *oldname, const char *newname);

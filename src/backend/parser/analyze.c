@@ -2856,7 +2856,9 @@ transformExecDirectStmt(ParseState *pstate, ExecDirectStmt *stmt)
 	foreach(raw_parsetree_item, raw_parsetree_list)
 	{
 		Node   *parsetree = (Node *) lfirst(raw_parsetree_item);
-		result = parse_analyze_varparams(parsetree, query, NULL, 0);
+		int numparams;
+		numparams = 0;
+		result = parse_analyze_varparams(parsetree, query, NULL, &numparams);
 	}
 
 	/* Needed by planner */

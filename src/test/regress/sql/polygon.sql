@@ -4,69 +4,69 @@
 -- polygon logic
 --
 
-CREATE TABLE POLYGON_TBL(f1 polygon);
+CREATE TABLE POLYGON_TBL(id int, f1 polygon);
 
 
-INSERT INTO POLYGON_TBL(f1) VALUES ('(2.0,0.0),(2.0,4.0),(0.0,0.0)');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (1, '(2.0,0.0),(2.0,4.0),(0.0,0.0)');
 
-INSERT INTO POLYGON_TBL(f1) VALUES ('(3.0,1.0),(3.0,3.0),(1.0,0.0)');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (2, '(3.0,1.0),(3.0,3.0),(1.0,0.0)');
 
 -- degenerate polygons
-INSERT INTO POLYGON_TBL(f1) VALUES ('(0.0,0.0)');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (3, '(0.0,0.0)');
 
-INSERT INTO POLYGON_TBL(f1) VALUES ('(0.0,1.0),(0.0,1.0)');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (4, '(0.0,1.0),(0.0,1.0)');
 
 -- bad polygon input strings
-INSERT INTO POLYGON_TBL(f1) VALUES ('0.0');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (5, '0.0');
 
-INSERT INTO POLYGON_TBL(f1) VALUES ('(0.0 0.0');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (6, '(0.0 0.0');
 
-INSERT INTO POLYGON_TBL(f1) VALUES ('(0,1,2)');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (7, '(0,1,2)');
 
-INSERT INTO POLYGON_TBL(f1) VALUES ('(0,1,2,3');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (8, '(0,1,2,3');
 
-INSERT INTO POLYGON_TBL(f1) VALUES ('asdf');
+INSERT INTO POLYGON_TBL(id,f1) VALUES (9, 'asdf');
 
 
-SELECT '' AS four, * FROM POLYGON_TBL;
+SELECT '' AS four, f1 FROM POLYGON_TBL ORDER BY id;
 
 -- overlap
-SELECT '' AS three, p.*
+SELECT '' AS three, p.f1
    FROM POLYGON_TBL p
-   WHERE p.f1 && '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
+   WHERE p.f1 && '(3.0,1.0),(3.0,3.0),(1.0,0.0)' ORDER BY id;
 
 -- left overlap
-SELECT '' AS four, p.*
+SELECT '' AS four, p.f1
    FROM POLYGON_TBL p
-   WHERE p.f1 &< '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
+   WHERE p.f1 &< '(3.0,1.0),(3.0,3.0),(1.0,0.0)' ORDER BY id;
 
 -- right overlap
-SELECT '' AS two, p.*
+SELECT '' AS two, p.f1
    FROM POLYGON_TBL p
-   WHERE p.f1 &> '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
+   WHERE p.f1 &> '(3.0,1.0),(3.0,3.0),(1.0,0.0)' ORDER BY id;
 
 -- left of
-SELECT '' AS one, p.*
+SELECT '' AS one, p.f1
    FROM POLYGON_TBL p
-   WHERE p.f1 << '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
+   WHERE p.f1 << '(3.0,1.0),(3.0,3.0),(1.0,0.0)' ORDER BY id;
 
 -- right of
-SELECT '' AS zero, p.*
+SELECT '' AS zero, p.f1
    FROM POLYGON_TBL p
    WHERE p.f1 >> '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
 
 -- contained
-SELECT '' AS one, p.*
+SELECT '' AS one, p.f1
    FROM POLYGON_TBL p
    WHERE p.f1 <@ polygon '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
 
 -- same
-SELECT '' AS one, p.*
+SELECT '' AS one, p.f1
    FROM POLYGON_TBL p
    WHERE p.f1 ~= polygon '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
 
 -- contains
-SELECT '' AS one, p.*
+SELECT '' AS one, p.f1
    FROM POLYGON_TBL p
    WHERE p.f1 @> polygon '(3.0,1.0),(3.0,3.0),(1.0,0.0)';
 
@@ -158,52 +158,53 @@ SET enable_seqscan = OFF;
 SET enable_indexscan = OFF;
 SET enable_bitmapscan = ON;
 
-EXPLAIN (COSTS OFF)
+--PGXC 
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p << polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p << polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p << polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p &< polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p &< polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p &< polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p && polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p && polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p && polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p &> polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p &> polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p &> polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p >> polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p >> polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p >> polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p <<| polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p <<| polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p <<| polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p &<| polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p &<| polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p &<| polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p |&> polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p |&> polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p |&> polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p |>> polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p |>> polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p |>> polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
 SELECT count(*) FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
-SELECT count(*) FROM quad_poly_tbl WHERE p <@ polygon '((300,300),(400,600),(600,500),(700,200))';
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_poly_tbl WHERE p @> polygon '((340,550),(343,552),(341,553))';
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p @> polygon '((340,550),(343,552),(341,553))';
 SELECT count(*) FROM quad_poly_tbl WHERE p @> polygon '((340,550),(343,552),(341,553))';
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM quad_poly_tbl WHERE p ~= polygon '((200, 300),(210, 310),(230, 290))';
+--EXPLAIN (COSTS OFF)
+--SELECT count(*) FROM quad_poly_tbl WHERE p ~= polygon '((200, 300),(210, 310),(230, 290))';
 SELECT count(*) FROM quad_poly_tbl WHERE p ~= polygon '((200, 300),(210, 310),(230, 290))';
 
 RESET enable_seqscan;

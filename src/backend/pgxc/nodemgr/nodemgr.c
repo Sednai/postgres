@@ -354,15 +354,11 @@ PgxcNodeListAndCount(void)
 	heap_endscan(scan);
 	heap_close(rel, AccessShareLock);
 
-
-elog(WARNING,"Before qsort");
 	/* Finally sort the lists */
 	if (*shmemNumCoords > 1)
 		qsort(coDefs, *shmemNumCoords, sizeof(NodeDefinition), cmp_nodes);
 	if (*shmemNumDataNodes > 1)
 		qsort(dnDefs, *shmemNumDataNodes, sizeof(NodeDefinition), cmp_nodes);
-
-elog(WARNING,"After qsort");
 
 	LWLockRelease(NodeTableLock);
 }

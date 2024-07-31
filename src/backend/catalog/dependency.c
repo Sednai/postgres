@@ -488,7 +488,46 @@ doRename(const ObjectAddress *object, const char *oldname, const char *newname)
 	}
 }
 
+/*
+ * performRename: used to rename objects
+ * on GTM depending on another object(s)
+ */
+void
+performRename(const ObjectAddress *object, const char *oldname, const char *newname)
+{
+	Relation    depRel;
+	ObjectAddresses *targetObjects;
+	int i;
 
+	/*
+	 * Check the dependencies on this object
+	 * And rename object dependent if necessary
+	 */
+
+	depRel = heap_open(DependRelationId, RowExclusiveLock);
+
+	targetObjects = new_object_addresses();
+
+	findDependentObjects(object,
+						 DEPFLAG_ORIGINAL,
+						 0,
+						 NULL,      /* empty stack */
+						 targetObjects,
+						 NULL,
+						 &depRel);
+
+	/* Check Objects one by one to see if some of them have to be renamed on GTM */
+	for (i = 0; i < targetObjects->numrefs; i++)
+	{
+		ObjectAddress *thisobj = targetObjects->refs + i;
+		doRename(thisobj, oldname, newname);
+	}
+
+	/* And clean up */
+	free_object_addresses(targetObjects);
+
+	heap_close(depRel, RowExclusiveLock);
+}
 #endif
 
 

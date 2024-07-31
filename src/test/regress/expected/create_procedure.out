@@ -79,14 +79,11 @@ AS $$
 CALL ptest1(y);
 CALL ptest1($1);
 $$;
-CALL ptest3('b');
-SELECT * FROM cp_test;
- a | b 
----+---
- 1 | b
- 1 | b
-(2 rows)
-
+ERROR:  In XC, SQL functions cannot contain utility statements
+CONTEXT:  SQL function "ptest3"
+--PGXC deactivated
+--CALL ptest3('b');
+--SELECT * FROM cp_test;
 -- output arguments
 CREATE PROCEDURE ptest4a(INOUT a int, INOUT b int)
 LANGUAGE SQL
@@ -104,7 +101,7 @@ LANGUAGE SQL
 AS $$
 CALL ptest4a(a, b);  -- error, not supported
 $$;
-ERROR:  calling procedures with output arguments is not supported in SQL functions
+ERROR:  In XC, SQL functions cannot contain utility statements
 CONTEXT:  SQL function "ptest4b"
 DROP PROCEDURE ptest4a;
 -- named and default parameters

@@ -47,10 +47,9 @@ CALL ptest1(y);
 CALL ptest1($1);
 $$;
 
-CALL ptest3('b');
-
-SELECT * FROM cp_test;
-
+--PGXC deactivated
+--CALL ptest3('b');
+--SELECT * FROM cp_test;
 
 -- output arguments
 

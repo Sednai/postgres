@@ -722,7 +722,6 @@ set_plain_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 	 */
 	required_outer = rel->lateral_relids;
 #ifdef PGXC
-	elog(WARNING,"[DEBUG](set_plain_rel_pathlist)->create_plainrel_rqpath");
 	if (!create_plainrel_rqpath(root, rel, rte, required_outer))
 	{
 #endif

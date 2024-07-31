@@ -17338,6 +17338,6 @@ DropTableThrowErrorExternal(RangeVar *relation, ObjectType removeType, bool miss
 			break;
 	}
 
-	DropErrorMsgNonExistent(relation->relname, relkind, missing_ok);
+	DropErrorMsgNonExistent(relation, relkind, missing_ok);
 }
 #endif

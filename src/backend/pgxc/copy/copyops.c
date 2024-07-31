@@ -232,12 +232,12 @@ CopyOps_RawDataToArrayField(TupleDesc tupdesc, char *message, int len)
 	char	   *line_end_ptr;
 	int			fields = tupdesc->natts;
 	char	  **raw_fields;
-	Form_pg_attribute *attr = tupdesc->attrs;
+	Form_pg_attribute attr = tupdesc->attrs;
 
 	/* Adjust number of fields depending on dropped attributes */
 	for (fieldno = 0; fieldno < tupdesc->natts; fieldno++)
 	{
-		if (attr[fieldno]->attisdropped)
+		if (attr[fieldno].attisdropped)
 			fields--;
 	}
 
@@ -437,7 +437,7 @@ CopyOps_BuildOneRowTo(TupleDesc tupdesc, Datum *values, bool *nulls, int *len)
 	char	   *res;
 	int			i;
 	FmgrInfo   *out_functions;
-	Form_pg_attribute *attr = tupdesc->attrs;
+	Form_pg_attribute attr = tupdesc->attrs;
 	StringInfo	buf;
 
 	/* Get info about the columns we need to process. */
@@ -448,10 +448,10 @@ CopyOps_BuildOneRowTo(TupleDesc tupdesc, Datum *values, bool *nulls, int *len)
 		bool		isvarlena;
 
 		/* Do not need any information for dropped attributes */
-		if (attr[i]->attisdropped)
+		if (attr[i].attisdropped)
 			continue;
 
-		getTypeOutputInfo(attr[i]->atttypid,
+		getTypeOutputInfo(attr[i].atttypid,
 						  &out_func_oid,
 						  &isvarlena);
 		fmgr_info(out_func_oid, &out_functions[i]);
@@ -466,7 +466,7 @@ CopyOps_BuildOneRowTo(TupleDesc tupdesc, Datum *values, bool *nulls, int *len)
 		bool		isnull = nulls[i];
 
 		/* Do not need any information for dropped attributes */
-		if (attr[i]->attisdropped)
+		if (attr[i].attisdropped)
 			continue;
 
 		if (need_delim)

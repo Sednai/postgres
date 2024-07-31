@@ -888,7 +888,6 @@ pgxc_add_returning_list(RemoteQuery *rq, List *ret_list, int rel_index)
 Plan *
 pgxc_make_modifytable(PlannerInfo *root, Plan *topplan)
 {
-	elog(WARNING,"[DEBUG]: pgxc_make_modifytable (coord: %d | cfc: %d)",(int) IS_PGXC_COORDINATOR,IsConnFromCoord());
 
 	ModifyTable *mt = (ModifyTable *)topplan;
 
@@ -1365,9 +1364,7 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 	ListCell			*rel;
 	int					relcount = -1;
 	RelationAccessType	accessType;
-	elog(WARNING,"[DEBUG](create_remotedml_plan)");
 	
-
 	/* We expect to work only on ModifyTable node */
 	/*
 	if (!IsA(topplan, ModifyTable))
@@ -1390,14 +1387,11 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 			return NULL;
 	}
 	
-	elog(WARNING,"[DEBUG](create_remotedml_plan): # relations: %d", list_length(mt->resultRelations));
-
 	/*
 	 * For every result relation, build a remote plan to execute remote DML.
 	 */
 	foreach(rel, mt->resultRelations)
 	{
-		elog(WARNING,"[DEBUG](create_remotedml_plan): remote_plan start add");
 		Index			resultRelationIndex = lfirst_int(rel);
 		RangeTblEntry	*res_rel;
 		RelationLocInfo	*rel_loc_info;
@@ -1412,7 +1406,6 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 
 		/* Bad relation ? */
 		if (res_rel == NULL || res_rel->rtekind != RTE_RELATION) {
-			elog(WARNING,"[DEBUG]: Bad relation");
 			continue;
 		}
 		relname = get_rel_name(res_rel->relid);
@@ -1420,7 +1413,6 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 		/* Get location info of the target table */
 		rel_loc_info = GetRelationLocInfo(res_rel->relid);
 		if (rel_loc_info == NULL) {
-			elog(WARNING,"[DEBUG]: GetRelationLocInfo failed: %d",res_rel->relid);
 			continue;
 		}
 		fstep = make_remotequery(NIL, NIL, resultRelationIndex);
@@ -1473,7 +1465,6 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 		fstep->scan.scanrelid = list_length(root->parse->rtable);
 
 		mt->remote_plans = lappend(mt->remote_plans, fstep);
-		elog(WARNING,"[DEBUG](create_remotedml_plan): remote_plan added");
 	}
 
 	return mt;
@@ -2833,7 +2824,7 @@ validate_part_col_updatable(const Query *query)
 
 				ereport(ERROR,
 						(errcode(ERRCODE_INVALID_COLUMN_REFERENCE),
-						(errmsg("Partition column can't be updated in current version"))));
+						(errmsg("Partition column can't be updated in current XC version"))));
 			}
 		}
 	}

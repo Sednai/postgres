@@ -697,6 +697,7 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		case T_CollateExpr:
 		case T_CoalesceExpr:
 		case T_XmlExpr:
+		case T_SQLValueFunction:
 		case T_NullTest:
 		case T_BooleanTest:
 		case T_CoerceToDomain:

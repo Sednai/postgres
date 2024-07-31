@@ -710,7 +710,7 @@ distrib_delete_hash(RedistribState *distribState, ExecNodes *exec_nodes)
 		int			nodepos = 0;
 		ExecNodes  *local_exec_nodes = makeNode(ExecNodes);
 		TupleDesc	tupDesc = RelationGetDescr(rel);
-		Form_pg_attribute *attr = tupDesc->attrs;
+		Form_pg_attribute *attr = &tupDesc->attrs;
 		ListCell   *item2;
 
 		/* Here the query is launched to a unique node */

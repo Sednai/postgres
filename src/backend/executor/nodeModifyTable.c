@@ -454,7 +454,6 @@ ExecInsert(ModifyTableState *mtstate,
 #ifdef PGXC
 		if (IS_PGXC_COORDINATOR && resultRemoteRel)
 		{
-			elog(WARNING,"[DEBUG]: -> ExecProcNodeDMLInXC");
 			slot = ExecProcNodeDMLInXC(estate, planSlot, slot);
 			/*
 			 * PGXCTODO: If target table uses WITH OIDS, this should be set to the Oid inserted
@@ -2173,7 +2172,6 @@ tupconv_map_for_subplan(ModifyTableState *mtstate, int whichplan)
 static TupleTableSlot *
 ExecModifyTable(PlanState *pstate)
 {
-	elog(WARNING,"[DEBUG](ExecModifyTable)");
 	ModifyTableState *node = castNode(ModifyTableState, pstate);
 	PartitionTupleRouting *proute = node->mt_partition_tuple_routing;
 	EState	   *estate = node->ps.state;
@@ -2605,7 +2603,6 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 															 eflags);
 		}
 #ifdef PGXC
-		elog(WARNING,"[DEBUG](ExecInitModifyTable) remoteplan: %d",(int) remoteplan);
 		if (remoteplan)
 		{
 			/* 

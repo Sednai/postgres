@@ -68,7 +68,9 @@
 #include "utils/ruleutils.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#endif
 
 /* result structure for get_rels_with_domain() */
 typedef struct
@@ -1320,6 +1322,10 @@ AlterEnum(AlterEnumStmt *stmt, bool isTopLevel)
 			!(tup->t_data->t_infomask & HEAP_UPDATED))
 			 /* safe to do inside transaction block */ ;
 		else
+#ifdef PGXC
+		/* Allow this to be run inside transaction block on remote nodes */
+		if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+#endif
 			PreventInTransactionBlock(isTopLevel, "ALTER TYPE ... ADD");
 
 		AddEnumLabel(enum_type_oid, stmt->newVal,

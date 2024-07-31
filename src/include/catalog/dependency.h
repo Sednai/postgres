@@ -217,6 +217,13 @@ extern void performDeletion(const ObjectAddress *object,
 extern void performMultipleDeletions(const ObjectAddresses *objects,
 						 DropBehavior behavior, int flags);
 
+#ifdef PGXC
+extern void performRename(const ObjectAddress *object,
+						  const char *oldname,
+						  const char *newname);
+#endif
+
+
 extern void recordDependencyOnExpr(const ObjectAddress *depender,
 					   Node *expr, List *rtable,
 					   DependencyType behavior);

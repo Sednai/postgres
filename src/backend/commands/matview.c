@@ -973,7 +973,7 @@ pgxc_fill_matview_by_copy(DestReceiver *mv_dest, bool skipdata, int operation,
 	TupleDesc	tupDesc;
 	Datum		*values;
 	bool		*isnulls;
-	TupleTableSlot	*slot = MakeTupleTableSlot(tupdesc);
+	TupleTableSlot	*slot = MakeTupleTableSlot(NULL);
 	ParseState *pstate;
 	
 	Assert(IS_PGXC_COORDINATOR && IsConnFromCoord());

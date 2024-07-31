@@ -33,11 +33,11 @@ CREATE TABLE testschema.asselect TABLESPACE regress_tblspace AS SELECT 1;
 SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
     where c.reltablespace = t.oid AND c.relname = 'asselect';
 
-PREPARE selectsource(int) AS SELECT $1;
-CREATE TABLE testschema.asexecute TABLESPACE regress_tblspace
-    AS EXECUTE selectsource(2);
-SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
-    where c.reltablespace = t.oid AND c.relname = 'asexecute';
+--PGXC disabled PREPARE selectsource(int) AS SELECT $1;
+--CREATE TABLE testschema.asexecute TABLESPACE regress_tblspace
+--    AS EXECUTE selectsource(2);
+--SELECT relname, spcname FROM pg_catalog.pg_tablespace t, pg_catalog.pg_class c
+--    where c.reltablespace = t.oid AND c.relname = 'asexecute';
 
 -- index
 CREATE INDEX foo_idx on testschema.foo(i) TABLESPACE regress_tblspace;

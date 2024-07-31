@@ -49,6 +49,7 @@
 /* PGXC_COORD */
 #include "access/gtm.h"
 #include "utils/memutils.h"
+#include "commands/dbcommands.h"
 #endif
 
 
@@ -287,34 +288,13 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	
 	heap_close(rel, NoLock);
 
-	/* fill in pg_sequence */
-	rel = heap_open(SequenceRelationId, RowExclusiveLock);
-	tupDesc = RelationGetDescr(rel);
-
-	memset(pgs_nulls, 0, sizeof(pgs_nulls));
-
-	pgs_values[Anum_pg_sequence_seqrelid - 1] = ObjectIdGetDatum(seqoid);
-	pgs_values[Anum_pg_sequence_seqtypid - 1] = ObjectIdGetDatum(seqform.seqtypid);
-	pgs_values[Anum_pg_sequence_seqstart - 1] = Int64GetDatumFast(seqform.seqstart);
-	pgs_values[Anum_pg_sequence_seqincrement - 1] = Int64GetDatumFast(seqform.seqincrement);
-	pgs_values[Anum_pg_sequence_seqmax - 1] = Int64GetDatumFast(seqform.seqmax);
-	pgs_values[Anum_pg_sequence_seqmin - 1] = Int64GetDatumFast(seqform.seqmin);
-	pgs_values[Anum_pg_sequence_seqcache - 1] = Int64GetDatumFast(seqform.seqcache);
-	pgs_values[Anum_pg_sequence_seqcycle - 1] = BoolGetDatum(seqform.seqcycle);
-
-	tuple = heap_form_tuple(tupDesc, pgs_values, pgs_nulls);
-	CatalogTupleInsert(rel, tuple);
-
-	heap_freetuple(tuple);
-	heap_close(rel, RowExclusiveLock);
-
+#ifdef PGXC  /* PGXC_COORD */
 	increment = seqform.seqincrement;
 	min_value = seqform.seqmin;
 	max_value = seqform.seqmax;
 	start_value = seqform.seqstart;
 	cycle = seqform.seqcycle;
 
-#ifdef PGXC  /* PGXC_COORD */
 	/*
 	 * Remote Coordinator is in charge of creating sequence in GTM.
 	 * If sequence is temporary, it is not necessary to create it on GTM.
@@ -345,6 +325,27 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	}
 #endif
 
+	/* fill in pg_sequence */
+	rel = heap_open(SequenceRelationId, RowExclusiveLock);
+	tupDesc = RelationGetDescr(rel);
+
+	memset(pgs_nulls, 0, sizeof(pgs_nulls));
+
+	pgs_values[Anum_pg_sequence_seqrelid - 1] = ObjectIdGetDatum(seqoid);
+	pgs_values[Anum_pg_sequence_seqtypid - 1] = ObjectIdGetDatum(seqform.seqtypid);
+	pgs_values[Anum_pg_sequence_seqstart - 1] = Int64GetDatumFast(seqform.seqstart);
+	pgs_values[Anum_pg_sequence_seqincrement - 1] = Int64GetDatumFast(seqform.seqincrement);
+	pgs_values[Anum_pg_sequence_seqmax - 1] = Int64GetDatumFast(seqform.seqmax);
+	pgs_values[Anum_pg_sequence_seqmin - 1] = Int64GetDatumFast(seqform.seqmin);
+	pgs_values[Anum_pg_sequence_seqcache - 1] = Int64GetDatumFast(seqform.seqcache);
+	pgs_values[Anum_pg_sequence_seqcycle - 1] = BoolGetDatum(seqform.seqcycle);
+
+	tuple = heap_form_tuple(tupDesc, pgs_values, pgs_nulls);
+	CatalogTupleInsert(rel, tuple);
+
+	heap_freetuple(tuple);
+	heap_close(rel, RowExclusiveLock);
+	
 	return address;
 }
 

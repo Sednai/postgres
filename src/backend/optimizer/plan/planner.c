@@ -2096,7 +2096,7 @@ grouping_planner(PlannerInfo *root, bool inheritance_update,
 //	if (IsA(top_plan, RemoteQuery) && parse->commandType == CMD_SELECT) {
 
 //						pgxc_rqplan_adjust_tlist((RemoteQuery *)top_plan);
-		elog(WARNING,"[DEBUG](grouping_planner) -> before: Apply scan/join target ");
+//		elog(WARNING,"[DEBUG](grouping_planner) -> before: Apply scan/join target ");
 //	}
 #endif
 

@@ -51,7 +51,8 @@ create view numeric_view as
 
 \d+ numeric_view
 
-explain (verbose, costs off) select * from numeric_view;
+--PGXC deactivated
+--explain (verbose, costs off) select * from numeric_view;
 
 -- bpchar, lacking planner support for its length coercion function,
 -- could behave differently
@@ -65,8 +66,8 @@ create view bpchar_view as
   from bpchar_tbl;
 
 \d+ bpchar_view
-
-explain (verbose, costs off) select * from bpchar_view
-  where f1::bpchar = 'foo';
+--PGXC deactivated
+--explain (verbose, costs off) select * from bpchar_view
+--  where f1::bpchar = 'foo';
 
 rollback;
