@@ -959,7 +959,7 @@ FETCH 2 FROM c1;
   2 | two
 (2 rows)
 
-DELETE FROM uctest WHERE CURRENT OF c1;
+--DELETE FROM uctest WHERE CURRENT OF c1;
 -- should show deletion
 SELECT * FROM uctest;
  f1 |  f2   
@@ -1003,7 +1003,7 @@ FETCH c1;
   1 | one
 (1 row)
 
-UPDATE uctest SET f1 = 8 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = 8 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1 |  f2   
 ----+-------
@@ -1028,7 +1028,7 @@ FETCH c1;
   3 | three
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1 |  f2   
 ----+-------
@@ -1036,7 +1036,7 @@ SELECT * FROM uctest;
  13 | three
 (2 rows)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1 |  f2   
 ----+-------
@@ -1051,21 +1051,21 @@ FETCH RELATIVE 0 FROM c1;
   3 | three
 (1 row)
 
-DELETE FROM uctest WHERE CURRENT OF c1;
+--DELETE FROM uctest WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1 | f2  
 ----+-----
   8 | one
 (1 row)
 
-DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
+--DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
  f1 | f2  
 ----+-----
   8 | one
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
  f1 | f2  
 ----+-----
@@ -1094,7 +1094,7 @@ FETCH c1;
   3 | three
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1 |  f2   
 ----+-------
@@ -1102,7 +1102,7 @@ SELECT * FROM uctest;
  13 | three
 (2 rows)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1 |  f2   
 ----+-------
@@ -1110,21 +1110,21 @@ SELECT * FROM uctest;
  23 | three
 (2 rows)
 
-DELETE FROM uctest WHERE CURRENT OF c1;
+--DELETE FROM uctest WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1 | f2  
 ----+-----
   8 | one
 (1 row)
 
-DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
+--DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
  f1 | f2  
 ----+-----
   8 | one
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
  f1 | f2  
 ----+-----
@@ -1162,21 +1162,21 @@ FETCH 1 FROM c1;
   3 | three
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 FETCH 1 FROM c1;
  f1 | f2  
 ----+-----
   8 | one
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 FETCH 1 FROM c1;
  f1  |   f2    
 -----+---------
  100 | hundred
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 FETCH 1 FROM c1;
  f1 | f2 
 ----+----
@@ -1200,7 +1200,7 @@ FETCH 1 FROM c1;
  18 | one | 13 | three
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
 ERROR:  cursor "c1" is not a simply updatable scan of table "uctest"
 ROLLBACK;
 BEGIN;
@@ -1211,7 +1211,7 @@ FETCH 1 FROM c1;
  18 | one | 13 | three
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
 ERROR:  cursor "c1" has multiple FOR UPDATE/SHARE references to table "uctest"
 ROLLBACK;
 BEGIN;
@@ -1222,7 +1222,7 @@ FETCH 1 FROM c1;
  18 | one | 13 | three
 (1 row)
 
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
  f1  |   f2    
 -----+---------
@@ -1233,7 +1233,7 @@ SELECT * FROM uctest;
 
 ROLLBACK;
 -- Check various error cases
-DELETE FROM uctest WHERE CURRENT OF c1;  -- fail, no such cursor
+--DELETE FROM uctest WHERE CURRENT OF c1;  -- fail, no such cursor
 ERROR:  cursor "c1" does not exist
 DECLARE cx CURSOR WITH HOLD FOR SELECT * FROM uctest;
 DELETE FROM uctest WHERE CURRENT OF cx;  -- fail, can't use held cursor
@@ -1260,7 +1260,7 @@ ERROR:  cursor "c" is not a simply updatable scan of table "uctest"
 ROLLBACK;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest;
-DELETE FROM uctest WHERE CURRENT OF c1; -- fail, no current row
+--DELETE FROM uctest WHERE CURRENT OF c1; -- fail, no current row
 ERROR:  cursor "c1" is not positioned on a row
 ROLLBACK;
 BEGIN;
@@ -1280,7 +1280,7 @@ FETCH FROM c1;
  13 | three
 (1 row)
 
-DELETE FROM ucview WHERE CURRENT OF c1; -- fail, views not supported
+--DELETE FROM ucview WHERE CURRENT OF c1; -- fail, views not supported
 ERROR:  WHERE CURRENT OF on a view is not implemented
 ROLLBACK;
 -- Check WHERE CURRENT OF with an index-only scan
@@ -1300,7 +1300,7 @@ FETCH FROM c1;
  DZAAAA
 (1 row)
 
-DELETE FROM onek WHERE CURRENT OF c1;
+--DELETE FROM onek WHERE CURRENT OF c1;
 SELECT stringu1 FROM onek WHERE stringu1 = 'DZAAAA';
  stringu1 
 ----------

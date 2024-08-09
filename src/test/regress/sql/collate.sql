@@ -39,9 +39,9 @@ CREATE TABLE collate_test2 (
 INSERT INTO collate_test1 VALUES (1, 'abc'), (2, 'Abc'), (3, 'bbc'), (4, 'ABD');
 INSERT INTO collate_test2 SELECT * FROM collate_test1;
 
-SELECT * FROM collate_test1 WHERE b COLLATE "C" >= 'abc';
-SELECT * FROM collate_test1 WHERE b >= 'abc' COLLATE "C";
-SELECT * FROM collate_test1 WHERE b COLLATE "C" >= 'abc' COLLATE "C";
+SELECT * FROM collate_test1 WHERE b COLLATE "C" >= 'abc' ORDER BY a;
+SELECT * FROM collate_test1 WHERE b >= 'abc' COLLATE "C" ORDER BY a;
+SELECT * FROM collate_test1 WHERE b COLLATE "C" >= 'abc' COLLATE "C" ORDER BY a;
 SELECT * FROM collate_test1 WHERE b COLLATE "C" >= 'bbc' COLLATE "POSIX"; -- fail
 
 CREATE DOMAIN testdomain_p AS text COLLATE "POSIX";
@@ -105,8 +105,8 @@ SELECT a, coalesce(b, 'foo') FROM collate_test1 ORDER BY 2;
 SELECT a, coalesce(b, 'foo') FROM collate_test2 ORDER BY 2;
 SELECT a, lower(coalesce(x, 'foo')), lower(coalesce(y, 'foo')) FROM collate_test10;
 
-SELECT a, b, greatest(b, 'CCC') FROM collate_test1 ORDER BY 3;
-SELECT a, b, greatest(b, 'CCC') FROM collate_test2 ORDER BY 3;
+SELECT a, b, greatest(b, 'CCC') FROM collate_test1 ORDER BY 1;
+SELECT a, b, greatest(b, 'CCC') FROM collate_test2 ORDER BY 1;
 SELECT a, x, y, lower(greatest(x, 'foo')), lower(greatest(y, 'foo')) FROM collate_test10;
 
 SELECT a, nullif(b, 'abc') FROM collate_test1 ORDER BY 2;
@@ -140,7 +140,7 @@ SELECT a, b FROM collate_test2 WHERE a < 4 INTERSECT SELECT a, b FROM collate_te
 SELECT a, b FROM collate_test2 EXCEPT SELECT a, b FROM collate_test2 WHERE a < 2 ORDER BY 2;
 
 SELECT a, b FROM collate_test1 UNION ALL SELECT a, b FROM collate_test2 ORDER BY 2; -- fail
-SELECT a, b FROM collate_test1 UNION ALL SELECT a, b FROM collate_test2; -- ok
+-- SELECT a, b FROM collate_test1 UNION ALL SELECT a, b FROM collate_test2 -- ok
 SELECT a, b FROM collate_test1 UNION SELECT a, b FROM collate_test2 ORDER BY 2; -- fail
 SELECT a, b COLLATE "C" FROM collate_test1 UNION SELECT a, b FROM collate_test2 ORDER BY 2; -- ok
 SELECT a, b FROM collate_test1 INTERSECT SELECT a, b FROM collate_test2 ORDER BY 2; -- fail
@@ -223,10 +223,10 @@ RESET enable_nestloop;
 
 -- EXPLAIN
 
-EXPLAIN (COSTS OFF)
-  SELECT * FROM collate_test10 ORDER BY x, y;
-EXPLAIN (COSTS OFF)
-  SELECT * FROM collate_test10 ORDER BY x DESC, y COLLATE "C" ASC NULLS FIRST;
+-- EXPLAIN (COSTS OFF)
+--   SELECT * FROM collate_test10 ORDER BY x, y;
+-- EXPLAIN (COSTS OFF)
+--   SELECT * FROM collate_test10 ORDER BY x DESC, y COLLATE "C" ASC NULLS FIRST;
 
 
 -- CREATE/DROP COLLATION

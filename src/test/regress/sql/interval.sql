@@ -34,25 +34,25 @@ INSERT INTO INTERVAL_TBL (f1) VALUES ('@ 30 eons ago');
 
 -- test interval operators
 
-SELECT '' AS ten, * FROM INTERVAL_TBL;
+SELECT '' AS ten, * FROM INTERVAL_TBL order by f1;
 
 SELECT '' AS nine, * FROM INTERVAL_TBL
-   WHERE INTERVAL_TBL.f1 <> interval '@ 10 days';
+   WHERE INTERVAL_TBL.f1 <> interval '@ 10 days' order by f1;
 
 SELECT '' AS three, * FROM INTERVAL_TBL
-   WHERE INTERVAL_TBL.f1 <= interval '@ 5 hours';
+   WHERE INTERVAL_TBL.f1 <= interval '@ 5 hours' order by f1;
 
 SELECT '' AS three, * FROM INTERVAL_TBL
-   WHERE INTERVAL_TBL.f1 < interval '@ 1 day';
+   WHERE INTERVAL_TBL.f1 < interval '@ 1 day' order by f1;
 
 SELECT '' AS one, * FROM INTERVAL_TBL
    WHERE INTERVAL_TBL.f1 = interval '@ 34 years';
 
 SELECT '' AS five, * FROM INTERVAL_TBL
-   WHERE INTERVAL_TBL.f1 >= interval '@ 1 month';
+   WHERE INTERVAL_TBL.f1 >= interval '@ 1 month' order by f1;
 
 SELECT '' AS nine, * FROM INTERVAL_TBL
-   WHERE INTERVAL_TBL.f1 > interval '@ 3 seconds ago';
+   WHERE INTERVAL_TBL.f1 > interval '@ 3 seconds ago' order by f1;
 
 SELECT '' AS fortyfive, r1.*, r2.*
    FROM INTERVAL_TBL r1, INTERVAL_TBL r2
@@ -83,8 +83,9 @@ SELECT r1.*, r2.*
 
 CREATE INDEX ON INTERVAL_TBL_OF USING btree (f1);
 SET enable_seqscan TO false;
-EXPLAIN (COSTS OFF)
-SELECT f1 FROM INTERVAL_TBL_OF r1 ORDER BY f1;
+-- PGXC deactivated
+-- EXPLAIN (COSTS OFF)
+-- SELECT f1 FROM INTERVAL_TBL_OF r1 ORDER BY f1;
 SELECT f1 FROM INTERVAL_TBL_OF r1 ORDER BY f1;
 RESET enable_seqscan;
 
@@ -111,23 +112,23 @@ COPY INTERVAL_MULDIV_TBL FROM STDIN;
 \.
 
 SELECT span * 0.3 AS product
-FROM INTERVAL_MULDIV_TBL;
+FROM INTERVAL_MULDIV_TBL order by 1;
 
 SELECT span * 8.2 AS product
-FROM INTERVAL_MULDIV_TBL;
+FROM INTERVAL_MULDIV_TBL order by 1;
 
 SELECT span / 10 AS quotient
-FROM INTERVAL_MULDIV_TBL;
+FROM INTERVAL_MULDIV_TBL order by 1;
 
 SELECT span / 100 AS quotient
-FROM INTERVAL_MULDIV_TBL;
+FROM INTERVAL_MULDIV_TBL order by 1;
 
 DROP TABLE INTERVAL_MULDIV_TBL;
 
 SET DATESTYLE = 'postgres';
 SET IntervalStyle to postgres_verbose;
 
-SELECT '' AS ten, * FROM INTERVAL_TBL;
+SELECT '' AS ten, * FROM INTERVAL_TBL order by f1;
 
 -- test avg(interval), which is somewhat fragile since people have been
 -- known to change the allowed input syntax for type interval without
@@ -229,7 +230,7 @@ SELECT interval '1 2:03:04.5678' minute to second(2);
 -- test casting to restricted precision (bug #14479)
 SELECT f1, f1::INTERVAL DAY TO MINUTE AS "minutes",
   (f1 + INTERVAL '1 month')::INTERVAL MONTH::INTERVAL YEAR AS "years"
-  FROM interval_tbl;
+  FROM interval_tbl order by f1;
 
 -- test inputting and outputting SQL standard interval literals
 SET IntervalStyle TO sql_standard;

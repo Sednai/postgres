@@ -752,7 +752,7 @@ SELECT oid::int8 FROM pg_class WHERE relname = 'pg_class';
 (1 row)
 
 -- bit operations
-SELECT q1, q2, q1 & q2 AS "and", q1 | q2 AS "or", q1 # q2 AS "xor", ~q1 AS "not" FROM INT8_TBL;
+SELECT q1, q2, q1 & q2 AS "and", q1 | q2 AS "or", q1 # q2 AS "xor", ~q1 AS "not" FROM INT8_TBL order by q1,q2;
         q1        |        q2         |       and        |        or        |       xor        |        not        
 ------------------+-------------------+------------------+------------------+------------------+-------------------
               123 |               456 |               72 |              507 |              435 |              -124
@@ -762,7 +762,7 @@ SELECT q1, q2, q1 & q2 AS "and", q1 | q2 AS "or", q1 # q2 AS "xor", ~q1 AS "not"
  4567890123456789 | -4567890123456789 |                1 |               -1 |               -2 | -4567890123456790
 (5 rows)
 
-SELECT q1, q1 << 2 AS "shl", q1 >> 3 AS "shr" FROM INT8_TBL;
+SELECT q1, q1 << 2 AS "shl", q1 >> 3 AS "shr" FROM INT8_TBL order by q1;
         q1        |        shl        |       shr       
 ------------------+-------------------+-----------------
               123 |               492 |              15

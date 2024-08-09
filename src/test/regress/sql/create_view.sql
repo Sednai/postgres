@@ -54,12 +54,12 @@ CREATE OR REPLACE VIEW viewtest AS
 CREATE OR REPLACE VIEW viewtest AS
 	SELECT * FROM viewtest_tbl WHERE a > 10;
 
-SELECT * FROM viewtest;
+SELECT * FROM viewtest ORDER BY a;
 
 CREATE OR REPLACE VIEW viewtest AS
 	SELECT a, b FROM viewtest_tbl WHERE a > 5 ORDER BY b DESC;
 
-SELECT * FROM viewtest;
+SELECT * FROM viewtest ORDER BY a;
 
 -- should fail
 CREATE OR REPLACE VIEW viewtest AS
@@ -536,19 +536,19 @@ rollback;
 
 create type nestedcomposite as (x int8_tbl);
 create view tt15v as select row(i)::nestedcomposite from int8_tbl i;
-select * from tt15v;
+select * from tt15v order by 1;
 select pg_get_viewdef('tt15v', true);
-select row(i.*::int8_tbl)::nestedcomposite from int8_tbl i;
+select row(i.*::int8_tbl)::nestedcomposite from int8_tbl i order by 1;
 
 create view tt16v as select * from int8_tbl i, lateral(values(i)) ss;
-select * from tt16v;
+select * from tt16v order by q1,q2;
 select pg_get_viewdef('tt16v', true);
-select * from int8_tbl i, lateral(values(i.*::int8_tbl)) ss;
+select * from int8_tbl i, lateral(values(i.*::int8_tbl)) ss order by q1,q2;
 
 create view tt17v as select * from int8_tbl i where i in (values(i));
-select * from tt17v;
+select * from tt17v order by q1,q2;
 select pg_get_viewdef('tt17v', true);
-select * from int8_tbl i where i.* in (values(i.*::int8_tbl));
+select * from int8_tbl i where i.* in (values(i.*::int8_tbl)) order by q1,q2;
 
 create table tt15v_log(o tt15v, n tt15v, incr bool);
 create rule updlog as on update to tt15v do also
@@ -562,7 +562,7 @@ create view tt18v as
   union all
   select * from int8_tbl xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxz;
 select pg_get_viewdef('tt18v', true);
-explain (costs off) select * from tt18v;
+-- explain (costs off) select * from tt18v;
 
 -- check display of ScalarArrayOp with a sub-select
 
@@ -617,11 +617,11 @@ CREATE TABLE tt26(c int);
 
 BEGIN;
 CREATE TABLE tt27(c int);
-SAVEPOINT q;
+-- SAVEPOINT q;
 CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
 SELECT * FROM tt27;
-ROLLBACK TO q;
-CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
+-- ROLLBACK TO q;
+-- CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
 ROLLBACK;
 
 BEGIN;

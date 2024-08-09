@@ -5,12 +5,12 @@
 CREATE TEMP TABLE pcachetest AS SELECT * FROM int8_tbl;
 
 -- create and use a cached plan
-PREPARE prepstmt AS SELECT * FROM pcachetest;
+PREPARE prepstmt AS SELECT * FROM pcachetest ORDER BY q1,q2;
 
 EXECUTE prepstmt;
 
 -- and one with parameters
-PREPARE prepstmt2(bigint) AS SELECT * FROM pcachetest WHERE q1 = $1;
+PREPARE prepstmt2(bigint) AS SELECT * FROM pcachetest WHERE q1 = $1 ORDER BY q2;
 
 EXECUTE prepstmt2(123);
 
@@ -22,7 +22,7 @@ EXECUTE prepstmt2(123);
 
 -- recreate the temp table (this demonstrates that the raw plan is
 -- purely textual and doesn't depend on OIDs, for instance)
-CREATE TEMP TABLE pcachetest AS SELECT * FROM int8_tbl ORDER BY 2;
+CREATE TEMP TABLE pcachetest AS SELECT * FROM int8_tbl ORDER BY 1,2;
 
 EXECUTE prepstmt;
 EXECUTE prepstmt2(123);
@@ -45,7 +45,7 @@ EXECUTE prepstmt2(123);
 CREATE TEMP VIEW pcacheview AS
   SELECT * FROM pcachetest;
 
-PREPARE vprep AS SELECT * FROM pcacheview;
+PREPARE vprep AS SELECT * FROM pcacheview ORDER BY q2;
 
 EXECUTE vprep;
 

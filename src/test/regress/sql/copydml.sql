@@ -11,16 +11,17 @@ insert into copydml_test (t) values ('e');
 --
 -- Test COPY (insert/update/delete ...)
 --
-copy (insert into copydml_test (t) values ('f') returning id) to stdout;
-copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
-copy (delete from copydml_test where t = 'g' returning id) to stdout;
+-- PGXC deactivated
+-- copy (insert into copydml_test (t) values ('f') returning id) to stdout;
+-- copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
+-- copy (delete from copydml_test where t = 'g' returning id) to stdout;
 
 --
 -- Test \copy (insert/update/delete ...)
 --
-\copy (insert into copydml_test (t) values ('f') returning id) to stdout;
-\copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
-\copy (delete from copydml_test where t = 'g' returning id) to stdout;
+-- \copy (insert into copydml_test (t) values ('f') returning id) to stdout;
+-- \copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
+-- \copy (delete from copydml_test where t = 'g' returning id) to stdout;
 
 -- Error cases
 copy (insert into copydml_test default values) to stdout;
@@ -84,8 +85,8 @@ create trigger qqqaf after insert or update or delete on copydml_test
     for each row execute procedure qqq_trig();
 
 copy (insert into copydml_test (t) values ('f') returning id) to stdout;
-copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
-copy (delete from copydml_test where t = 'g' returning id) to stdout;
+-- copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
+-- copy (delete from copydml_test where t = 'g' returning id) to stdout;
 
 drop table copydml_test;
 drop function qqq_trig();

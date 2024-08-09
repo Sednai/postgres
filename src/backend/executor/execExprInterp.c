@@ -3027,6 +3027,9 @@ ExecEvalFieldStoreDeForm(ExprState *state, ExprEvalStep *op, ExprContext *econte
 		tmptup.t_len = HeapTupleHeaderGetDatumLength(tuphdr);
 		ItemPointerSetInvalid(&(tmptup.t_self));
 		tmptup.t_tableOid = InvalidOid;
+#ifdef PGXC
+		tmptup.t_xc_node_id = 0;
+#endif
 		tmptup.t_data = tuphdr;
 
 		/*

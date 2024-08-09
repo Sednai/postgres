@@ -53,6 +53,7 @@
 #include "parser/parse_type.h"
 #include "parser/parsetree.h"
 #include "pgxc/xc_maintenance_mode.h"
+#include "utils/rel.h"
 
 /* Enforce the use of two-phase commit when temporary objects are used */
 bool EnforceTwoPhaseCommit = true;
@@ -2581,14 +2582,14 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	ExecAssignExprContext(estate, &remotestate->ss.ps);
 
 	/* Initialise child expressions */
-	/* PGXC 11 drop 
+	/* PGXC 11 drop */
+	/*
 	remotestate->ss.ps.targetlist = (List *)
 		ExecInitExpr((Expr *) node->scan.plan.targetlist,
 					 (PlanState *) remotestate);
 	*/
-	remotestate->ss.ps.qual = (List *)
-		ExecInitExpr((Expr *) node->scan.plan.qual,
-					 (PlanState *) remotestate);
+	remotestate->ss.ps.qual =
+		ExecInitQual((Expr *) node->scan.plan.qual, (PlanState *) remotestate);
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_MARK)));
@@ -2602,14 +2603,9 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	remotestate->eof_underlying = false;
 	remotestate->tuplestorestate = NULL;
 
-	ExecInitResultTupleSlotTL(estate, &remotestate->ss.ps);
 	ExecInitScanTupleSlot(estate, &remotestate->ss, NULL);
 	scan_type = ExecTypeFromTL(node->base_tlist, false);
 	ExecAssignScanType(&remotestate->ss, scan_type);
-
-	/* PGXC 11 drop 
-	remotestate->ss.ps.ps_TupFromTlist = false;
-	*/
 
 	/*
 	 * If there are parameters supplied, get them into a form to be sent to the
@@ -2655,7 +2651,7 @@ get_exec_connections(RemoteQueryState *planstate,
 	 */
 	if (exec_type == EXEC_ON_COORDS)
 		is_query_coord_only = true;
-
+	
 	if (exec_nodes)
 	{
 		if (exec_nodes->en_expr)

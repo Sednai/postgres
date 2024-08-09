@@ -71,7 +71,7 @@ INSERT INTO serialTest1 VALUES ('force', 100);
 INSERT INTO serialTest1 VALUES ('wrong', NULL);
 ERROR:  null value in column "f2" violates not-null constraint
 DETAIL:  Failing row contains (wrong, null).
-SELECT * FROM serialTest1;
+SELECT * FROM serialTest1 order by f2;
   f1   | f2  
 -------+-----
  foo   |   1

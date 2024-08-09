@@ -721,6 +721,7 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 			 * handle it through standard planner, where whole row will be
 			 * constructed.
 			 */
+		case T_NextValueExpr:
 		case T_SetToDefault:
 			/*
 			 * PGXCTODO: we should actually check whether the default value to
@@ -1159,6 +1160,7 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		}
 		break;
 
+		case T_OnConflictExpr:
 		case T_SubPlan:
 		case T_AlternativeSubPlan:
 		case T_CommonTableExpr:

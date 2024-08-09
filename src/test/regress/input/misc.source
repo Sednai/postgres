@@ -71,7 +71,7 @@ DELETE FROM stud_emp;
 
 COPY BINARY stud_emp FROM '@abs_builddir@/results/stud_emp.data';
 
-SELECT * FROM stud_emp;
+SELECT * FROM stud_emp order by age;
 
 -- COPY aggtest FROM stdin;
 -- 56	7.8
@@ -85,7 +85,7 @@ SELECT * FROM stud_emp;
 --
 -- inheritance stress test
 --
-SELECT * FROM a_star*;
+SELECT * FROM a_star* order by class,a;
 
 SELECT *
    FROM b_star* x

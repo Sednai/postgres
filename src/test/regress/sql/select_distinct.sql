@@ -37,11 +37,10 @@ SELECT DISTINCT p.age FROM person* p ORDER BY age using >;
 --
 -- Check mentioning same column more than once
 --
-
-EXPLAIN (VERBOSE, COSTS OFF)
-SELECT count(*) FROM
-  (SELECT DISTINCT two, four, two FROM tenk1) ss;
-
+-- PGXC deactivated
+-- EXPLAIN (VERBOSE, COSTS OFF)
+-- SELECT count(*) FROM
+--   (SELECT DISTINCT two, four, two FROM tenk1) ss;
 SELECT count(*) FROM
   (SELECT DISTINCT two, four, two FROM tenk1) ss;
 
@@ -57,10 +56,10 @@ INSERT INTO DISTTABLE VALUES(3);
 INSERT INTO DISTTABLE VALUES(NULL);
 
 -- basic cases
-SELECT f1, f1 IS DISTINCT FROM 2 as "not 2" FROM disttable;
-SELECT f1, f1 IS DISTINCT FROM NULL as "not null" FROM disttable;
-SELECT f1, f1 IS DISTINCT FROM f1 as "false" FROM disttable;
-SELECT f1, f1 IS DISTINCT FROM f1+1 as "not null" FROM disttable;
+SELECT f1, f1 IS DISTINCT FROM 2 as "not 2" FROM disttable order by f1;
+SELECT f1, f1 IS DISTINCT FROM NULL as "not null" FROM disttable order by f1;
+SELECT f1, f1 IS DISTINCT FROM f1 as "false" FROM disttable order by f1;
+SELECT f1, f1 IS DISTINCT FROM f1+1 as "not null" FROM disttable order by f1;
 
 -- check that optimizer constant-folds it properly
 SELECT 1 IS DISTINCT FROM 2 as "yes";

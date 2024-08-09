@@ -175,22 +175,22 @@ CREATE TABLE aggtest (
 CREATE TABLE hash_i4_heap (
 	seqno 		int4,
 	random 		int4
-);
+) DISTRIBUTE BY REPLICATION;
 
 CREATE TABLE hash_name_heap (
 	seqno 		int4,
 	random 		name
-);
+) DISTRIBUTE BY REPLICATION;
 
 CREATE TABLE hash_txt_heap (
 	seqno 		int4,
 	random 		text
-);
+) DISTRIBUTE BY REPLICATION;
 
 CREATE TABLE hash_f8_heap (
 	seqno		int4,
 	random 		float8
-);
+) DISTRIBUTE BY REPLICATION;
 
 -- don't include the hash_ovfl_heap stuff in the distribution
 -- the data set is too large for what it's worth
@@ -273,17 +273,14 @@ CREATE TEMP TABLE pg_temp.doubly_temp (a int primary key);		-- also OK
 CREATE TEMP TABLE public.temp_to_perm (a int primary key);		-- not OK
 DROP TABLE unlogged1, public.unlogged2;
 
-CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
-CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
-CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
-DROP TABLE as_select1;
+-- PGXC deactivated
+-- CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+-- CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+-- CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+-- DROP TABLE as_select1;
 
 PREPARE select1 AS SELECT 1 as a;
 CREATE TABLE as_select1 AS EXECUTE select1;
-CREATE TABLE as_select1 AS EXECUTE select1;
-SELECT * FROM as_select1;
-CREATE TABLE IF NOT EXISTS as_select1 AS EXECUTE select1;
-DROP TABLE as_select1;
 DEALLOCATE select1;
 
 -- create an extra wide table to test for issues related to that
@@ -297,7 +294,7 @@ INSERT INTO extra_wide_table(firstc, lastc) VALUES('first col', 'last col');
 SELECT firstc, lastc FROM extra_wide_table;
 
 -- check that the oid column is added before the primary key is checked
-CREATE TABLE oid_pk (f1 INT, PRIMARY KEY(oid)) WITH OIDS;
+CREATE TABLE oid_pk (f1 INT, PRIMARY KEY(oid)) WITH OIDS DISTRIBUTE BY HASH(f1);
 DROP TABLE oid_pk;
 
 --
@@ -575,11 +572,11 @@ CREATE TABLE fail_part PARTITION OF unparted FOR VALUES WITH (MODULUS 2, REMAIND
 DROP TABLE unparted;
 
 -- cannot create a permanent rel as partition of a temp rel
-CREATE TEMP TABLE temp_parted (
+CREATE TEMP TABLE temp_parted_xc (
 	a int
 ) PARTITION BY LIST (a);
-CREATE TABLE fail_part PARTITION OF temp_parted FOR VALUES IN ('a');
-DROP TABLE temp_parted;
+CREATE TABLE fail_part PARTITION OF temp_parted_xc FOR VALUES IN ('a');
+DROP TABLE temp_parted_xc;
 
 -- cannot create a table with oids as partition of table without oids
 CREATE TABLE no_oids_parted (

@@ -6,8 +6,10 @@
 --
 UPDATE onek
    SET unique1 = onek.unique1 + 1;
+ERROR:  Partition column can't be updated in current XC version
 UPDATE onek
    SET unique1 = onek.unique1 - 1;
+ERROR:  Partition column can't be updated in current XC version
 --
 -- BTREE partial
 --
@@ -63,12 +65,12 @@ SELECT unique1 FROM onek2 WHERE unique1 < 2 ORDER BY unique1;
 COPY BINARY stud_emp TO '@abs_builddir@/results/stud_emp.data';
 DELETE FROM stud_emp;
 COPY BINARY stud_emp FROM '@abs_builddir@/results/stud_emp.data';
-SELECT * FROM stud_emp;
+SELECT * FROM stud_emp order by age;
  name  | age |  location  | salary | manager | gpa | percent 
 -------+-----+------------+--------+---------+-----+---------
+ linda |  19 | (0.9,6.1)  |    100 |         | 2.9 |        
  jeff  |  23 | (8,7.7)    |    600 | sharon  | 3.5 |        
  cim   |  30 | (10.5,4.7) |    400 |         | 3.4 |        
- linda |  19 | (0.9,6.1)  |    100 |         | 2.9 |        
 (3 rows)
 
 -- COPY aggtest FROM stdin;
@@ -81,7 +83,7 @@ SELECT * FROM stud_emp;
 --
 -- inheritance stress test
 --
-SELECT * FROM a_star*;
+SELECT * FROM a_star* order by class,a;
  class | a  
 -------+----
  a     |  1

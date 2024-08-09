@@ -6,7 +6,7 @@
 -- isn't really needed ... stopping and starting the postmaster would
 -- be enough, but we can't even do that here.
 -- create a simple table that we'll use in the tests
-CREATE TABLE pxtest1 (foobar VARCHAR(10));
+CREATE TABLE pxtest1 (foobar VARCHAR(10)) DISTRIBUTE BY REPLICATION;
 INSERT INTO pxtest1 VALUES ('aaa');
 -- Test PREPARE TRANSACTION
 BEGIN TRANSACTION ISOLATION LEVEL SERIALIZABLE;
@@ -150,7 +150,9 @@ SELECT gid FROM pg_prepared_xacts;
  gid 
 -----
 (0 rows)
-
+-- In Postgres-XC, serializable is not yet supported, and SERIALIZABLE falls to
+-- read-committed silently, so rollback transaction properly
+ROLLBACK PREPARED 'foo5';
 -- Clean up
 DROP TABLE pxtest1;
 -- Test detection of session-level and xact-level locks on same object

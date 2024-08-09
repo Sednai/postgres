@@ -86,15 +86,15 @@ INSERT INTO SUBSELECT_TBL VALUES (2, 2, 2);
 INSERT INTO SUBSELECT_TBL VALUES (3, 3, 3);
 INSERT INTO SUBSELECT_TBL VALUES (6, 7, 8);
 INSERT INTO SUBSELECT_TBL VALUES (8, 9, NULL);
-SELECT '' AS eight, * FROM SUBSELECT_TBL;
+SELECT '' AS eight, * FROM SUBSELECT_TBL ORDER BY 2,3;
  eight | f1 | f2 | f3 
 -------+----+----+----
-       |  1 |  2 |  3
-       |  2 |  3 |  4
-       |  3 |  4 |  5
        |  1 |  1 |  1
+       |  1 |  2 |  3
        |  2 |  2 |  2
+       |  2 |  3 |  4
        |  3 |  3 |  3
+       |  3 |  4 |  5
        |  6 |  7 |  8
        |  8 |  9 |   
 (8 rows)
@@ -109,34 +109,34 @@ SELECT '' AS two, f1 AS "Constant Select" FROM SUBSELECT_TBL
 (2 rows)
 
 SELECT '' AS six, f1 AS "Uncorrelated Field" FROM SUBSELECT_TBL
-  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL);
+  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL) ORDER BY 2;
  six | Uncorrelated Field 
 -----+--------------------
      |                  1
-     |                  2
-     |                  3
      |                  1
      |                  2
+     |                  2
+     |                  3
      |                  3
 (6 rows)
 
 SELECT '' AS six, f1 AS "Uncorrelated Field" FROM SUBSELECT_TBL
   WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL WHERE
-    f2 IN (SELECT f1 FROM SUBSELECT_TBL));
+    f2 IN (SELECT f1 FROM SUBSELECT_TBL)) ORDER BY 2;
  six | Uncorrelated Field 
 -----+--------------------
      |                  1
-     |                  2
-     |                  3
      |                  1
      |                  2
+     |                  2
+     |                  3
      |                  3
 (6 rows)
 
 SELECT '' AS three, f1, f2
   FROM SUBSELECT_TBL
   WHERE (f1, f2) NOT IN (SELECT f2, CAST(f3 AS int4) FROM SUBSELECT_TBL
-                         WHERE f3 IS NOT NULL);
+                         WHERE f3 IS NOT NULL) ORDER BY f1;
  three | f1 | f2 
 -------+----+----
        |  1 |  2
@@ -147,34 +147,34 @@ SELECT '' AS three, f1, f2
 -- Correlated subselects
 SELECT '' AS six, f1 AS "Correlated Field", f2 AS "Second Field"
   FROM SUBSELECT_TBL upper
-  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL WHERE f1 = upper.f1);
+  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL WHERE f1 = upper.f1) ORDER BY 2,3;
  six | Correlated Field | Second Field 
 -----+------------------+--------------
-     |                1 |            2
-     |                2 |            3
-     |                3 |            4
      |                1 |            1
+     |                1 |            2
      |                2 |            2
+     |                2 |            3
      |                3 |            3
+     |                3 |            4
 (6 rows)
 
 SELECT '' AS six, f1 AS "Correlated Field", f3 AS "Second Field"
   FROM SUBSELECT_TBL upper
   WHERE f1 IN
-    (SELECT f2 FROM SUBSELECT_TBL WHERE CAST(upper.f2 AS float) = f3);
+    (SELECT f2 FROM SUBSELECT_TBL WHERE CAST(upper.f2 AS float) = f3) ORDER BY 2,3;
  six | Correlated Field | Second Field 
 -----+------------------+--------------
-     |                2 |            4
-     |                3 |            5
      |                1 |            1
      |                2 |            2
+     |                2 |            4
      |                3 |            3
+     |                3 |            5
 (5 rows)
 
 SELECT '' AS six, f1 AS "Correlated Field", f3 AS "Second Field"
   FROM SUBSELECT_TBL upper
   WHERE f3 IN (SELECT upper.f1 + f2 FROM SUBSELECT_TBL
-               WHERE f2 = CAST(f3 AS integer));
+               WHERE f2 = CAST(f3 AS integer)) ORDER BY 2,3;
  six | Correlated Field | Second Field 
 -----+------------------+--------------
      |                1 |            3
@@ -186,13 +186,13 @@ SELECT '' AS six, f1 AS "Correlated Field", f3 AS "Second Field"
 SELECT '' AS five, f1 AS "Correlated Field"
   FROM SUBSELECT_TBL
   WHERE (f1, f2) IN (SELECT f2, CAST(f3 AS int4) FROM SUBSELECT_TBL
-                     WHERE f3 IS NOT NULL);
+                     WHERE f3 IS NOT NULL) ORDER BY 2;
  five | Correlated Field 
 ------+------------------
-      |                2
-      |                3
       |                1
       |                2
+      |                2
+      |                3
       |                3
 (5 rows)
 
@@ -202,13 +202,13 @@ SELECT '' AS five, f1 AS "Correlated Field"
 SELECT '' AS eight, ss.f1 AS "Correlated Field", ss.f3 AS "Second Field"
   FROM SUBSELECT_TBL ss
   WHERE f1 NOT IN (SELECT f1+1 FROM INT4_TBL
-                   WHERE f1 != ss.f1 AND f1 < 2147483647);
+                   WHERE f1 != ss.f1 AND f1 < 2147483647) ORDER BY 2,3;
  eight | Correlated Field | Second Field 
 -------+------------------+--------------
-       |                2 |            4
-       |                3 |            5
        |                2 |            2
+       |                2 |            4
        |                3 |            3
+       |                3 |            5
        |                6 |            8
        |                8 |             
 (6 rows)
@@ -278,43 +278,15 @@ select 1 = all (select (select 1));
 --
 -- Check EXISTS simplification with LIMIT
 --
-explain (costs off)
-select * from int4_tbl o where exists
-  (select 1 from int4_tbl i where i.f1=o.f1 limit null);
-             QUERY PLAN             
-------------------------------------
- Hash Semi Join
-   Hash Cond: (o.f1 = i.f1)
-   ->  Seq Scan on int4_tbl o
-   ->  Hash
-         ->  Seq Scan on int4_tbl i
-(5 rows)
-
-explain (costs off)
-select * from int4_tbl o where not exists
-  (select 1 from int4_tbl i where i.f1=o.f1 limit 1);
-             QUERY PLAN             
-------------------------------------
- Hash Anti Join
-   Hash Cond: (o.f1 = i.f1)
-   ->  Seq Scan on int4_tbl o
-   ->  Hash
-         ->  Seq Scan on int4_tbl i
-(5 rows)
-
-explain (costs off)
-select * from int4_tbl o where exists
-  (select 1 from int4_tbl i where i.f1=o.f1 limit 0);
-              QUERY PLAN              
---------------------------------------
- Seq Scan on int4_tbl o
-   Filter: (SubPlan 1)
-   SubPlan 1
-     ->  Limit
-           ->  Seq Scan on int4_tbl i
-                 Filter: (f1 = o.f1)
-(6 rows)
-
+-- explain (costs off)
+-- select * from int4_tbl o where exists
+--   (select 1 from int4_tbl i where i.f1=o.f1 limit null);
+-- explain (costs off)
+-- select * from int4_tbl o where not exists
+--   (select 1 from int4_tbl i where i.f1=o.f1 limit 1);
+-- explain (costs off)
+-- select * from int4_tbl o where exists
+--   (select 1 from int4_tbl i where i.f1=o.f1 limit 0);
 --
 -- Test cases to catch unpleasant interactions between IN-join processing
 -- and subquery pullup.
@@ -524,14 +496,14 @@ select * from shipped_view;
 
 select f1, ss1 as relabel from
     (select *, (select sum(f1) from int4_tbl b where f1 >= a.f1) as ss1
-     from int4_tbl a) ss;
+     from int4_tbl a) ss order by f1;
      f1      |  relabel   
 -------------+------------
+ -2147483647 |          0
+     -123456 | 2147483647
            0 | 2147607103
       123456 | 2147607103
-     -123456 | 2147483647
   2147483647 | 2147483647
- -2147483647 |          0
 (5 rows)
 
 --

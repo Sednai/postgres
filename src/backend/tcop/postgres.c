@@ -1143,7 +1143,7 @@ exec_simple_query(const char *query_string)
 		 * resource to handle.
 		 */
 		if (IS_PGXC_DATANODE
-				&& (IsA(parsetree, VacuumStmt) || IsA(parsetree, ClusterStmt))
+				&& (IsA(parsetree->stmt, VacuumStmt) || IsA(parsetree->stmt, ClusterStmt))
 				&& IsPostmasterEnvironment)
 			SetForceXidFromGTM(true);
 #endif

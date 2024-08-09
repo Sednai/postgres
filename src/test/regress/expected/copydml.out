@@ -10,24 +10,19 @@ insert into copydml_test (t) values ('e');
 --
 -- Test COPY (insert/update/delete ...)
 --
-copy (insert into copydml_test (t) values ('f') returning id) to stdout;
-6
-copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
-6
-copy (delete from copydml_test where t = 'g' returning id) to stdout;
-6
+-- PGXC deactivated
+-- copy (insert into copydml_test (t) values ('f') returning id) to stdout;
+-- copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
+-- copy (delete from copydml_test where t = 'g' returning id) to stdout;
 --
 -- Test \copy (insert/update/delete ...)
 --
-\copy (insert into copydml_test (t) values ('f') returning id) to stdout;
-7
-\copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
-7
-\copy (delete from copydml_test where t = 'g' returning id) to stdout;
-7
+-- \copy (insert into copydml_test (t) values ('f') returning id) to stdout;
+-- \copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
+-- \copy (delete from copydml_test where t = 'g' returning id) to stdout;
 -- Error cases
 copy (insert into copydml_test default values) to stdout;
-ERROR:  COPY query must have a RETURNING clause
+ERROR:  COPY (SELECT INTO) is not supported
 copy (update copydml_test set t = 'g') to stdout;
 ERROR:  COPY query must have a RETURNING clause
 copy (delete from copydml_test) to stdout;
@@ -97,16 +92,8 @@ create trigger qqqbef before insert or update or delete on copydml_test
 create trigger qqqaf after insert or update or delete on copydml_test
     for each row execute procedure qqq_trig();
 copy (insert into copydml_test (t) values ('f') returning id) to stdout;
-NOTICE:  INSERT 8
-8
-NOTICE:  INSERT 8
-copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
-NOTICE:  UPDATE 8
-8
-NOTICE:  UPDATE 8
-copy (delete from copydml_test where t = 'g' returning id) to stdout;
-NOTICE:  DELETE 8
-8
-NOTICE:  DELETE 8
+ERROR:  COPY (SELECT INTO) is not supported
+-- copy (update copydml_test set t = 'g' where t = 'f' returning id) to stdout;
+-- copy (delete from copydml_test where t = 'g' returning id) to stdout;
 drop table copydml_test;
 drop function qqq_trig();

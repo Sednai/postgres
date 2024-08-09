@@ -3,7 +3,7 @@
 --
 
 CREATE TABLE clstr_tst_s (rf_a SERIAL PRIMARY KEY,
-	b INT);
+	b INT) distribute by replication;
 
 CREATE TABLE clstr_tst (a SERIAL PRIMARY KEY,
 	b INT,
@@ -61,14 +61,14 @@ INSERT INTO clstr_tst (b, c, d) VALUES (6, 'seis', repeat('xyzzy', 100000));
 
 CLUSTER clstr_tst_c ON clstr_tst;
 
-SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
+-- SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY a;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY b;
 SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY c;
 
 -- Verify that inheritance link still works
 INSERT INTO clstr_tst_inh VALUES (0, 100, 'in child table');
-SELECT a,b,c,substring(d for 30), length(d) from clstr_tst;
+SELECT a,b,c,substring(d for 30), length(d) from clstr_tst ORDER BY a;
 
 -- Verify that foreign key link still works
 INSERT INTO clstr_tst (b, c) VALUES (1111, 'this should fail');
@@ -157,7 +157,7 @@ SELECT * FROM clstr_1;
 -- Test MVCC-safety of cluster. There isn't much we can do to verify the
 -- results with a single backend...
 
-CREATE TABLE clustertest (key int PRIMARY KEY);
+CREATE TABLE clustertest (key int PRIMARY KEY) DISTRIBUTE BY REPLICATION;
 
 INSERT INTO clustertest VALUES (10);
 INSERT INTO clustertest VALUES (20);

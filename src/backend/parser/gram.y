@@ -11231,7 +11231,7 @@ ExecuteStmt: EXECUTE name execute_param_clause
 #ifdef PGXC
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("CREATE TABLE AS EXECUTE not yet supported")));
+							 errmsg("CREATE TABLE AS EXECUTE not yet supported in XC")));
 #endif
 					$4->skipData = !($9);
 					$$ = (Node *) ctas;
@@ -11253,7 +11253,7 @@ ExecuteStmt: EXECUTE name execute_param_clause
 #ifdef PGXC
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("CREATE TABLE AS EXECUTE not yet supported")));
+							 errmsg("CREATE TABLE AS EXECUTE not yet supported in XC")));
 #endif
 					$7->skipData = !($12);
 					$$ = (Node *) ctas;

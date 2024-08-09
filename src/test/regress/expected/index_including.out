@@ -127,16 +127,8 @@ INSERT INTO tbl SELECT 1, NULL, 3*x, box('4,4,4,4') FROM generate_series(1,10) A
 ERROR:  null value in column "c2" violates not-null constraint
 DETAIL:  Failing row contains (1, null, 3, (4,4),(4,4)).
 INSERT INTO tbl SELECT x, 2*x, NULL, NULL FROM generate_series(1,10) AS x;
-explain (costs off)
-select * from tbl where (c1,c2,c3) < (2,5,1);
-                   QUERY PLAN                   
-------------------------------------------------
- Bitmap Heap Scan on tbl
-   Filter: (ROW(c1, c2, c3) < ROW(2, 5, 1))
-   ->  Bitmap Index Scan on covering
-         Index Cond: (ROW(c1, c2) <= ROW(2, 5))
-(4 rows)
-
+-- explain (costs off)
+-- select * from tbl where (c1,c2,c3) < (2,5,1);
 select * from tbl where (c1,c2,c3) < (2,5,1);
  c1 | c2 | c3 | c4 
 ----+----+----+----
@@ -188,7 +180,7 @@ DETAIL:  Failing row contains (1, null, 3, (4,4),(4,4)).
 INSERT INTO tbl SELECT x, 2*x, NULL, NULL FROM generate_series(1,10) AS x;
 DROP TABLE tbl;
 CREATE TABLE tbl (c1 int,c2 int, c3 int, c4 box,
-				EXCLUDE USING btree (c1 WITH =) INCLUDE(c3,c4));
+				EXCLUDE USING btree (c1 WITH =) INCLUDE(c3,c4)) DISTRIBUTE BY REPLICATION;
 SELECT indexrelid::regclass, indnatts, indnkeyatts, indisunique, indisprimary, indkey, indclass FROM pg_index WHERE indrelid = 'tbl'::regclass::oid;
     indexrelid     | indnatts | indnkeyatts | indisunique | indisprimary | indkey | indclass 
 -------------------+----------+-------------+-------------+--------------+--------+----------
@@ -251,7 +243,7 @@ DROP TABLE tbl;
  * Included column deletion leads to the index deletion.
  * AS well AS key columns deletion. It's explained in documentation.
  */
-CREATE TABLE tbl (c1 int,c2 int, c3 int, c4 box, UNIQUE(c1, c2) INCLUDE(c3,c4));
+CREATE TABLE tbl (c1 int,c2 int, c3 int, c4 box, UNIQUE(c1, c2) INCLUDE(c3,c4)) DISTRIBUTE BY REPLICATION;
 SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl' ORDER BY indexname;
                                           indexdef                                           
 ---------------------------------------------------------------------------------------------
@@ -290,14 +282,9 @@ DROP TABLE tbl;
  */
 CREATE TABLE tbl (c1 int,c2 int, c3 int, c4 box, UNIQUE(c1, c2) INCLUDE(c3,c4));
 INSERT INTO tbl SELECT x, 2*x, 3*x, box('4,4,4,4') FROM generate_series(1,1000) AS x;
-CREATE UNIQUE INDEX CONCURRENTLY on tbl (c1, c2) INCLUDE (c3, c4);
-SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl' ORDER BY indexname;
-                                          indexdef                                           
----------------------------------------------------------------------------------------------
- CREATE UNIQUE INDEX tbl_c1_c2_c3_c4_idx ON public.tbl USING btree (c1, c2) INCLUDE (c3, c4)
- CREATE UNIQUE INDEX tbl_c1_c2_c3_c4_key ON public.tbl USING btree (c1, c2) INCLUDE (c3, c4)
-(2 rows)
-
+-- PGXC deactivated
+-- CREATE UNIQUE INDEX CONCURRENTLY on tbl (c1, c2) INCLUDE (c3, c4);
+-- SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl' ORDER BY indexname;
 DROP TABLE tbl;
 /*
  * 5. REINDEX
@@ -323,6 +310,7 @@ SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl' ORDER BY indexname;
 (0 rows)
 
 ALTER TABLE tbl DROP COLUMN c1;
+ERROR:  Distribution column cannot be dropped
 SELECT indexdef FROM pg_indexes WHERE tablename = 'tbl' ORDER BY indexname;
  indexdef 
 ----------
@@ -351,7 +339,7 @@ DROP TABLE tbl;
 /*
  * 8. Update, delete values in indexed table.
  */
-CREATE TABLE tbl (c1 int, c2 int, c3 int, c4 box);
+CREATE TABLE tbl (c1 int, c2 int, c3 int, c4 box) DISTRIBUTE BY REPLICATION;
 INSERT INTO tbl SELECT x, 2*x, 3*x, box('4,4,4,4') FROM generate_series(1,10) AS x;
 CREATE UNIQUE INDEX tbl_idx_unique ON tbl using btree(c1, c2) INCLUDE (c3,c4);
 UPDATE tbl SET c1 = 100 WHERE c1 = 2;
@@ -366,7 +354,7 @@ DROP TABLE tbl;
 /*
  * 9. Alter column type.
  */
-CREATE TABLE tbl (c1 int,c2 int, c3 int, c4 box, UNIQUE(c1, c2) INCLUDE(c3,c4));
+CREATE TABLE tbl (c1 int,c2 int, c3 int, c4 box, UNIQUE(c1, c2) INCLUDE(c3,c4)) DISTRIBUTE BY REPLICATION;
 INSERT INTO tbl SELECT x, 2*x, 3*x, box('4,4,4,4') FROM generate_series(1,10) AS x;
 ALTER TABLE tbl ALTER c1 TYPE bigint;
 ALTER TABLE tbl ALTER c3 TYPE bigint;

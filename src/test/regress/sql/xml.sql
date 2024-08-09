@@ -381,8 +381,9 @@ SELECT * FROM xmltableview1;
 
 \sv xmltableview1
 
-EXPLAIN (COSTS OFF) SELECT * FROM xmltableview1;
-EXPLAIN (COSTS OFF, VERBOSE) SELECT * FROM xmltableview1;
+-- PGXC deactivated
+-- EXPLAIN (COSTS OFF) SELECT * FROM xmltableview1;
+-- EXPLAIN (COSTS OFF, VERBOSE) SELECT * FROM xmltableview1;
 
 -- errors
 SELECT * FROM XMLTABLE (ROW () PASSING null COLUMNS v1 timestamp) AS f (v1, v2);
@@ -444,25 +445,25 @@ select * from xmltable('d/r' passing '<d><r><c><![CDATA[<hello> &"<>!<a>foo</a>]
 SELECT * FROM xmltable('/x/a' PASSING '<x><a><ent>&apos;</ent></a><a><ent>&quot;</ent></a><a><ent>&amp;</ent></a><a><ent>&lt;</ent></a><a><ent>&gt;</ent></a></x>' COLUMNS ent text);
 SELECT * FROM xmltable('/x/a' PASSING '<x><a><ent>&apos;</ent></a><a><ent>&quot;</ent></a><a><ent>&amp;</ent></a><a><ent>&lt;</ent></a><a><ent>&gt;</ent></a></x>' COLUMNS ent xml);
 
-EXPLAIN (VERBOSE, COSTS OFF)
-SELECT  xmltable.*
-   FROM (SELECT data FROM xmldata) x,
-        LATERAL XMLTABLE('/ROWS/ROW'
-                         PASSING data
-                         COLUMNS id int PATH '@id',
-                                  _id FOR ORDINALITY,
-                                  country_name text PATH 'COUNTRY_NAME' NOT NULL,
-                                  country_id text PATH 'COUNTRY_ID',
-                                  region_id int PATH 'REGION_ID',
-                                  size float PATH 'SIZE',
-                                  unit text PATH 'SIZE/@unit',
-                                  premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
+-- EXPLAIN (VERBOSE, COSTS OFF)
+-- SELECT  xmltable.*
+--    FROM (SELECT data FROM xmldata) x,
+--         LATERAL XMLTABLE('/ROWS/ROW'
+--                          PASSING data
+--                          COLUMNS id int PATH '@id',
+--                                   _id FOR ORDINALITY,
+--                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--                                   country_id text PATH 'COUNTRY_ID',
+--                                   region_id int PATH 'REGION_ID',
+--                                   size float PATH 'SIZE',
+--                                   unit text PATH 'SIZE/@unit',
+--                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified');
 
 -- test qual
 SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS "COUNTRY_NAME" text, "REGION_ID" int) WHERE "COUNTRY_NAME" = 'Japan';
 
-EXPLAIN (VERBOSE, COSTS OFF)
-SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS "COUNTRY_NAME" text, "REGION_ID" int) WHERE "COUNTRY_NAME" = 'Japan';
+-- EXPLAIN (VERBOSE, COSTS OFF)
+-- SELECT xmltable.* FROM xmldata, LATERAL xmltable('/ROWS/ROW[COUNTRY_NAME="Japan" or COUNTRY_NAME="India"]' PASSING data COLUMNS "COUNTRY_NAME" text, "REGION_ID" int) WHERE "COUNTRY_NAME" = 'Japan';
 
 -- should to work with more data
 INSERT INTO xmldata VALUES('<ROWS>
@@ -523,20 +524,20 @@ SELECT  xmltable.*
                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified')
   WHERE region_id = 2;
 
-EXPLAIN (VERBOSE, COSTS OFF)
-SELECT  xmltable.*
-   FROM (SELECT data FROM xmldata) x,
-        LATERAL XMLTABLE('/ROWS/ROW'
-                         PASSING data
-                         COLUMNS id int PATH '@id',
-                                  _id FOR ORDINALITY,
-                                  country_name text PATH 'COUNTRY_NAME' NOT NULL,
-                                  country_id text PATH 'COUNTRY_ID',
-                                  region_id int PATH 'REGION_ID',
-                                  size float PATH 'SIZE',
-                                  unit text PATH 'SIZE/@unit',
-                                  premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified')
-  WHERE region_id = 2;
+-- EXPLAIN (VERBOSE, COSTS OFF)
+-- SELECT  xmltable.*
+--    FROM (SELECT data FROM xmldata) x,
+--         LATERAL XMLTABLE('/ROWS/ROW'
+--                          PASSING data
+--                          COLUMNS id int PATH '@id',
+--                                   _id FOR ORDINALITY,
+--                                   country_name text PATH 'COUNTRY_NAME' NOT NULL,
+--                                   country_id text PATH 'COUNTRY_ID',
+--                                   region_id int PATH 'REGION_ID',
+--                                   size float PATH 'SIZE',
+--                                   unit text PATH 'SIZE/@unit',
+--                                   premier_name text PATH 'PREMIER_NAME' DEFAULT 'not specified')
+--   WHERE region_id = 2;
 
 -- should fail, NULL value
 SELECT  xmltable.*

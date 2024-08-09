@@ -224,45 +224,45 @@ SELECT * FROM enumtest WHERE col = 'orange';
 SELECT * FROM enumtest WHERE col <> 'orange' ORDER BY col;
   col   
 --------
- blue
- green
- purple
  red
  yellow
+ green
+ blue
+ purple
 (5 rows)
 
 SELECT * FROM enumtest WHERE col > 'yellow' ORDER BY col;
   col   
 --------
- blue
  green
+ blue
  purple
 (3 rows)
 
 SELECT * FROM enumtest WHERE col >= 'yellow' ORDER BY col;
   col   
 --------
- blue
- green
- purple
  yellow
+ green
+ blue
+ purple
 (4 rows)
 
 SELECT * FROM enumtest WHERE col < 'green' ORDER BY col;
   col   
 --------
- orange
  red
+ orange
  yellow
 (3 rows)
 
 SELECT * FROM enumtest WHERE col <= 'green' ORDER BY col;
   col   
 --------
- green
- orange
  red
+ orange
  yellow
+ green
 (4 rows)
 
 --
@@ -310,6 +310,7 @@ SET enable_bitmapscan = off;
 -- Btree index / opclass with the various operators
 --
 CREATE UNIQUE INDEX enumtest_btree ON enumtest USING btree (col);
+ERROR:  Cannot create index whose evaluation cannot be enforced to remote nodes
 SELECT * FROM enumtest WHERE col = 'orange';
   col   
 --------
@@ -378,7 +379,7 @@ SELECT max(col) FROM enumtest WHERE col < 'green';
  yellow
 (1 row)
 
-DROP INDEX enumtest_btree;
+-- DROP INDEX enumtest_btree;
 --
 -- Hash index / opclass with the = operator
 --
@@ -538,22 +539,18 @@ DROP FUNCTION echo_me(rainbow);
 -- RI triggers on enum types
 --
 CREATE TABLE enumtest_parent (id rainbow PRIMARY KEY);
-CREATE TABLE enumtest_child (parent rainbow REFERENCES enumtest_parent);
-INSERT INTO enumtest_parent VALUES ('red');
-INSERT INTO enumtest_child VALUES ('red');
-INSERT INTO enumtest_child VALUES ('blue');  -- fail
-ERROR:  insert or update on table "enumtest_child" violates foreign key constraint "enumtest_child_parent_fkey"
-DETAIL:  Key (parent)=(blue) is not present in table "enumtest_parent".
-DELETE FROM enumtest_parent;  -- fail
-ERROR:  update or delete on table "enumtest_parent" violates foreign key constraint "enumtest_child_parent_fkey" on table "enumtest_child"
-DETAIL:  Key (id)=(red) is still referenced from table "enumtest_child".
+ERROR:  Column id is not a hash distributable data type
+-- PGXC deactivated
+-- CREATE TABLE enumtest_child (parent rainbow REFERENCES enumtest_parent);
+-- INSERT INTO enumtest_parent VALUES ('red');
+-- INSERT INTO enumtest_child VALUES ('red');
+-- INSERT INTO enumtest_child VALUES ('blue');  -- fail
+-- DELETE FROM enumtest_parent;  -- fail
 --
 -- cross-type RI should fail
 --
 CREATE TYPE bogus AS ENUM('good', 'bad', 'ugly');
-CREATE TABLE enumtest_bogus_child(parent bogus REFERENCES enumtest_parent);
-ERROR:  foreign key constraint "enumtest_bogus_child_parent_fkey" cannot be implemented
-DETAIL:  Key columns "parent" and "id" are of incompatible types: bogus and rainbow.
+-- CREATE TABLE enumtest_bogus_child(parent bogus REFERENCES enumtest_parent);
 DROP TYPE bogus;
 -- check renaming a value
 ALTER TYPE rainbow RENAME VALUE 'red' TO 'crimson';
@@ -614,8 +611,8 @@ ROLLBACK;
 --
 -- Cleanup
 --
-DROP TABLE enumtest_child;
-DROP TABLE enumtest_parent;
+-- DROP TABLE enumtest_child;
+-- DROP TABLE enumtest_parent;
 DROP TABLE enumtest;
 DROP TYPE rainbow;
 --

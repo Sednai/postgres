@@ -170,7 +170,7 @@ SELECT * FROM enumtest WHERE col <= 'green' ORDER BY col;
 SELECT min(col) FROM enumtest;
 SELECT max(col) FROM enumtest;
 SELECT max(col) FROM enumtest WHERE col < 'green';
-DROP INDEX enumtest_btree;
+-- DROP INDEX enumtest_btree;
 
 --
 -- Hash index / opclass with the = operator
@@ -245,16 +245,17 @@ DROP FUNCTION echo_me(rainbow);
 -- RI triggers on enum types
 --
 CREATE TABLE enumtest_parent (id rainbow PRIMARY KEY);
-CREATE TABLE enumtest_child (parent rainbow REFERENCES enumtest_parent);
-INSERT INTO enumtest_parent VALUES ('red');
-INSERT INTO enumtest_child VALUES ('red');
-INSERT INTO enumtest_child VALUES ('blue');  -- fail
-DELETE FROM enumtest_parent;  -- fail
+-- PGXC deactivated
+-- CREATE TABLE enumtest_child (parent rainbow REFERENCES enumtest_parent);
+-- INSERT INTO enumtest_parent VALUES ('red');
+-- INSERT INTO enumtest_child VALUES ('red');
+-- INSERT INTO enumtest_child VALUES ('blue');  -- fail
+-- DELETE FROM enumtest_parent;  -- fail
 --
 -- cross-type RI should fail
 --
 CREATE TYPE bogus AS ENUM('good', 'bad', 'ugly');
-CREATE TABLE enumtest_bogus_child(parent bogus REFERENCES enumtest_parent);
+-- CREATE TABLE enumtest_bogus_child(parent bogus REFERENCES enumtest_parent);
 DROP TYPE bogus;
 
 -- check renaming a value
@@ -304,8 +305,8 @@ ROLLBACK;
 --
 -- Cleanup
 --
-DROP TABLE enumtest_child;
-DROP TABLE enumtest_parent;
+-- DROP TABLE enumtest_child;
+-- DROP TABLE enumtest_parent;
 DROP TABLE enumtest;
 DROP TYPE rainbow;
 

@@ -59,7 +59,7 @@ INSERT INTO serialTest1 VALUES ('bar');
 INSERT INTO serialTest1 VALUES ('force', 100);
 INSERT INTO serialTest1 VALUES ('wrong', NULL);
 
-SELECT * FROM serialTest1;
+SELECT * FROM serialTest1 order by f2;
 
 SELECT pg_get_serial_sequence('serialTest1', 'f2');
 

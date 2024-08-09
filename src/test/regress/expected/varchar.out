@@ -14,15 +14,15 @@ INSERT INTO VARCHAR_TBL (f1) VALUES ('');
 INSERT INTO VARCHAR_TBL (f1) VALUES ('cd');
 ERROR:  value too long for type character varying(1)
 INSERT INTO VARCHAR_TBL (f1) VALUES ('c     ');
-SELECT '' AS seven, * FROM VARCHAR_TBL;
+SELECT '' AS seven, * FROM VARCHAR_TBL order by f1;
  seven | f1 
 -------+----
-       | a
-       | A
+       | 
        | 1
        | 2
        | 3
-       | 
+       | a
+       | A
        | c
 (7 rows)
 

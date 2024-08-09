@@ -5,6 +5,7 @@
  *
  * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
+ * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
  *
  *
  * IDENTIFICATION
@@ -48,6 +49,11 @@
 #include "parser/parse_coerce.h"
 #include "parser/parse_func.h"
 #include "parser/parse_oper.h"
+#ifdef PGXC
+#include "optimizer/pgxcship.h"
+#include "parser/parse_utilcmd.h"
+#include "pgxc/pgxc.h"
+#endif
 #include "rewrite/rewriteManip.h"
 #include "storage/lmgr.h"
 #include "storage/proc.h"
@@ -215,7 +221,6 @@ CheckIndexCompatible(Oid oldId,
 					  exclusionOpNames, relationId,
 					  accessMethodName, accessMethodId,
 					  amcanorder, isconstraint, InvalidOid, 0, NULL);
-
 
 	/* Get the soon-obsolete pg_index tuple. */
 	tuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(oldId));
@@ -714,6 +719,38 @@ DefineIndex(Oid relationId,
 					  accessMethodName, accessMethodId,
 					  amcanorder, stmt->isconstraint, root_save_userid,
 					  root_save_sec_context, &root_save_nestlevel);
+
+#ifdef PGXC
+	/* Check if index is safely shippable */
+	if (IS_PGXC_COORDINATOR)
+	{
+		List *indexAttrs = NIL;
+
+		/* Prepare call for shippability evaluation */
+		for (i = 0; i < indexInfo->ii_NumIndexAttrs; i++)
+		{
+			/*
+			 * Expression attributes are set at 0, and do not make sense
+			 * when comparing them to distribution columns, so bypass.
+			 */
+			if (indexInfo->ii_IndexAttrNumbers[i] > 0)
+				indexAttrs = lappend_int(indexAttrs, indexInfo->ii_IndexAttrNumbers[i]);
+		}
+
+		/* Finalize check */
+		if (!pgxc_check_index_shippability(GetRelationLocInfo(relationId),
+										   stmt->primary,
+										   stmt->unique,
+										   stmt->excludeOpNames != NULL,
+										   indexAttrs,
+										   indexInfo->ii_Expressions))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Cannot create index whose evaluation cannot be "
+							"enforced to remote nodes")));
+}
+#endif
+
 
 	/*
 	 * Extra checks when creating a PRIMARY KEY index.

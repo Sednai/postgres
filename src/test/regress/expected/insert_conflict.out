@@ -1,7 +1,7 @@
 --
 -- insert...on conflict do unique index inference
 --
-create table insertconflicttest(key int4, fruit text);
+create table insertconflicttest(key int4, fruit text) distribute by replication;
 --
 -- Test unique index inference with operator class specifications and
 -- named collations

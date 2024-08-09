@@ -889,7 +889,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 				 * vacuum() pops active snapshot and we can not send it to nodes
 				 */
 				if (IS_PGXC_COORDINATOR)
-				ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, true, EXEC_ON_DATANODES, false);
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, true, EXEC_ON_DATANODES, false);
 #endif
 				/* forbidden in parallel mode due to CommandIsReadOnly */
 				ExecVacuum(stmt, isTopLevel);
@@ -1741,6 +1741,29 @@ ProcessUtilitySlow(ParseState *pstate,
 						stmts = transformAlterTableStmt(relid, atstmt,
 														queryString);
 
+#ifdef PGXC
+						/*
+						 * Add a RemoteQuery node for a query at top level on a remote
+						 * Coordinator, if not already done so
+						 */
+						if (!sentToRemote)
+						{
+							bool is_temp = false;
+							RemoteQueryExecType exec_type;
+							Oid relid = RangeVarGetRelid(atstmt->relation,
+														 NoLock, true);
+
+							if (OidIsValid(relid))
+							{
+								exec_type = ExecUtilityFindNodes(atstmt->relkind,
+																 relid,
+																 &is_temp);
+
+								stmts = AddRemoteQueryNode(stmts, queryString, exec_type, is_temp);
+							}
+						}
+#endif
+
 						/* ... ensure we have an event trigger context ... */
 						EventTriggerAlterTableStart(parsetree);
 						EventTriggerAlterTableRelid(relid);
@@ -1781,7 +1804,9 @@ ProcessUtilitySlow(ParseState *pstate,
 											   params,
 											   NULL,
 											   None_Receiver,
-											   sentToRemote,
+#ifdef PGXC											   
+											   true,
+#endif
 											   NULL);
 								EventTriggerAlterTableStart(parsetree);
 								EventTriggerAlterTableRelid(relid);
@@ -1866,6 +1891,11 @@ ProcessUtilitySlow(ParseState *pstate,
 							break;
 					}
 				}
+
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 				/*

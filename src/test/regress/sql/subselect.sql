@@ -40,7 +40,7 @@ INSERT INTO SUBSELECT_TBL VALUES (3, 3, 3);
 INSERT INTO SUBSELECT_TBL VALUES (6, 7, 8);
 INSERT INTO SUBSELECT_TBL VALUES (8, 9, NULL);
 
-SELECT '' AS eight, * FROM SUBSELECT_TBL;
+SELECT '' AS eight, * FROM SUBSELECT_TBL ORDER BY 2,3;
 
 -- Uncorrelated subselects
 
@@ -48,37 +48,37 @@ SELECT '' AS two, f1 AS "Constant Select" FROM SUBSELECT_TBL
   WHERE f1 IN (SELECT 1);
 
 SELECT '' AS six, f1 AS "Uncorrelated Field" FROM SUBSELECT_TBL
-  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL);
+  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL) ORDER BY 2;
 
 SELECT '' AS six, f1 AS "Uncorrelated Field" FROM SUBSELECT_TBL
   WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL WHERE
-    f2 IN (SELECT f1 FROM SUBSELECT_TBL));
+    f2 IN (SELECT f1 FROM SUBSELECT_TBL)) ORDER BY 2;
 
 SELECT '' AS three, f1, f2
   FROM SUBSELECT_TBL
   WHERE (f1, f2) NOT IN (SELECT f2, CAST(f3 AS int4) FROM SUBSELECT_TBL
-                         WHERE f3 IS NOT NULL);
+                         WHERE f3 IS NOT NULL) ORDER BY f1;
 
 -- Correlated subselects
 
 SELECT '' AS six, f1 AS "Correlated Field", f2 AS "Second Field"
   FROM SUBSELECT_TBL upper
-  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL WHERE f1 = upper.f1);
+  WHERE f1 IN (SELECT f2 FROM SUBSELECT_TBL WHERE f1 = upper.f1) ORDER BY 2,3;
 
 SELECT '' AS six, f1 AS "Correlated Field", f3 AS "Second Field"
   FROM SUBSELECT_TBL upper
   WHERE f1 IN
-    (SELECT f2 FROM SUBSELECT_TBL WHERE CAST(upper.f2 AS float) = f3);
+    (SELECT f2 FROM SUBSELECT_TBL WHERE CAST(upper.f2 AS float) = f3) ORDER BY 2,3;
 
 SELECT '' AS six, f1 AS "Correlated Field", f3 AS "Second Field"
   FROM SUBSELECT_TBL upper
   WHERE f3 IN (SELECT upper.f1 + f2 FROM SUBSELECT_TBL
-               WHERE f2 = CAST(f3 AS integer));
+               WHERE f2 = CAST(f3 AS integer)) ORDER BY 2,3;
 
 SELECT '' AS five, f1 AS "Correlated Field"
   FROM SUBSELECT_TBL
   WHERE (f1, f2) IN (SELECT f2, CAST(f3 AS int4) FROM SUBSELECT_TBL
-                     WHERE f3 IS NOT NULL);
+                     WHERE f3 IS NOT NULL) ORDER BY 2;
 
 --
 -- Use some existing tables in the regression test
@@ -87,7 +87,7 @@ SELECT '' AS five, f1 AS "Correlated Field"
 SELECT '' AS eight, ss.f1 AS "Correlated Field", ss.f3 AS "Second Field"
   FROM SUBSELECT_TBL ss
   WHERE f1 NOT IN (SELECT f1+1 FROM INT4_TBL
-                   WHERE f1 != ss.f1 AND f1 < 2147483647);
+                   WHERE f1 != ss.f1 AND f1 < 2147483647) ORDER BY 2,3;
 
 select q1, float8(count(*)) / (select count(*) from int8_tbl)
 from int8_tbl group by q1 order by q1;
@@ -110,15 +110,15 @@ select 1 = all (select (select 1));
 --
 -- Check EXISTS simplification with LIMIT
 --
-explain (costs off)
-select * from int4_tbl o where exists
-  (select 1 from int4_tbl i where i.f1=o.f1 limit null);
-explain (costs off)
-select * from int4_tbl o where not exists
-  (select 1 from int4_tbl i where i.f1=o.f1 limit 1);
-explain (costs off)
-select * from int4_tbl o where exists
-  (select 1 from int4_tbl i where i.f1=o.f1 limit 0);
+-- explain (costs off)
+-- select * from int4_tbl o where exists
+--   (select 1 from int4_tbl i where i.f1=o.f1 limit null);
+-- explain (costs off)
+-- select * from int4_tbl o where not exists
+--   (select 1 from int4_tbl i where i.f1=o.f1 limit 1);
+-- explain (costs off)
+-- select * from int4_tbl o where exists
+--   (select 1 from int4_tbl i where i.f1=o.f1 limit 0);
 
 --
 -- Test cases to catch unpleasant interactions between IN-join processing
@@ -278,7 +278,7 @@ select * from shipped_view;
 
 select f1, ss1 as relabel from
     (select *, (select sum(f1) from int4_tbl b where f1 >= a.f1) as ss1
-     from int4_tbl a) ss;
+     from int4_tbl a) ss order by f1;
 
 --
 -- Test cases involving PARAM_EXEC parameters and min/max index optimizations.

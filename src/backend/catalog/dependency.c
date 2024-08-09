@@ -460,8 +460,8 @@ doRename(const ObjectAddress *object, const char *oldname, const char *newname)
 			 */
 			if (relKind == RELKIND_SEQUENCE &&
 				IS_PGXC_COORDINATOR &&
-				!IsConnFromCoord() &&
-				IsTempSequence(object->objectId))
+				IsConnFromCoord() &&
+				!IsTempSequence(object->objectId))
 			{
 				Relation relseq = relation_open(object->objectId, AccessShareLock);
 				char *seqname = GetGlobalSeqName(relseq, NULL, oldname);

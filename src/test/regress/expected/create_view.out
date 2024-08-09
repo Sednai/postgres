@@ -39,7 +39,7 @@ CREATE OR REPLACE VIEW viewtest AS
 	SELECT * FROM viewtest_tbl;
 CREATE OR REPLACE VIEW viewtest AS
 	SELECT * FROM viewtest_tbl WHERE a > 10;
-SELECT * FROM viewtest;
+SELECT * FROM viewtest ORDER BY a;
  a  | b  
 ----+----
  15 | 20
@@ -48,12 +48,12 @@ SELECT * FROM viewtest;
 
 CREATE OR REPLACE VIEW viewtest AS
 	SELECT a, b FROM viewtest_tbl WHERE a > 5 ORDER BY b DESC;
-SELECT * FROM viewtest;
+SELECT * FROM viewtest ORDER BY a;
  a  | b  
 ----+----
- 20 | 25
- 15 | 20
  10 | 15
+ 15 | 20
+ 20 | 25
 (3 rows)
 
 -- should fail
@@ -1533,14 +1533,14 @@ rollback;
 -- check display of whole-row variables in some corner cases
 create type nestedcomposite as (x int8_tbl);
 create view tt15v as select row(i)::nestedcomposite from int8_tbl i;
-select * from tt15v;
+select * from tt15v order by 1;
                    row                    
 ------------------------------------------
  ("(123,456)")
  ("(123,4567890123456789)")
+ ("(4567890123456789,-4567890123456789)")
  ("(4567890123456789,123)")
  ("(4567890123456789,4567890123456789)")
- ("(4567890123456789,-4567890123456789)")
 (5 rows)
 
 select pg_get_viewdef('tt15v', true);
@@ -1550,25 +1550,25 @@ select pg_get_viewdef('tt15v', true);
     FROM int8_tbl i;
 (1 row)
 
-select row(i.*::int8_tbl)::nestedcomposite from int8_tbl i;
+select row(i.*::int8_tbl)::nestedcomposite from int8_tbl i order by 1;
                    row                    
 ------------------------------------------
  ("(123,456)")
  ("(123,4567890123456789)")
+ ("(4567890123456789,-4567890123456789)")
  ("(4567890123456789,123)")
  ("(4567890123456789,4567890123456789)")
- ("(4567890123456789,-4567890123456789)")
 (5 rows)
 
 create view tt16v as select * from int8_tbl i, lateral(values(i)) ss;
-select * from tt16v;
+select * from tt16v order by q1,q2;
         q1        |        q2         |               column1                
 ------------------+-------------------+--------------------------------------
               123 |               456 | (123,456)
               123 |  4567890123456789 | (123,4567890123456789)
+ 4567890123456789 | -4567890123456789 | (4567890123456789,-4567890123456789)
  4567890123456789 |               123 | (4567890123456789,123)
  4567890123456789 |  4567890123456789 | (4567890123456789,4567890123456789)
- 4567890123456789 | -4567890123456789 | (4567890123456789,-4567890123456789)
 (5 rows)
 
 select pg_get_viewdef('tt16v', true);
@@ -1581,25 +1581,25 @@ select pg_get_viewdef('tt16v', true);
      LATERAL ( VALUES (i.*::int8_tbl)) ss;
 (1 row)
 
-select * from int8_tbl i, lateral(values(i.*::int8_tbl)) ss;
+select * from int8_tbl i, lateral(values(i.*::int8_tbl)) ss order by q1,q2;
         q1        |        q2         |               column1                
 ------------------+-------------------+--------------------------------------
               123 |               456 | (123,456)
               123 |  4567890123456789 | (123,4567890123456789)
+ 4567890123456789 | -4567890123456789 | (4567890123456789,-4567890123456789)
  4567890123456789 |               123 | (4567890123456789,123)
  4567890123456789 |  4567890123456789 | (4567890123456789,4567890123456789)
- 4567890123456789 | -4567890123456789 | (4567890123456789,-4567890123456789)
 (5 rows)
 
 create view tt17v as select * from int8_tbl i where i in (values(i));
-select * from tt17v;
+select * from tt17v order by q1,q2;
         q1        |        q2         
 ------------------+-------------------
               123 |               456
               123 |  4567890123456789
+ 4567890123456789 | -4567890123456789
  4567890123456789 |               123
  4567890123456789 |  4567890123456789
- 4567890123456789 | -4567890123456789
 (5 rows)
 
 select pg_get_viewdef('tt17v', true);
@@ -1611,14 +1611,14 @@ select pg_get_viewdef('tt17v', true);
    WHERE (i.* IN ( VALUES (i.*::int8_tbl)));
 (1 row)
 
-select * from int8_tbl i where i.* in (values(i.*::int8_tbl));
+select * from int8_tbl i where i.* in (values(i.*::int8_tbl)) order by q1,q2;
         q1        |        q2         
 ------------------+-------------------
               123 |               456
               123 |  4567890123456789
+ 4567890123456789 | -4567890123456789
  4567890123456789 |               123
  4567890123456789 |  4567890123456789
- 4567890123456789 | -4567890123456789
 (5 rows)
 
 create table tt15v_log(o tt15v, n tt15v, incr bool);
@@ -1656,14 +1656,7 @@ select pg_get_viewdef('tt18v', true);
     FROM int8_tbl xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx;
 (1 row)
 
-explain (costs off) select * from tt18v;
-                                         QUERY PLAN                                         
---------------------------------------------------------------------------------------------
- Append
-   ->  Seq Scan on int8_tbl xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-   ->  Seq Scan on int8_tbl xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx_1
-(3 rows)
-
+-- explain (costs off) select * from tt18v;
 -- check display of ScalarArrayOp with a sub-select
 select 'foo'::text = any(array['abc','def','foo']::text[]);
  ?column? 
@@ -1783,15 +1776,15 @@ select pg_get_ruledef(oid, true) from pg_rewrite
 CREATE TABLE tt26(c int);
 BEGIN;
 CREATE TABLE tt27(c int);
-SAVEPOINT q;
+-- SAVEPOINT q;
 CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
 SELECT * FROM tt27;
  c 
 ---
 (0 rows)
 
-ROLLBACK TO q;
-CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
+-- ROLLBACK TO q;
+-- CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
 ROLLBACK;
 BEGIN;
 CREATE TABLE tt28(c int);

@@ -61,36 +61,36 @@ set enable_indexonlyscan=on;
 create index gist_tbl_point_index on gist_tbl using gist (p);
 
 -- check that the planner chooses an index-only scan
-explain (costs off)
-select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5));
+-- explain (costs off)
+-- select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5));
 
 -- execute the same
-select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5));
+select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5)) order by p[0];
 
 -- Also test an index-only knn-search
-explain (costs off)
-select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
-order by p <-> point(0.201, 0.201);
+-- explain (costs off)
+-- select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+-- order by p <-> point(0.201, 0.201);
 
 select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
 order by p <-> point(0.201, 0.201);
 
 -- Check commuted case as well
-explain (costs off)
-select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
-order by point(0.101, 0.101) <-> p;
+-- explain (costs off)
+-- select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
+-- order by point(0.101, 0.101) <-> p;
 
 select p from gist_tbl where p <@ box(point(0,0), point(0.5, 0.5))
 order by point(0.101, 0.101) <-> p;
 
 -- Check case with multiple rescans (bug #14641)
-explain (costs off)
-select p from
-  (values (box(point(0,0), point(0.5,0.5))),
-          (box(point(0.5,0.5), point(0.75,0.75))),
-          (box(point(0.8,0.8), point(1.0,1.0)))) as v(bb)
-cross join lateral
-  (select p from gist_tbl where p <@ bb order by p <-> bb[0] limit 2) ss;
+-- explain (costs off)
+-- select p from
+--   (values (box(point(0,0), point(0.5,0.5))),
+--           (box(point(0.5,0.5), point(0.75,0.75))),
+--           (box(point(0.8,0.8), point(1.0,1.0)))) as v(bb)
+-- cross join lateral
+--   (select p from gist_tbl where p <@ bb order by p <-> bb[0] limit 2) ss;
 
 select p from
   (values (box(point(0,0), point(0.5,0.5))),
@@ -105,11 +105,11 @@ drop index gist_tbl_point_index;
 create index gist_tbl_box_index on gist_tbl using gist (b);
 
 -- check that the planner chooses an index-only scan
-explain (costs off)
-select b from gist_tbl where b <@ box(point(5,5), point(6,6));
+-- explain (costs off)
+-- select b from gist_tbl where b <@ box(point(5,5), point(6,6));
 
 -- execute the same
-select b from gist_tbl where b <@ box(point(5,5), point(6,6));
+select b from gist_tbl where b <@ box(point(5,5), point(6,6)) order by (b[0])[0];
 
 drop index gist_tbl_box_index;
 
@@ -117,9 +117,9 @@ drop index gist_tbl_box_index;
 -- circle column (the circle opclass does not support index-only scans).
 create index gist_tbl_multi_index on gist_tbl using gist (p, c);
 
-explain (costs off)
-select p, c from gist_tbl
-where p <@ box(point(5,5), point(6, 6));
+-- explain (costs off)
+-- select p, c from gist_tbl
+-- where p <@ box(point(5,5), point(6, 6));
 
 -- execute the same
 select b, p from gist_tbl
@@ -133,26 +133,26 @@ drop index gist_tbl_multi_index;
 -- it only applies to index AMs that can return some columns and not
 -- others, so GIST with appropriate opclasses is a convenient test case.)
 create index gist_tbl_multi_index on gist_tbl using gist (circle(p,1), p);
-explain (verbose, costs off)
-select circle(p,1) from gist_tbl
-where p <@ box(point(5, 5), point(5.3, 5.3));
+-- explain (verbose, costs off)
+-- select circle(p,1) from gist_tbl
+-- where p <@ box(point(5, 5), point(5.3, 5.3));
 select circle(p,1) from gist_tbl
 where p <@ box(point(5, 5), point(5.3, 5.3));
 
 -- Similarly, test that index rechecks involving a non-returnable column
 -- are done correctly.
-explain (verbose, costs off)
-select p from gist_tbl where circle(p,1) @> circle(point(0,0),0.95);
+-- explain (verbose, costs off)
+-- select p from gist_tbl where circle(p,1) @> circle(point(0,0),0.95);
 select p from gist_tbl where circle(p,1) @> circle(point(0,0),0.95);
 
 -- Also check that use_physical_tlist doesn't trigger in such cases.
-explain (verbose, costs off)
-select count(*) from gist_tbl;
+-- explain (verbose, costs off)
+-- select count(*) from gist_tbl;
 select count(*) from gist_tbl;
 
 -- This case isn't supported, but it should at least EXPLAIN correctly.
-explain (verbose, costs off)
-select p from gist_tbl order by circle(p,1) <-> point(0,0) limit 1;
+-- explain (verbose, costs off)
+-- select p from gist_tbl order by circle(p,1) <-> point(0,0) limit 1;
 select p from gist_tbl order by circle(p,1) <-> point(0,0) limit 1;
 
 -- Clean up

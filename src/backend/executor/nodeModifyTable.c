@@ -755,7 +755,11 @@ ExecDelete(ModifyTableState *mtstate,
 		   bool canSetTag,
 		   bool changingPart,
 		   bool *tupleDeleted,
-		   TupleTableSlot **epqslot)
+		   TupleTableSlot **epqslot
+#ifdef PGXC
+,	TupleTableSlot *pslot
+#endif
+		   )
 {
 	ResultRelInfo *resultRelInfo;
 	Relation	resultRelationDesc;
@@ -862,7 +866,7 @@ ldelete:;
 			 * delete from t2 where a = 1;
 			 * ERROR:  operator does not exist: tid = integer
 			 */
-			slot = ExecProcNodeDMLInXC(estate, planSlot, slot);
+			slot = ExecProcNodeDMLInXC(estate, planSlot, pslot);
 		}
 		else
 		{
@@ -1297,7 +1301,7 @@ lreplace:;
 			 */
 			ExecDelete(mtstate, tupleid, oldtuple, planSlot, epqstate,
 					   estate, false, false /* canSetTag */ ,
-					   true /* changingPart */ , &tuple_deleted, &epqslot);
+					   true /* changingPart */ , &tuple_deleted, &epqslot, slot);
 
 			/*
 			 * For some reason if DELETE didn't happen (e.g. trigger prevented
@@ -2432,7 +2436,11 @@ ExecModifyTable(PlanState *pstate)
 				slot = ExecDelete(node, tupleid, oldtuple, planSlot,
 								  &node->mt_epqstate, estate,
 								  true, node->canSetTag,
+#ifndef PGXC
 								  false /* changingPart */ , NULL, NULL);
+#else
+								  false /* changingPart */ , NULL, NULL, slot);
+#endif
 				break;
 			default:
 				elog(ERROR, "unknown operation");

@@ -2358,7 +2358,7 @@ CommitTransaction(void)
 			else
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("cannot PREPARE a transaction that has operated on temporary tables"),
+						 errmsg("XC cannot PREPARE a transaction that has operated on temporary tables"),
 						 errdetail("Disabling enforce_two_phase_commit is recommended to enforce COMMIT")));
 		}
 

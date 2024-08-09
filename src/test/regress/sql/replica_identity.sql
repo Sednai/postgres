@@ -5,9 +5,9 @@ CREATE TABLE test_replica_identity (
        nonkey text,
        CONSTRAINT test_replica_identity_unique_defer UNIQUE (keya, keyb) DEFERRABLE,
        CONSTRAINT test_replica_identity_unique_nondefer UNIQUE (keya, keyb)
-) WITH OIDS;
+) WITH OIDS DISTRIBUTE BY REPLICATION;
 
-CREATE TABLE test_replica_identity_othertable (id serial primary key);
+CREATE TABLE test_replica_identity_othertable (id serial primary key) DISTRIBUTE BY REPLICATION;
 
 CREATE INDEX test_replica_identity_keyab ON test_replica_identity (keya, keyb);
 CREATE UNIQUE INDEX test_replica_identity_keyab_key ON test_replica_identity (keya, keyb);
@@ -84,14 +84,14 @@ SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
 ---
 
 -- constraint variant
-CREATE TABLE test_replica_identity2 (id int UNIQUE NOT NULL);
+CREATE TABLE test_replica_identity2 (id int UNIQUE NOT NULL) DISTRIBUTE BY REPLICATION;
 ALTER TABLE test_replica_identity2 REPLICA IDENTITY USING INDEX test_replica_identity2_id_key;
 \d test_replica_identity2
 ALTER TABLE test_replica_identity2 ALTER COLUMN id TYPE bigint;
 \d test_replica_identity2
 
 -- straight index variant
-CREATE TABLE test_replica_identity3 (id int NOT NULL);
+CREATE TABLE test_replica_identity3 (id int NOT NULL) DISTRIBUTE BY REPLICATION;
 CREATE UNIQUE INDEX test_replica_identity3_id_key ON test_replica_identity3 (id);
 ALTER TABLE test_replica_identity3 REPLICA IDENTITY USING INDEX test_replica_identity3_id_key;
 \d test_replica_identity3
@@ -106,8 +106,8 @@ ALTER TABLE test_replica_identity3 ALTER COLUMN id DROP NOT NULL;
 -- Test that replica identity can be set on an index that's not yet valid.
 -- (This matches the way pg_dump will try to dump a partitioned table.)
 --
-CREATE TABLE test_replica_identity4(id integer NOT NULL) PARTITION BY LIST (id);
-CREATE TABLE test_replica_identity4_1(id integer NOT NULL);
+CREATE TABLE test_replica_identity4(id integer NOT NULL) PARTITION BY LIST (id) DISTRIBUTE BY REPLICATION;
+CREATE TABLE test_replica_identity4_1(id integer NOT NULL) DISTRIBUTE BY REPLICATION;
 ALTER TABLE ONLY test_replica_identity4
   ATTACH PARTITION test_replica_identity4_1 FOR VALUES IN (1);
 ALTER TABLE ONLY test_replica_identity4

@@ -29,14 +29,15 @@ CREATE TABLE few(id int, dataa text, datab text);
 INSERT INTO few VALUES(1, 'a', 'foo'),(2, 'a', 'bar'),(3, 'b', 'bar');
 
 -- SRF with a provably-dummy relation
-explain (verbose, costs off)
-SELECT unnest(ARRAY[1, 2]) FROM few WHERE false;
+-- PGXC deactivated
+-- explain (verbose, costs off)
+-- SELECT unnest(ARRAY[1, 2]) FROM few WHERE false;
 SELECT unnest(ARRAY[1, 2]) FROM few WHERE false;
 
 -- SRF shouldn't prevent upper query from recognizing lower as dummy
-explain (verbose, costs off)
-SELECT * FROM few f1,
-  (SELECT unnest(ARRAY[1,2]) FROM few f2 WHERE false OFFSET 0) ss;
+-- explain (verbose, costs off)
+-- SELECT * FROM few f1,
+--  (SELECT unnest(ARRAY[1,2]) FROM few f2 WHERE false OFFSET 0) ss;
 SELECT * FROM few f1,
   (SELECT unnest(ARRAY[1,2]) FROM few f2 WHERE false OFFSET 0) ss;
 
@@ -83,7 +84,7 @@ SELECT sum((3 = ANY(SELECT lag(x) over(order by x)
 SELECT min(generate_series(1, 3)) OVER() FROM few;
 
 -- SRFs are normally computed after window functions
-SELECT id,lag(id) OVER(), count(*) OVER(), generate_series(1,3) FROM few;
+SELECT id,lag(id) OVER(), count(*) OVER(), generate_series(1,3) FROM few ORDER BY id;
 -- unless referencing SRFs
 SELECT SUM(count(*)) OVER(PARTITION BY generate_series(1,3) ORDER BY generate_series(1,3)), generate_series(1,3) g FROM few GROUP BY g;
 
@@ -101,8 +102,8 @@ SELECT dataa, datab b, generate_series(1,2) g, count(*) FROM few GROUP BY CUBE(d
 reset enable_hashagg;
 
 -- case with degenerate ORDER BY
-explain (verbose, costs off)
-select 'foo' as f, generate_series(1,2) as g from few order by 1;
+-- explain (verbose, costs off)
+-- select 'foo' as f, generate_series(1,2) as g from few order by 1;
 select 'foo' as f, generate_series(1,2) as g from few order by 1;
 
 -- data modification
@@ -159,7 +160,7 @@ SELECT a, generate_series(1,2) FROM (VALUES(1),(2),(3)) r(a) LIMIT 2 OFFSET 2;
 SELECT 1 LIMIT generate_series(1,3);
 
 -- tSRF in correlated subquery, referencing table outside
-SELECT (SELECT generate_series(1,3) LIMIT 1 OFFSET few.id) FROM few;
+SELECT (SELECT generate_series(1,3) LIMIT 1 OFFSET few.id) FROM few ORDER BY 1;
 -- tSRF in correlated subquery, referencing SRF outside
 SELECT (SELECT generate_series(1,3) LIMIT 1 OFFSET g.i) FROM generate_series(0,3) g(i);
 

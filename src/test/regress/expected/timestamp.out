@@ -177,33 +177,26 @@ INSERT INTO TIMESTAMP_TBL VALUES ('Feb 16 17:32:01 5097 BC');
 ERROR:  timestamp out of range: "Feb 16 17:32:01 5097 BC"
 LINE 1: INSERT INTO TIMESTAMP_TBL VALUES ('Feb 16 17:32:01 5097 BC')...
                                           ^
-SELECT '' AS "64", d1 FROM TIMESTAMP_TBL;
+SELECT '' AS "64", d1 FROM TIMESTAMP_TBL ORDER BY d1;
  64 |             d1              
 ----+-----------------------------
     | -infinity
-    | infinity
+    | Tue Feb 16 17:32:01 0097 BC
+    | Sat Feb 16 17:32:01 0097
+    | Thu Feb 16 17:32:01 0597
+    | Tue Feb 16 17:32:01 1097
+    | Sat Feb 16 17:32:01 1697
+    | Thu Feb 16 17:32:01 1797
+    | Tue Feb 16 17:32:01 1897
     | Thu Jan 01 00:00:00 1970
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:02 1997
-    | Mon Feb 10 17:32:01.4 1997
-    | Mon Feb 10 17:32:01.5 1997
-    | Mon Feb 10 17:32:01.6 1997
+    | Wed Feb 28 17:32:01 1996
+    | Thu Feb 29 17:32:01 1996
+    | Fri Mar 01 17:32:01 1996
+    | Mon Dec 30 17:32:01 1996
+    | Tue Dec 31 17:32:01 1996
+    | Wed Jan 01 17:32:01 1997
     | Thu Jan 02 00:00:00 1997
     | Thu Jan 02 03:04:05 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 17:32:01 1997
-    | Sat Sep 22 18:19:20 2001
-    | Wed Mar 15 08:14:01 2000
-    | Wed Mar 15 13:14:02 2000
-    | Wed Mar 15 12:14:03 2000
-    | Wed Mar 15 03:14:04 2000
-    | Wed Mar 15 02:14:05 2000
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:00 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
@@ -214,37 +207,44 @@ SELECT '' AS "64", d1 FROM TIMESTAMP_TBL;
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 18:32:01 1997
     | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01.4 1997
+    | Mon Feb 10 17:32:01.5 1997
+    | Mon Feb 10 17:32:01.6 1997
+    | Mon Feb 10 17:32:02 1997
     | Tue Feb 11 17:32:01 1997
     | Wed Feb 12 17:32:01 1997
     | Thu Feb 13 17:32:01 1997
     | Fri Feb 14 17:32:01 1997
     | Sat Feb 15 17:32:01 1997
     | Sun Feb 16 17:32:01 1997
-    | Tue Feb 16 17:32:01 0097 BC
-    | Sat Feb 16 17:32:01 0097
-    | Thu Feb 16 17:32:01 0597
-    | Tue Feb 16 17:32:01 1097
-    | Sat Feb 16 17:32:01 1697
-    | Thu Feb 16 17:32:01 1797
-    | Tue Feb 16 17:32:01 1897
     | Sun Feb 16 17:32:01 1997
-    | Sat Feb 16 17:32:01 2097
-    | Wed Feb 28 17:32:01 1996
-    | Thu Feb 29 17:32:01 1996
-    | Fri Mar 01 17:32:01 1996
-    | Mon Dec 30 17:32:01 1996
-    | Tue Dec 31 17:32:01 1996
-    | Wed Jan 01 17:32:01 1997
     | Fri Feb 28 17:32:01 1997
     | Sat Mar 01 17:32:01 1997
+    | Tue Jun 10 17:32:01 1997
+    | Tue Jun 10 18:32:01 1997
     | Tue Dec 30 17:32:01 1997
     | Wed Dec 31 17:32:01 1997
     | Fri Dec 31 17:32:01 1999
     | Sat Jan 01 17:32:01 2000
+    | Wed Mar 15 02:14:05 2000
+    | Wed Mar 15 03:14:04 2000
+    | Wed Mar 15 08:14:01 2000
+    | Wed Mar 15 12:14:03 2000
+    | Wed Mar 15 13:14:02 2000
     | Sun Dec 31 17:32:01 2000
     | Mon Jan 01 17:32:01 2001
+    | Sat Sep 22 18:19:20 2001
+    | Sat Feb 16 17:32:01 2097
+    | infinity
 (65 rows)
 
 -- Check behavior at the lower boundary of the timestamp range
@@ -261,30 +261,10 @@ LINE 1: SELECT '4714-11-23 23:59:59 BC'::timestamp;
 -- The upper boundary differs between integer and float timestamps, so no check
 -- Demonstrate functions and operators
 SELECT '' AS "48", d1 FROM TIMESTAMP_TBL
-   WHERE d1 > timestamp without time zone '1997-01-02';
+   WHERE d1 > timestamp without time zone '1997-01-02' ORDER BY d1;
  48 |             d1             
 ----+----------------------------
-    | infinity
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:02 1997
-    | Mon Feb 10 17:32:01.4 1997
-    | Mon Feb 10 17:32:01.5 1997
-    | Mon Feb 10 17:32:01.6 1997
     | Thu Jan 02 03:04:05 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 17:32:01 1997
-    | Sat Sep 22 18:19:20 2001
-    | Wed Mar 15 08:14:01 2000
-    | Wed Mar 15 13:14:02 2000
-    | Wed Mar 15 12:14:03 2000
-    | Wed Mar 15 03:14:04 2000
-    | Wed Mar 15 02:14:05 2000
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:00 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
@@ -295,8 +275,19 @@ SELECT '' AS "48", d1 FROM TIMESTAMP_TBL
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 18:32:01 1997
     | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01.4 1997
+    | Mon Feb 10 17:32:01.5 1997
+    | Mon Feb 10 17:32:01.6 1997
+    | Mon Feb 10 17:32:02 1997
     | Tue Feb 11 17:32:01 1997
     | Wed Feb 12 17:32:01 1997
     | Thu Feb 13 17:32:01 1997
@@ -304,23 +295,31 @@ SELECT '' AS "48", d1 FROM TIMESTAMP_TBL
     | Sat Feb 15 17:32:01 1997
     | Sun Feb 16 17:32:01 1997
     | Sun Feb 16 17:32:01 1997
-    | Sat Feb 16 17:32:01 2097
     | Fri Feb 28 17:32:01 1997
     | Sat Mar 01 17:32:01 1997
+    | Tue Jun 10 17:32:01 1997
+    | Tue Jun 10 18:32:01 1997
     | Tue Dec 30 17:32:01 1997
     | Wed Dec 31 17:32:01 1997
     | Fri Dec 31 17:32:01 1999
     | Sat Jan 01 17:32:01 2000
+    | Wed Mar 15 02:14:05 2000
+    | Wed Mar 15 03:14:04 2000
+    | Wed Mar 15 08:14:01 2000
+    | Wed Mar 15 12:14:03 2000
+    | Wed Mar 15 13:14:02 2000
     | Sun Dec 31 17:32:01 2000
     | Mon Jan 01 17:32:01 2001
+    | Sat Sep 22 18:19:20 2001
+    | Sat Feb 16 17:32:01 2097
+    | infinity
 (49 rows)
 
 SELECT '' AS "15", d1 FROM TIMESTAMP_TBL
-   WHERE d1 < timestamp without time zone '1997-01-02';
+   WHERE d1 < timestamp without time zone '1997-01-02' ORDER BY d1;
  15 |             d1              
 ----+-----------------------------
     | -infinity
-    | Thu Jan 01 00:00:00 1970
     | Tue Feb 16 17:32:01 0097 BC
     | Sat Feb 16 17:32:01 0097
     | Thu Feb 16 17:32:01 0597
@@ -328,6 +327,7 @@ SELECT '' AS "15", d1 FROM TIMESTAMP_TBL
     | Sat Feb 16 17:32:01 1697
     | Thu Feb 16 17:32:01 1797
     | Tue Feb 16 17:32:01 1897
+    | Thu Jan 01 00:00:00 1970
     | Wed Feb 28 17:32:01 1996
     | Thu Feb 29 17:32:01 1996
     | Fri Mar 01 17:32:01 1996
@@ -337,39 +337,32 @@ SELECT '' AS "15", d1 FROM TIMESTAMP_TBL
 (15 rows)
 
 SELECT '' AS one, d1 FROM TIMESTAMP_TBL
-   WHERE d1 = timestamp without time zone '1997-01-02';
+   WHERE d1 = timestamp without time zone '1997-01-02' ORDER BY d1;
  one |            d1            
 -----+--------------------------
      | Thu Jan 02 00:00:00 1997
 (1 row)
 
 SELECT '' AS "63", d1 FROM TIMESTAMP_TBL
-   WHERE d1 != timestamp without time zone '1997-01-02';
+   WHERE d1 != timestamp without time zone '1997-01-02' ORDER BY d1;
  63 |             d1              
 ----+-----------------------------
     | -infinity
-    | infinity
+    | Tue Feb 16 17:32:01 0097 BC
+    | Sat Feb 16 17:32:01 0097
+    | Thu Feb 16 17:32:01 0597
+    | Tue Feb 16 17:32:01 1097
+    | Sat Feb 16 17:32:01 1697
+    | Thu Feb 16 17:32:01 1797
+    | Tue Feb 16 17:32:01 1897
     | Thu Jan 01 00:00:00 1970
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:02 1997
-    | Mon Feb 10 17:32:01.4 1997
-    | Mon Feb 10 17:32:01.5 1997
-    | Mon Feb 10 17:32:01.6 1997
+    | Wed Feb 28 17:32:01 1996
+    | Thu Feb 29 17:32:01 1996
+    | Fri Mar 01 17:32:01 1996
+    | Mon Dec 30 17:32:01 1996
+    | Tue Dec 31 17:32:01 1996
+    | Wed Jan 01 17:32:01 1997
     | Thu Jan 02 03:04:05 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 17:32:01 1997
-    | Sat Sep 22 18:19:20 2001
-    | Wed Mar 15 08:14:01 2000
-    | Wed Mar 15 13:14:02 2000
-    | Wed Mar 15 12:14:03 2000
-    | Wed Mar 15 03:14:04 2000
-    | Wed Mar 15 02:14:05 2000
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:00 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
@@ -380,46 +373,51 @@ SELECT '' AS "63", d1 FROM TIMESTAMP_TBL
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 18:32:01 1997
     | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01.4 1997
+    | Mon Feb 10 17:32:01.5 1997
+    | Mon Feb 10 17:32:01.6 1997
+    | Mon Feb 10 17:32:02 1997
     | Tue Feb 11 17:32:01 1997
     | Wed Feb 12 17:32:01 1997
     | Thu Feb 13 17:32:01 1997
     | Fri Feb 14 17:32:01 1997
     | Sat Feb 15 17:32:01 1997
     | Sun Feb 16 17:32:01 1997
-    | Tue Feb 16 17:32:01 0097 BC
-    | Sat Feb 16 17:32:01 0097
-    | Thu Feb 16 17:32:01 0597
-    | Tue Feb 16 17:32:01 1097
-    | Sat Feb 16 17:32:01 1697
-    | Thu Feb 16 17:32:01 1797
-    | Tue Feb 16 17:32:01 1897
     | Sun Feb 16 17:32:01 1997
-    | Sat Feb 16 17:32:01 2097
-    | Wed Feb 28 17:32:01 1996
-    | Thu Feb 29 17:32:01 1996
-    | Fri Mar 01 17:32:01 1996
-    | Mon Dec 30 17:32:01 1996
-    | Tue Dec 31 17:32:01 1996
-    | Wed Jan 01 17:32:01 1997
     | Fri Feb 28 17:32:01 1997
     | Sat Mar 01 17:32:01 1997
+    | Tue Jun 10 17:32:01 1997
+    | Tue Jun 10 18:32:01 1997
     | Tue Dec 30 17:32:01 1997
     | Wed Dec 31 17:32:01 1997
     | Fri Dec 31 17:32:01 1999
     | Sat Jan 01 17:32:01 2000
+    | Wed Mar 15 02:14:05 2000
+    | Wed Mar 15 03:14:04 2000
+    | Wed Mar 15 08:14:01 2000
+    | Wed Mar 15 12:14:03 2000
+    | Wed Mar 15 13:14:02 2000
     | Sun Dec 31 17:32:01 2000
     | Mon Jan 01 17:32:01 2001
+    | Sat Sep 22 18:19:20 2001
+    | Sat Feb 16 17:32:01 2097
+    | infinity
 (64 rows)
 
 SELECT '' AS "16", d1 FROM TIMESTAMP_TBL
-   WHERE d1 <= timestamp without time zone '1997-01-02';
+   WHERE d1 <= timestamp without time zone '1997-01-02' ORDER BY d1;
  16 |             d1              
 ----+-----------------------------
     | -infinity
-    | Thu Jan 01 00:00:00 1970
-    | Thu Jan 02 00:00:00 1997
     | Tue Feb 16 17:32:01 0097 BC
     | Sat Feb 16 17:32:01 0097
     | Thu Feb 16 17:32:01 0597
@@ -427,40 +425,22 @@ SELECT '' AS "16", d1 FROM TIMESTAMP_TBL
     | Sat Feb 16 17:32:01 1697
     | Thu Feb 16 17:32:01 1797
     | Tue Feb 16 17:32:01 1897
+    | Thu Jan 01 00:00:00 1970
     | Wed Feb 28 17:32:01 1996
     | Thu Feb 29 17:32:01 1996
     | Fri Mar 01 17:32:01 1996
     | Mon Dec 30 17:32:01 1996
     | Tue Dec 31 17:32:01 1996
     | Wed Jan 01 17:32:01 1997
+    | Thu Jan 02 00:00:00 1997
 (16 rows)
 
 SELECT '' AS "49", d1 FROM TIMESTAMP_TBL
-   WHERE d1 >= timestamp without time zone '1997-01-02';
+   WHERE d1 >= timestamp without time zone '1997-01-02' ORDER BY d1;
  49 |             d1             
 ----+----------------------------
-    | infinity
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:02 1997
-    | Mon Feb 10 17:32:01.4 1997
-    | Mon Feb 10 17:32:01.5 1997
-    | Mon Feb 10 17:32:01.6 1997
     | Thu Jan 02 00:00:00 1997
     | Thu Jan 02 03:04:05 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 17:32:01 1997
-    | Sat Sep 22 18:19:20 2001
-    | Wed Mar 15 08:14:01 2000
-    | Wed Mar 15 13:14:02 2000
-    | Wed Mar 15 12:14:03 2000
-    | Wed Mar 15 03:14:04 2000
-    | Wed Mar 15 02:14:05 2000
-    | Mon Feb 10 17:32:01 1997
-    | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:00 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
@@ -471,8 +451,19 @@ SELECT '' AS "49", d1 FROM TIMESTAMP_TBL
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
     | Mon Feb 10 17:32:01 1997
-    | Tue Jun 10 18:32:01 1997
     | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01 1997
+    | Mon Feb 10 17:32:01.4 1997
+    | Mon Feb 10 17:32:01.5 1997
+    | Mon Feb 10 17:32:01.6 1997
+    | Mon Feb 10 17:32:02 1997
     | Tue Feb 11 17:32:01 1997
     | Wed Feb 12 17:32:01 1997
     | Thu Feb 13 17:32:01 1997
@@ -480,43 +471,39 @@ SELECT '' AS "49", d1 FROM TIMESTAMP_TBL
     | Sat Feb 15 17:32:01 1997
     | Sun Feb 16 17:32:01 1997
     | Sun Feb 16 17:32:01 1997
-    | Sat Feb 16 17:32:01 2097
     | Fri Feb 28 17:32:01 1997
     | Sat Mar 01 17:32:01 1997
+    | Tue Jun 10 17:32:01 1997
+    | Tue Jun 10 18:32:01 1997
     | Tue Dec 30 17:32:01 1997
     | Wed Dec 31 17:32:01 1997
     | Fri Dec 31 17:32:01 1999
     | Sat Jan 01 17:32:01 2000
+    | Wed Mar 15 02:14:05 2000
+    | Wed Mar 15 03:14:04 2000
+    | Wed Mar 15 08:14:01 2000
+    | Wed Mar 15 12:14:03 2000
+    | Wed Mar 15 13:14:02 2000
     | Sun Dec 31 17:32:01 2000
     | Mon Jan 01 17:32:01 2001
+    | Sat Sep 22 18:19:20 2001
+    | Sat Feb 16 17:32:01 2097
+    | infinity
 (50 rows)
 
 SELECT '' AS "54", d1 - timestamp without time zone '1997-01-02' AS diff
-   FROM TIMESTAMP_TBL WHERE d1 BETWEEN '1902-01-01' AND '2038-01-01';
+   FROM TIMESTAMP_TBL WHERE d1 BETWEEN '1902-01-01' AND '2038-01-01' ORDER BY diff;
  54 |                  diff                  
 ----+----------------------------------------
     | @ 9863 days ago
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 2 secs
-    | @ 39 days 17 hours 32 mins 1.4 secs
-    | @ 39 days 17 hours 32 mins 1.5 secs
-    | @ 39 days 17 hours 32 mins 1.6 secs
+    | @ 308 days 6 hours 27 mins 59 secs ago
+    | @ 307 days 6 hours 27 mins 59 secs ago
+    | @ 306 days 6 hours 27 mins 59 secs ago
+    | @ 2 days 6 hours 27 mins 59 secs ago
+    | @ 1 day 6 hours 27 mins 59 secs ago
+    | @ 6 hours 27 mins 59 secs ago
     | @ 0
     | @ 3 hours 4 mins 5 secs
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 159 days 17 hours 32 mins 1 sec
-    | @ 1724 days 18 hours 19 mins 20 secs
-    | @ 1168 days 8 hours 14 mins 1 sec
-    | @ 1168 days 13 hours 14 mins 2 secs
-    | @ 1168 days 12 hours 14 mins 3 secs
-    | @ 1168 days 3 hours 14 mins 4 secs
-    | @ 1168 days 2 hours 14 mins 5 secs
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins
     | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
@@ -527,8 +514,19 @@ SELECT '' AS "54", d1 - timestamp without time zone '1997-01-02' AS diff
     | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
-    | @ 159 days 18 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1.4 secs
+    | @ 39 days 17 hours 32 mins 1.5 secs
+    | @ 39 days 17 hours 32 mins 1.6 secs
+    | @ 39 days 17 hours 32 mins 2 secs
     | @ 40 days 17 hours 32 mins 1 sec
     | @ 41 days 17 hours 32 mins 1 sec
     | @ 42 days 17 hours 32 mins 1 sec
@@ -536,20 +534,22 @@ SELECT '' AS "54", d1 - timestamp without time zone '1997-01-02' AS diff
     | @ 44 days 17 hours 32 mins 1 sec
     | @ 45 days 17 hours 32 mins 1 sec
     | @ 45 days 17 hours 32 mins 1 sec
-    | @ 308 days 6 hours 27 mins 59 secs ago
-    | @ 307 days 6 hours 27 mins 59 secs ago
-    | @ 306 days 6 hours 27 mins 59 secs ago
-    | @ 2 days 6 hours 27 mins 59 secs ago
-    | @ 1 day 6 hours 27 mins 59 secs ago
-    | @ 6 hours 27 mins 59 secs ago
     | @ 57 days 17 hours 32 mins 1 sec
     | @ 58 days 17 hours 32 mins 1 sec
+    | @ 159 days 17 hours 32 mins 1 sec
+    | @ 159 days 18 hours 32 mins 1 sec
     | @ 362 days 17 hours 32 mins 1 sec
     | @ 363 days 17 hours 32 mins 1 sec
     | @ 1093 days 17 hours 32 mins 1 sec
     | @ 1094 days 17 hours 32 mins 1 sec
+    | @ 1168 days 2 hours 14 mins 5 secs
+    | @ 1168 days 3 hours 14 mins 4 secs
+    | @ 1168 days 8 hours 14 mins 1 sec
+    | @ 1168 days 12 hours 14 mins 3 secs
+    | @ 1168 days 13 hours 14 mins 2 secs
     | @ 1459 days 17 hours 32 mins 1 sec
     | @ 1460 days 17 hours 32 mins 1 sec
+    | @ 1724 days 18 hours 19 mins 20 secs
 (55 rows)
 
 SELECT '' AS date_trunc_week, date_trunc( 'week', timestamp '2004-02-29 15:44:17.71393' ) AS week_trunc;
@@ -562,31 +562,18 @@ SELECT '' AS date_trunc_week, date_trunc( 'week', timestamp '2004-02-29 15:44:17
 SELECT '' AS "54", d1 - timestamp without time zone '1997-01-02' AS diff
   FROM TIMESTAMP_TBL
   WHERE d1 BETWEEN timestamp without time zone '1902-01-01'
-   AND timestamp without time zone '2038-01-01';
+   AND timestamp without time zone '2038-01-01' ORDER BY diff;
  54 |                  diff                  
 ----+----------------------------------------
     | @ 9863 days ago
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 2 secs
-    | @ 39 days 17 hours 32 mins 1.4 secs
-    | @ 39 days 17 hours 32 mins 1.5 secs
-    | @ 39 days 17 hours 32 mins 1.6 secs
+    | @ 308 days 6 hours 27 mins 59 secs ago
+    | @ 307 days 6 hours 27 mins 59 secs ago
+    | @ 306 days 6 hours 27 mins 59 secs ago
+    | @ 2 days 6 hours 27 mins 59 secs ago
+    | @ 1 day 6 hours 27 mins 59 secs ago
+    | @ 6 hours 27 mins 59 secs ago
     | @ 0
     | @ 3 hours 4 mins 5 secs
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 159 days 17 hours 32 mins 1 sec
-    | @ 1724 days 18 hours 19 mins 20 secs
-    | @ 1168 days 8 hours 14 mins 1 sec
-    | @ 1168 days 13 hours 14 mins 2 secs
-    | @ 1168 days 12 hours 14 mins 3 secs
-    | @ 1168 days 3 hours 14 mins 4 secs
-    | @ 1168 days 2 hours 14 mins 5 secs
-    | @ 39 days 17 hours 32 mins 1 sec
-    | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins
     | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
@@ -597,8 +584,19 @@ SELECT '' AS "54", d1 - timestamp without time zone '1997-01-02' AS diff
     | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
-    | @ 159 days 18 hours 32 mins 1 sec
     | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1 sec
+    | @ 39 days 17 hours 32 mins 1.4 secs
+    | @ 39 days 17 hours 32 mins 1.5 secs
+    | @ 39 days 17 hours 32 mins 1.6 secs
+    | @ 39 days 17 hours 32 mins 2 secs
     | @ 40 days 17 hours 32 mins 1 sec
     | @ 41 days 17 hours 32 mins 1 sec
     | @ 42 days 17 hours 32 mins 1 sec
@@ -606,20 +604,22 @@ SELECT '' AS "54", d1 - timestamp without time zone '1997-01-02' AS diff
     | @ 44 days 17 hours 32 mins 1 sec
     | @ 45 days 17 hours 32 mins 1 sec
     | @ 45 days 17 hours 32 mins 1 sec
-    | @ 308 days 6 hours 27 mins 59 secs ago
-    | @ 307 days 6 hours 27 mins 59 secs ago
-    | @ 306 days 6 hours 27 mins 59 secs ago
-    | @ 2 days 6 hours 27 mins 59 secs ago
-    | @ 1 day 6 hours 27 mins 59 secs ago
-    | @ 6 hours 27 mins 59 secs ago
     | @ 57 days 17 hours 32 mins 1 sec
     | @ 58 days 17 hours 32 mins 1 sec
+    | @ 159 days 17 hours 32 mins 1 sec
+    | @ 159 days 18 hours 32 mins 1 sec
     | @ 362 days 17 hours 32 mins 1 sec
     | @ 363 days 17 hours 32 mins 1 sec
     | @ 1093 days 17 hours 32 mins 1 sec
     | @ 1094 days 17 hours 32 mins 1 sec
+    | @ 1168 days 2 hours 14 mins 5 secs
+    | @ 1168 days 3 hours 14 mins 4 secs
+    | @ 1168 days 8 hours 14 mins 1 sec
+    | @ 1168 days 12 hours 14 mins 3 secs
+    | @ 1168 days 13 hours 14 mins 2 secs
     | @ 1459 days 17 hours 32 mins 1 sec
     | @ 1460 days 17 hours 32 mins 1 sec
+    | @ 1724 days 18 hours 19 mins 20 secs
 (55 rows)
 
 -- DATE_PART (timestamp_part)

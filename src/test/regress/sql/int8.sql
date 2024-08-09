@@ -108,19 +108,19 @@ SELECT '' AS to_char_3, to_char( (q1 * -1), '9999999999999999PR'), to_char( (q2 
 SELECT '' AS to_char_4, to_char( (q1 * -1), '9999999999999999S'), to_char( (q2 * -1), 'S9999999999999999')
 	FROM INT8_TBL ORDER BY 2,3;
 
-SELECT '' AS to_char_5,  to_char(q2, 'MI9999999999999999')     FROM INT8_TBL;
-SELECT '' AS to_char_6,  to_char(q2, 'FMS9999999999999999')    FROM INT8_TBL;
-SELECT '' AS to_char_7,  to_char(q2, 'FM9999999999999999THPR') FROM INT8_TBL;
-SELECT '' AS to_char_8,  to_char(q2, 'SG9999999999999999th')   FROM INT8_TBL;
-SELECT '' AS to_char_9,  to_char(q2, '0999999999999999')       FROM INT8_TBL;
-SELECT '' AS to_char_10, to_char(q2, 'S0999999999999999')      FROM INT8_TBL;
-SELECT '' AS to_char_11, to_char(q2, 'FM0999999999999999')     FROM INT8_TBL;
-SELECT '' AS to_char_12, to_char(q2, 'FM9999999999999999.000') FROM INT8_TBL;
-SELECT '' AS to_char_13, to_char(q2, 'L9999999999999999.000')  FROM INT8_TBL;
-SELECT '' AS to_char_14, to_char(q2, 'FM9999999999999999.999') FROM INT8_TBL;
-SELECT '' AS to_char_15, to_char(q2, 'S 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9') FROM INT8_TBL;
-SELECT '' AS to_char_16, to_char(q2, E'99999 "text" 9999 "9999" 999 "\\"text between quote marks\\"" 9999') FROM INT8_TBL;
-SELECT '' AS to_char_17, to_char(q2, '999999SG9999999999')     FROM INT8_TBL;
+SELECT '' AS to_char_5,  to_char(q2, 'MI9999999999999999')     FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_6,  to_char(q2, 'FMS9999999999999999')    FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_7,  to_char(q2, 'FM9999999999999999THPR') FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_8,  to_char(q2, 'SG9999999999999999th')   FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_9,  to_char(q2, '0999999999999999')       FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_10, to_char(q2, 'S0999999999999999')      FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_11, to_char(q2, 'FM0999999999999999')     FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_12, to_char(q2, 'FM9999999999999999.000') FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_13, to_char(q2, 'L9999999999999999.000')  FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_14, to_char(q2, 'FM9999999999999999.999') FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_15, to_char(q2, 'S 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9') FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_16, to_char(q2, E'99999 "text" 9999 "9999" 999 "\\"text between quote marks\\"" 9999') FROM INT8_TBL ORDER BY 2;
+SELECT '' AS to_char_17, to_char(q2, '999999SG9999999999')     FROM INT8_TBL ORDER BY 2;
 
 -- check min/max values and overflow behavior
 
@@ -171,7 +171,7 @@ SELECT CAST(q1 AS int2) FROM int8_tbl WHERE q2 <> 456;
 
 SELECT CAST('42'::int2 AS int8), CAST('-37'::int2 AS int8);
 
-SELECT CAST(q1 AS float4), CAST(q2 AS float8) FROM INT8_TBL;
+SELECT CAST(q1 AS float4), CAST(q2 AS float8) FROM INT8_TBL ORDER BY q1,q2;
 SELECT CAST('36854775807.0'::float4 AS int8);
 SELECT CAST('922337203685477580700.0'::float8 AS int8);
 
@@ -181,8 +181,8 @@ SELECT oid::int8 FROM pg_class WHERE relname = 'pg_class';
 
 -- bit operations
 
-SELECT q1, q2, q1 & q2 AS "and", q1 | q2 AS "or", q1 # q2 AS "xor", ~q1 AS "not" FROM INT8_TBL;
-SELECT q1, q1 << 2 AS "shl", q1 >> 3 AS "shr" FROM INT8_TBL;
+SELECT q1, q2, q1 & q2 AS "and", q1 | q2 AS "or", q1 # q2 AS "xor", ~q1 AS "not" FROM INT8_TBL order by q1,q2;
+SELECT q1, q1 << 2 AS "shl", q1 >> 3 AS "shr" FROM INT8_TBL order by q1;
 
 
 -- generate_series

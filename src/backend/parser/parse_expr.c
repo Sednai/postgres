@@ -2583,7 +2583,7 @@ transformCurrentOfExpr(ParseState *pstate, CurrentOfExpr *cexpr)
 #ifdef PGXC
 	ereport(ERROR,
 			(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
-				(errmsg("WHERE CURRENT OF clause not yet supported"))));
+				(errmsg("WHERE CURRENT OF clause not yet supported in XC"))));
 #endif
 
 	/* CURRENT OF can only appear at top level of UPDATE/DELETE */

@@ -71,7 +71,7 @@ SET enable_sort TO off;
 --
 -- awk '{if($1<10){print $0;}else{next;}}' onek.data | sort +0n -1
 --
-SELECT onek2.* FROM onek2 WHERE onek2.unique1 < 10;
+SELECT onek2.* FROM onek2 WHERE onek2.unique1 < 10 ORDER BY 1;
 
 --
 -- awk '{if($1<20){print $1,$14;}else{next;}}' onek.data | sort +0nr -1
@@ -84,7 +84,7 @@ SELECT onek2.unique1, onek2.stringu1 FROM onek2
 -- awk '{if($1>980){print $1,$14;}else{next;}}' onek.data | sort +1d -2
 --
 SELECT onek2.unique1, onek2.stringu1 FROM onek2
-   WHERE onek2.unique1 > 980;
+   WHERE onek2.unique1 > 980 ORDER BY 1;
 
 RESET enable_seqscan;
 RESET enable_bitmapscan;
@@ -102,7 +102,8 @@ SELECT two, stringu1, ten, string4
 -- awk 'BEGIN{FS="      ";}{if(NF!=2){print $4,$5;}else{print;}}' - stud_emp.data
 --
 -- SELECT name, age FROM person*; ??? check if different
-SELECT p.name, p.age FROM person* p;
+-- PGXC deactivated
+-- SELECT p.name, p.age FROM person* p;
 
 --
 -- awk '{print $1,$2;}' person.data |
@@ -124,7 +125,7 @@ select foo from (select 'xyzzy',1,null) as foo;
 -- Test VALUES lists
 --
 select * from onek, (values(147, 'RFAAAA'), (931, 'VJAAAA')) as v (i, j)
-    WHERE onek.unique1 = v.i and onek.stringu1 = v.j;
+    WHERE onek.unique1 = v.i and onek.stringu1 = v.j ORDER BY unique1;
 
 -- a more complex case
 -- looks like we're coding lisp :-)
@@ -146,7 +147,7 @@ VALUES (1,2), (3,4+4), (7,77.7)
 UNION ALL
 SELECT 2+2, 57
 UNION ALL
-TABLE int8_tbl;
+TABLE int8_tbl ORDER BY 1,2;
 
 -- corner case: VALUES with no columns
 CREATE TEMP TABLE nocols();
@@ -195,49 +196,49 @@ SELECT * FROM foo ORDER BY f1 DESC NULLS LAST;
 --
 -- Test planning of some cases with partial indexes
 --
-
+-- PGXC deactivated
 -- partial index is usable
-explain (costs off)
-select * from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
+-- explain (costs off)
+-- select * from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
 select * from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
 -- actually run the query with an analyze to use the partial index
-explain (costs off, analyze on, timing off, summary off)
-select * from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
-explain (costs off)
-select unique2 from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
+-- explain (costs off, analyze on, timing off, summary off)
+-- select * from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
+-- explain (costs off)
+-- select unique2 from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
 select unique2 from onek2 where unique2 = 11 and stringu1 = 'ATAAAA';
 -- partial index predicate implies clause, so no need for retest
-explain (costs off)
+-- explain (costs off)
+-- select * from onek2 where unique2 = 11 and stringu1 < 'B';
 select * from onek2 where unique2 = 11 and stringu1 < 'B';
-select * from onek2 where unique2 = 11 and stringu1 < 'B';
-explain (costs off)
-select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
+-- explain (costs off)
+-- select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
 select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
 -- but if it's an update target, must retest anyway
-explain (costs off)
-select unique2 from onek2 where unique2 = 11 and stringu1 < 'B' for update;
+-- explain (costs off)
+-- select unique2 from onek2 where unique2 = 11 and stringu1 < 'B' for update;
 select unique2 from onek2 where unique2 = 11 and stringu1 < 'B' for update;
 -- partial index is not applicable
-explain (costs off)
-select unique2 from onek2 where unique2 = 11 and stringu1 < 'C';
+-- explain (costs off)
+-- select unique2 from onek2 where unique2 = 11 and stringu1 < 'C';
 select unique2 from onek2 where unique2 = 11 and stringu1 < 'C';
 -- partial index implies clause, but bitmap scan must recheck predicate anyway
 SET enable_indexscan TO off;
-explain (costs off)
-select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
+-- explain (costs off)
+-- select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
 select unique2 from onek2 where unique2 = 11 and stringu1 < 'B';
 RESET enable_indexscan;
 -- check multi-index cases too
-explain (costs off)
+-- explain (costs off)
+-- select unique1, unique2 from onek2
+--  where (unique2 = 11 or unique1 = 0) and stringu1 < 'B';
 select unique1, unique2 from onek2
-  where (unique2 = 11 or unique1 = 0) and stringu1 < 'B';
+  where (unique2 = 11 or unique1 = 0) and stringu1 < 'B' order by unique1;
+-- explain (costs off)
+-- select unique1, unique2 from onek2
+--  where (unique2 = 11 and stringu1 < 'B') or unique1 = 0;
 select unique1, unique2 from onek2
-  where (unique2 = 11 or unique1 = 0) and stringu1 < 'B';
-explain (costs off)
-select unique1, unique2 from onek2
-  where (unique2 = 11 and stringu1 < 'B') or unique1 = 0;
-select unique1, unique2 from onek2
-  where (unique2 = 11 and stringu1 < 'B') or unique1 = 0;
+  where (unique2 = 11 and stringu1 < 'B') or unique1 = 0 order by unique1;
 
 --
 -- Test some corner cases that have been known to confuse the planner

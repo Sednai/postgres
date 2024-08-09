@@ -1,10 +1,10 @@
 --
 -- Test inheritance features
 --
-CREATE TABLE a (aa TEXT);
-CREATE TABLE b (bb TEXT) INHERITS (a);
-CREATE TABLE c (cc TEXT) INHERITS (a);
-CREATE TABLE d (dd TEXT) INHERITS (b,c,a);
+CREATE TABLE a (aa TEXT) distribute by roundrobin;
+CREATE TABLE b (bb TEXT) INHERITS (a) distribute by roundrobin;
+CREATE TABLE c (cc TEXT) INHERITS (a) distribute by roundrobin;
+CREATE TABLE d (dd TEXT) INHERITS (b,c,a) distribute by roundrobin;
 
 INSERT INTO a(aa) VALUES('aaa');
 INSERT INTO a(aa) VALUES('aaaa');
@@ -34,14 +34,26 @@ INSERT INTO d(aa) VALUES('dddddd');
 INSERT INTO d(aa) VALUES('ddddddd');
 INSERT INTO d(aa) VALUES('dddddddd');
 
-SELECT relname, a.* FROM a, pg_class where a.tableoid = pg_class.oid;
-SELECT relname, b.* FROM b, pg_class where b.tableoid = pg_class.oid;
-SELECT relname, c.* FROM c, pg_class where c.tableoid = pg_class.oid;
-SELECT relname, d.* FROM d, pg_class where d.tableoid = pg_class.oid;
-SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
-SELECT relname, b.* FROM ONLY b, pg_class where b.tableoid = pg_class.oid;
-SELECT relname, c.* FROM ONLY c, pg_class where c.tableoid = pg_class.oid;
-SELECT relname, d.* FROM ONLY d, pg_class where d.tableoid = pg_class.oid;
+-- SELECT relname, a.* FROM a, pg_class where a.tableoid = pg_class.oid;
+-- SELECT relname, b.* FROM b, pg_class where b.tableoid = pg_class.oid;
+-- SELECT relname, c.* FROM c, pg_class where c.tableoid = pg_class.oid;
+-- SELECT relname, d.* FROM d, pg_class where d.tableoid = pg_class.oid;
+-- SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
+-- SELECT relname, b.* FROM ONLY b, pg_class where b.tableoid = pg_class.oid;
+-- SELECT relname, c.* FROM ONLY c, pg_class where c.tableoid = pg_class.oid;
+-- -- SELECT relname, d.* FROM ONLY d, pg_class where d.tableoid = pg_class.oid;
+-- In Postgres-XC OIDs are not consistent across the cluster. Hence above
+-- queries do not show any result. Hence in order to ensure data consistency, we
+-- add following SQLs. In case above set of queries start producing valid
+-- results in XC, we should remove the following set
+SELECT * FROM a ORDER BY a.aa;
+SELECT * from b ORDER BY b.aa;
+SELECT * FROM c ORDER BY c.aa;
+SELECT * from d ORDER BY d.aa;
+SELECT * FROM ONLY a ORDER BY a.aa;
+SELECT * from ONLY b ORDER BY b.aa;
+SELECT * FROM ONLY c ORDER BY c.aa;
+SELECT * from ONLY d ORDER BY d.aa;
 
 UPDATE a SET aa='zzzz' WHERE aa='aaaa';
 UPDATE ONLY a SET aa='zzzzz' WHERE aa='aaaaa';
@@ -49,14 +61,26 @@ UPDATE b SET aa='zzz' WHERE aa='aaa';
 UPDATE ONLY b SET aa='zzz' WHERE aa='aaa';
 UPDATE a SET aa='zzzzzz' WHERE aa LIKE 'aaa%';
 
-SELECT relname, a.* FROM a, pg_class where a.tableoid = pg_class.oid;
-SELECT relname, b.* FROM b, pg_class where b.tableoid = pg_class.oid;
-SELECT relname, c.* FROM c, pg_class where c.tableoid = pg_class.oid;
-SELECT relname, d.* FROM d, pg_class where d.tableoid = pg_class.oid;
-SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
-SELECT relname, b.* FROM ONLY b, pg_class where b.tableoid = pg_class.oid;
-SELECT relname, c.* FROM ONLY c, pg_class where c.tableoid = pg_class.oid;
-SELECT relname, d.* FROM ONLY d, pg_class where d.tableoid = pg_class.oid;
+-- SELECT relname, a.* FROM a, pg_class where a.tableoid = pg_class.oid;
+-- SELECT relname, b.* FROM b, pg_class where b.tableoid = pg_class.oid;
+-- SELECT relname, c.* FROM c, pg_class where c.tableoid = pg_class.oid;
+-- SELECT relname, d.* FROM d, pg_class where d.tableoid = pg_class.oid;
+-- SELECT relname, a.* FROM ONLY a, pg_class where a.tableoid = pg_class.oid;
+-- SELECT relname, b.* FROM ONLY b, pg_class where b.tableoid = pg_class.oid;
+-- SELECT relname, c.* FROM ONLY c, pg_class where c.tableoid = pg_class.oid;
+-- SELECT relname, d.* FROM ONLY d, pg_class where d.tableoid = pg_class.oid;
+-- In Postgres-XC OIDs are not consistent across the cluster. Hence above
+-- queries do not show any result. Hence in order to ensure data consistency, we
+-- add following SQLs. In case above set of queries start producing valid
+-- results in XC, we should remove the following set
+SELECT * FROM a ORDER BY a.aa;
+SELECT * from b ORDER BY b.aa;
+SELECT * FROM c ORDER BY c.aa;
+SELECT * from d ORDER BY d.aa;
+SELECT * FROM ONLY a ORDER BY a.aa;
+SELECT * from ONLY b ORDER BY b.aa;
+SELECT * FROM ONLY c ORDER BY c.aa;
+SELECT * from ONLY d ORDER BY d.aa;
 
 UPDATE b SET aa='new';
 

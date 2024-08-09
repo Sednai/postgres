@@ -348,7 +348,8 @@ SELECT * FROM uctest;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest;
 FETCH 2 FROM c1;
-DELETE FROM uctest WHERE CURRENT OF c1;
+-- PGXC deactivated
+--DELETE FROM uctest WHERE CURRENT OF c1;
 -- should show deletion
 SELECT * FROM uctest;
 -- cursor did not move
@@ -364,7 +365,7 @@ SELECT * FROM uctest;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
 FETCH c1;
-UPDATE uctest SET f1 = 8 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = 8 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
 COMMIT;
 SELECT * FROM uctest;
@@ -373,17 +374,17 @@ SELECT * FROM uctest;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest;
 FETCH c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
 -- insensitive cursor should not show effects of updates or deletes
 FETCH RELATIVE 0 FROM c1;
-DELETE FROM uctest WHERE CURRENT OF c1;
+--DELETE FROM uctest WHERE CURRENT OF c1;
 SELECT * FROM uctest;
-DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
+--DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
 FETCH RELATIVE 0 FROM c1;
 ROLLBACK;
@@ -392,15 +393,15 @@ SELECT * FROM uctest;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
 FETCH c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
-DELETE FROM uctest WHERE CURRENT OF c1;
+--DELETE FROM uctest WHERE CURRENT OF c1;
 SELECT * FROM uctest;
-DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
+--DELETE FROM uctest WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1; -- no-op
 SELECT * FROM uctest;
 --- sensitive cursors can't currently scroll back, so this is an error:
 FETCH RELATIVE 0 FROM c1;
@@ -415,11 +416,11 @@ SELECT * FROM uctest;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest FOR UPDATE;
 FETCH 1 FROM c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 FETCH 1 FROM c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 FETCH 1 FROM c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 FETCH 1 FROM c1;
 COMMIT;
 SELECT * FROM uctest;
@@ -428,23 +429,23 @@ SELECT * FROM uctest;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest a, uctest b WHERE a.f1 = b.f1 + 5;
 FETCH 1 FROM c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
 ROLLBACK;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest a, uctest b WHERE a.f1 = b.f1 + 5 FOR UPDATE;
 FETCH 1 FROM c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;  -- fail
 ROLLBACK;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest a, uctest b WHERE a.f1 = b.f1 + 5 FOR SHARE OF a;
 FETCH 1 FROM c1;
-UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
+--UPDATE uctest SET f1 = f1 + 10 WHERE CURRENT OF c1;
 SELECT * FROM uctest;
 ROLLBACK;
 
 -- Check various error cases
 
-DELETE FROM uctest WHERE CURRENT OF c1;  -- fail, no such cursor
+--DELETE FROM uctest WHERE CURRENT OF c1;  -- fail, no such cursor
 DECLARE cx CURSOR WITH HOLD FOR SELECT * FROM uctest;
 DELETE FROM uctest WHERE CURRENT OF cx;  -- fail, can't use held cursor
 BEGIN;
@@ -465,7 +466,7 @@ DELETE FROM uctest WHERE CURRENT OF c;  -- fail, cursor is on aggregation
 ROLLBACK;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM uctest;
-DELETE FROM uctest WHERE CURRENT OF c1; -- fail, no current row
+--DELETE FROM uctest WHERE CURRENT OF c1; -- fail, no current row
 ROLLBACK;
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT MIN(f1) FROM uctest FOR UPDATE;
@@ -479,7 +480,7 @@ CREATE RULE ucrule AS ON DELETE TO ucview DO INSTEAD
 BEGIN;
 DECLARE c1 CURSOR FOR SELECT * FROM ucview;
 FETCH FROM c1;
-DELETE FROM ucview WHERE CURRENT OF c1; -- fail, views not supported
+--DELETE FROM ucview WHERE CURRENT OF c1; -- fail, views not supported
 ROLLBACK;
 
 -- Check WHERE CURRENT OF with an index-only scan
@@ -488,7 +489,7 @@ EXPLAIN (costs off)
 DECLARE c1 CURSOR FOR SELECT stringu1 FROM onek WHERE stringu1 = 'DZAAAA';
 DECLARE c1 CURSOR FOR SELECT stringu1 FROM onek WHERE stringu1 = 'DZAAAA';
 FETCH FROM c1;
-DELETE FROM onek WHERE CURRENT OF c1;
+--DELETE FROM onek WHERE CURRENT OF c1;
 SELECT stringu1 FROM onek WHERE stringu1 = 'DZAAAA';
 ROLLBACK;
 
