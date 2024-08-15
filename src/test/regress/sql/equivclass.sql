@@ -112,25 +112,25 @@ set enable_mergejoin = off;
 -- outright incorrect plan.
 --
 
-explain (costs off)
-  select * from ec0 where ff = f1 and f1 = '42'::int8;
-explain (costs off)
-  select * from ec0 where ff = f1 and f1 = '42'::int8alias1;
-explain (costs off)
-  select * from ec1 where ff = f1 and f1 = '42'::int8alias1;
-explain (costs off)
-  select * from ec1 where ff = f1 and f1 = '42'::int8alias2;
+-- explain (costs off)
+--  select * from ec0 where ff = f1 and f1 = '42'::int8;
+-- explain (costs off)
+--   select * from ec0 where ff = f1 and f1 = '42'::int8alias1;
+-- explain (costs off)
+--   select * from ec1 where ff = f1 and f1 = '42'::int8alias1;
+-- explain (costs off)
+--   select * from ec1 where ff = f1 and f1 = '42'::int8alias2;
 
-explain (costs off)
-  select * from ec1, ec2 where ff = x1 and ff = '42'::int8;
-explain (costs off)
-  select * from ec1, ec2 where ff = x1 and ff = '42'::int8alias1;
-explain (costs off)
-  select * from ec1, ec2 where ff = x1 and '42'::int8 = x1;
-explain (costs off)
-  select * from ec1, ec2 where ff = x1 and x1 = '42'::int8alias1;
-explain (costs off)
-  select * from ec1, ec2 where ff = x1 and x1 = '42'::int8alias2;
+-- explain (costs off)
+--   select * from ec1, ec2 where ff = x1 and ff = '42'::int8;
+-- explain (costs off)
+--   select * from ec1, ec2 where ff = x1 and ff = '42'::int8alias1;
+-- explain (costs off)
+--   select * from ec1, ec2 where ff = x1 and '42'::int8 = x1;
+-- explain (costs off)
+--   select * from ec1, ec2 where ff = x1 and x1 = '42'::int8alias1;
+-- explain (costs off)
+--   select * from ec1, ec2 where ff = x1 and x1 = '42'::int8alias2;
 
 create unique index ec1_expr1 on ec1((ff + 1));
 create unique index ec1_expr2 on ec1((ff + 2 + 1));

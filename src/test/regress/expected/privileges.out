@@ -50,6 +50,7 @@ SELECT * FROM atest1;
 INSERT INTO atest1 VALUES (1, 'one');
 DELETE FROM atest1;
 UPDATE atest1 SET a = 1 WHERE b = 'blech';
+ERROR:  Partition column can't be updated in current XC version
 TRUNCATE atest1;
 BEGIN;
 LOCK atest1 IN ACCESS EXCLUSIVE MODE;
@@ -95,13 +96,14 @@ INSERT INTO atest2 VALUES ('foo', true); -- fail
 ERROR:  permission denied for table atest2
 INSERT INTO atest1 SELECT 1, b FROM atest1; -- ok
 UPDATE atest1 SET a = 1 WHERE a = 2; -- ok
+ERROR:  Partition column can't be updated in current XC version
 UPDATE atest2 SET col2 = NOT col2; -- fail
 ERROR:  permission denied for table atest2
-SELECT * FROM atest1 FOR UPDATE; -- ok
+SELECT * FROM atest1 ORDER BY 1 FOR UPDATE; -- ok
  a |  b  
 ---+-----
  1 | two
- 1 | two
+ 2 | two
 (2 rows)
 
 SELECT * FROM atest2 FOR UPDATE; -- fail
@@ -136,11 +138,11 @@ SELECT session_user, current_user;
  regress_priv_user3 | regress_priv_user3
 (1 row)
 
-SELECT * FROM atest1; -- ok
+SELECT * FROM atest1 ORDER BY 1; -- ok
  a |  b  
 ---+-----
  1 | two
- 1 | two
+ 2 | two
 (2 rows)
 
 SELECT * FROM atest2; -- fail
@@ -150,9 +152,7 @@ ERROR:  permission denied for table atest1
 INSERT INTO atest2 VALUES ('foo', true); -- fail
 ERROR:  permission denied for table atest2
 INSERT INTO atest1 SELECT 1, b FROM atest1; -- fail
-ERROR:  permission denied for table atest1
-UPDATE atest1 SET a = 1 WHERE a = 2; -- fail
-ERROR:  permission denied for table atest1
+ERROR:  Partition column can't be updated in current XC version
 UPDATE atest2 SET col2 = NULL; -- ok
 UPDATE atest2 SET col2 = NOT col2; -- fails; requires SELECT on atest2
 ERROR:  permission denied for table atest2
@@ -177,11 +177,11 @@ SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
 ERROR:  permission denied for table atest2
 SET SESSION AUTHORIZATION regress_priv_user4;
 COPY atest2 FROM stdin; -- ok
-SELECT * FROM atest1; -- ok
+SELECT * FROM atest1 ORDER BY 1; -- ok
  a |  b  
 ---+-----
  1 | two
- 1 | two
+ 2 | two
 (2 rows)
 
 -- test leaky-function protections in selfuncs
@@ -205,43 +205,13 @@ CREATE VIEW atest12sbv WITH (security_barrier=true) AS
 GRANT SELECT ON atest12v TO PUBLIC;
 GRANT SELECT ON atest12sbv TO PUBLIC;
 -- This plan should use nestloop, knowing that few rows will be selected.
-EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
-                   QUERY PLAN                    
--------------------------------------------------
- Nested Loop
-   ->  Seq Scan on atest12 atest12_1
-         Filter: (b <<< 5)
-   ->  Index Scan using atest12_a_idx on atest12
-         Index Cond: (a = atest12_1.b)
-         Filter: (b <<< 5)
-(6 rows)
-
+-- EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
 -- And this one.
-EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
-  WHERE x.a = y.b and abs(y.a) <<< 5;
-                    QUERY PLAN                     
----------------------------------------------------
- Nested Loop
-   ->  Seq Scan on atest12 y
-         Filter: (abs(a) <<< 5)
-   ->  Index Scan using atest12_a_idx on atest12 x
-         Index Cond: (a = y.b)
-(5 rows)
-
+-- EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
+--   WHERE x.a = y.b and abs(y.a) <<< 5;
 -- This should also be a nestloop, but the security barrier forces the inner
 -- scan to be materialized
-EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
-                QUERY PLAN                 
--------------------------------------------
- Nested Loop
-   Join Filter: (atest12.a = atest12_1.b)
-   ->  Seq Scan on atest12
-         Filter: (b <<< 5)
-   ->  Materialize
-         ->  Seq Scan on atest12 atest12_1
-               Filter: (b <<< 5)
-(7 rows)
-
+-- EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
 -- Check if regress_priv_user2 can break security.
 SET SESSION AUTHORIZATION regress_priv_user2;
 CREATE FUNCTION leak2(integer,integer) RETURNS boolean

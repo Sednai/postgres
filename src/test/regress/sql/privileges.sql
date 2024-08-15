@@ -80,7 +80,7 @@ INSERT INTO atest2 VALUES ('foo', true); -- fail
 INSERT INTO atest1 SELECT 1, b FROM atest1; -- ok
 UPDATE atest1 SET a = 1 WHERE a = 2; -- ok
 UPDATE atest2 SET col2 = NOT col2; -- fail
-SELECT * FROM atest1 FOR UPDATE; -- ok
+SELECT * FROM atest1 ORDER BY 1 FOR UPDATE; -- ok
 SELECT * FROM atest2 FOR UPDATE; -- fail
 DELETE FROM atest2; -- fail
 TRUNCATE atest2; -- fail
@@ -98,7 +98,7 @@ SELECT * FROM atest2 WHERE ( col1 IN ( SELECT b FROM atest1 ) );
 SET SESSION AUTHORIZATION regress_priv_user3;
 SELECT session_user, current_user;
 
-SELECT * FROM atest1; -- ok
+SELECT * FROM atest1 ORDER BY 1; -- ok
 SELECT * FROM atest2; -- fail
 INSERT INTO atest1 VALUES (2, 'two'); -- fail
 INSERT INTO atest2 VALUES ('foo', true); -- fail

@@ -122,7 +122,7 @@ CREATE TEMP TABLE z (b TEXT, PRIMARY KEY(aa, b)) inherits (a);
 INSERT INTO z VALUES (NULL, 'text'); -- should fail
 
 -- Check inherited UPDATE with all children excluded
-create table some_tab (a int, b int);
+create table some_tab (a int, b int) distribute by replication;
 create table some_tab_child () inherits (some_tab);
 insert into some_tab_child values(1,2);
 

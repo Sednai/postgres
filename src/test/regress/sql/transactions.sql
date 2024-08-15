@@ -31,7 +31,7 @@ ABORT;
 SELECT oid FROM pg_class WHERE relname = 'disappear';
 
 -- should have members again
-SELECT * FROM aggtest;
+SELECT * FROM aggtest ORDER BY a;
 
 
 -- Read-only tests

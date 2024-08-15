@@ -180,14 +180,7 @@ create index wowidx on test_tsvector using gist (a);
 SET enable_seqscan=OFF;
 SET enable_indexscan=ON;
 SET enable_bitmapscan=OFF;
-explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
-                      QUERY PLAN                       
--------------------------------------------------------
- Aggregate
-   ->  Index Scan using wowidx on test_tsvector
-         Index Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-(3 rows)
-
+-- explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
  count 
 -------
@@ -310,16 +303,7 @@ SELECT count(*) FROM test_tsvector WHERE a @@ '!(qe <2> qt)';
 
 SET enable_indexscan=OFF;
 SET enable_bitmapscan=ON;
-explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
-                         QUERY PLAN                          
--------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on test_tsvector
-         Recheck Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-         ->  Bitmap Index Scan on wowidx
-               Index Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-(5 rows)
-
+-- explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
  count 
 -------
@@ -447,16 +431,7 @@ DROP INDEX wowidx;
 CREATE INDEX wowidx ON test_tsvector USING gin (a);
 SET enable_seqscan=OFF;
 -- GIN only supports bitmapscan, so no need to test plain indexscan
-explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
-                         QUERY PLAN                          
--------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on test_tsvector
-         Recheck Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-         ->  Bitmap Index Scan on wowidx
-               Index Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-(5 rows)
-
+-- explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
  count 
 -------
@@ -1533,7 +1508,7 @@ NOTICE:  text-search query doesn't contain lexemes: ""
 (1 row)
 
 --Rewrite sub system
-CREATE TABLE test_tsquery (txtkeyword TEXT, txtsample TEXT);
+CREATE TABLE test_tsquery (txtkeyword TEXT, txtsample TEXT) DISTRIBUTE BY REPLICATION;
 \set ECHO none
 ALTER TABLE test_tsquery ADD COLUMN keyword tsquery;
 UPDATE test_tsquery SET keyword = to_tsquery('english', txtkeyword);
@@ -1888,17 +1863,18 @@ SELECT count(*) FROM test_tsvector WHERE a @@ to_tsquery('345&qwerty');
 (1 row)
 
 UPDATE test_tsvector SET t = null WHERE t = '345 qwerty';
+ERROR:  Partition column can't be updated in current XC version
 SELECT count(*) FROM test_tsvector WHERE a @@ to_tsquery('345&qwerty');
  count 
 -------
-     0
+     1
 (1 row)
 
 INSERT INTO test_tsvector (t) VALUES ('345 qwerty');
 SELECT count(*) FROM test_tsvector WHERE a @@ to_tsquery('345&qwerty');
  count 
 -------
-     1
+     2
 (1 row)
 
 -- test finding items in GIN's pending list

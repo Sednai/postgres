@@ -1,4 +1,4 @@
-CREATE TABLE indtoasttest(descr text, cnt int DEFAULT 0, f1 text, f2 text);
+CREATE TABLE indtoasttest(descr text, cnt int DEFAULT 0, f1 text, f2 text) DISTRIBUTE BY REPLICATION;
 
 INSERT INTO indtoasttest(descr, f1, f2) VALUES('two-compressed', repeat('1234567890',1000), repeat('1234567890',1000));
 INSERT INTO indtoasttest(descr, f1, f2) VALUES('two-toasted', repeat('1234567890',30000), repeat('1234567890',50000));

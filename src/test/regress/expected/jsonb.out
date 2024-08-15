@@ -376,11 +376,12 @@ SELECT jsonb_agg(q ORDER BY x, y)
 (1 row)
 
 UPDATE rows SET x = NULL WHERE x = 1;
+ERROR:  Partition column can't be updated in current XC version
 SELECT jsonb_agg(q ORDER BY x NULLS FIRST, y)
   FROM rows q;
-                                jsonb_agg                                 
---------------------------------------------------------------------------
- [{"x": null, "y": "txt1"}, {"x": 2, "y": "txt2"}, {"x": 3, "y": "txt3"}]
+                               jsonb_agg                               
+-----------------------------------------------------------------------
+ [{"x": 1, "y": "txt1"}, {"x": 2, "y": "txt2"}, {"x": 3, "y": "txt3"}]
 (1 row)
 
 -- jsonb extraction functions
@@ -3195,7 +3196,7 @@ select * from nestjsonb where j @> '{"c":3}';
  {"a": [["b", {"x": 1}], ["b", {"x": 2}]], "c": 3}
 (1 row)
 
-select * from nestjsonb where j @> '[[14]]';
+select * from nestjsonb where j @> '[[14]]' order by 1;
         j        
 -----------------
  [[14, 2, 3]]
@@ -3216,7 +3217,7 @@ select * from nestjsonb where j @> '{"c":3}';
  {"a": [["b", {"x": 1}], ["b", {"x": 2}]], "c": 3}
 (1 row)
 
-select * from nestjsonb where j @> '[[14]]';
+select * from nestjsonb where j @> '[[14]]' order by 1;
         j        
 -----------------
  [[14, 2, 3]]

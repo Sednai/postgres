@@ -27,6 +27,7 @@
 #include "pgxc/pgxc.h"
 #include "pgxc/pgxcnode.h"
 #include "executor/spi.h"
+#include "utils/lsyscache.h"
 #endif
 #include "storage/fd.h"
 #include "utils/acl.h"

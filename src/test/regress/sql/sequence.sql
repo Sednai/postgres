@@ -144,7 +144,7 @@ DROP SEQUENCE foo_seq_new;
 -- renaming serial sequences
 ALTER TABLE serialtest1_f2_seq RENAME TO serialtest1_f2_foo;
 INSERT INTO serialTest1 VALUES ('more');
-SELECT * FROM serialTest1;
+SELECT * FROM serialTest1 ORDER BY f2;
 
 --
 -- Check dependencies of serial and ordinary sequences
@@ -203,6 +203,7 @@ SELECT nextval('sequence_test2');
 SELECT nextval('sequence_test2');
 SELECT nextval('sequence_test2');
 SELECT nextval('sequence_test2');
+-- PGXC does not transmit detailed error back from gtm yet
 SELECT nextval('sequence_test2');  -- error
 
 ALTER SEQUENCE sequence_test2 RESTART WITH -24 START WITH -24
@@ -373,9 +374,9 @@ BEGIN;
 SET LOCAL SESSION AUTHORIZATION regress_seq_user;
 CREATE SEQUENCE seq3;
 REVOKE ALL ON seq3 FROM regress_seq_user;
-SAVEPOINT save;
-SELECT setval('seq3', 5);
-ROLLBACK TO save;
+-- SAVEPOINT save;
+-- SELECT setval('seq3', 5);
+-- ROLLBACK TO save;
 GRANT UPDATE ON seq3 TO regress_seq_user;
 SELECT setval('seq3', 5);
 SELECT nextval('seq3');

@@ -53,6 +53,7 @@ SET datestyle = 'German, DMY';
 SHOW datestyle;
 SELECT '2006-08-13 12:34:56'::timestamptz;
 -- ROLLBACK TO first_sp;
+SET datestyle = 'MDY';
 SHOW datestyle;
 SELECT '2006-08-13 12:34:56'::timestamptz;
 -- SAVEPOINT second_sp;

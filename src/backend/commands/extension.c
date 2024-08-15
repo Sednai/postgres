@@ -1473,9 +1473,13 @@ CreateExtensionInternal(char *extensionName,
 			csstmt->authrole = NULL;	/* will be created by current user */
 			csstmt->schemaElts = NIL;
 			csstmt->if_not_exists = false;
+#ifdef PGXC
+			CreateSchemaCommand(csstmt, "(generated CREATE SCHEMA command)",
+								-1, -1, true);
+#else
 			CreateSchemaCommand(csstmt, "(generated CREATE SCHEMA command)",
 								-1, -1);
-
+#endif
 			/*
 			 * CreateSchemaCommand includes CommandCounterIncrement, so new
 			 * schema is now visible.

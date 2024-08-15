@@ -1189,11 +1189,12 @@ ProcessSequenceGetNextCommand(Port *myport, StringInfo message, bool is_backup)
 	seqkey.gsk_key = (char *)pq_getmsgbytes(message, seqkey.gsk_keylen);
 
 	seqval = GTM_SeqGetNext(&seqkey);
-	if (!SEQVAL_IS_VALID(seqval))
+	if (!SEQVAL_IS_VALID(seqval)) {
+		// PGXC TODO: Send error msg to client 
 		ereport(ERROR,
 				(ERANGE,
 				 errmsg("Can not get current value of the sequence")));
-
+	}
 	elog(DEBUG1, "Getting next value %ld for sequence %s", seqval, seqkey.gsk_key);
 
 	if (!is_backup)

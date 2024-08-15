@@ -608,7 +608,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 #ifdef PGXC
 							ereport(ERROR,
 									(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
-									 (errmsg("SAVEPOINT is not yet supported."))));
+									 (errmsg("SAVEPOINT is not yet supported in XC."))));
 #endif
 						RequireTransactionBlock(isTopLevel, "SAVEPOINT");
 						DefineSavepoint(stmt->savepoint_name);
@@ -1166,8 +1166,13 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 					bool is_temp = false;
 
 					/* Launch GRANT on Coordinator if object is a sequence */
-					if ((stmt->objtype == OBJECT_TABLE &&
-						stmt->targtype == ACL_TARGET_OBJECT))
+					if (( 
+						(stmt->objtype == OBJECT_TABLE 
+							|| stmt->objtype == OBJECT_VIEW
+							|| stmt->objtype == OBJECT_MATVIEW
+							|| stmt->objtype == OBJECT_SEQUENCE
+						)
+						&& stmt->targtype == ACL_TARGET_OBJECT))
 					{
 						/*
 						* In case object is a relation, differenciate the case
@@ -2104,19 +2109,36 @@ ProcessUtilitySlow(ParseState *pstate,
 				if (IS_PGXC_COORDINATOR)
 					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
 #endif
-
 				break;
 
 			case T_AlterExtensionStmt:
 				address = ExecAlterExtensionStmt(pstate, (AlterExtensionStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
+
 				break;
 
 			case T_AlterExtensionContentsStmt:
 				address = ExecAlterExtensionContentsStmt((AlterExtensionContentsStmt *) parsetree,
 														 &secondaryObject);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 			case T_CreateFdwStmt:
+#ifdef PGXC
+				/* K.Suzuki, Sep.2nd, 2013
+				 * Moved from standard_ProcessUtility().
+				 */
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Postgres-XC does not support FOREIGN DATA WRAPPER yet"),
+						 errdetail("The feature is not currently supported")));
+#endif
 				address = CreateForeignDataWrapper((CreateFdwStmt *) parsetree);
 				break;
 
@@ -2125,6 +2147,15 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateForeignServerStmt:
+#ifdef PGXC
+				/* K.Suzuki, Sep.2nd, 2013
+				 * Moved from standard_ProcessUtility().
+				 */
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Postgres-XC does not support SERVER yet"),
+						 errdetail("The feature is not currently supported")));
+#endif
 				address = CreateForeignServer((CreateForeignServerStmt *) parsetree);
 				break;
 
@@ -2133,6 +2164,15 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateUserMappingStmt:
+#ifdef PGXC
+				/* K.Suzuki, Sep.2nd, 2013
+				 * Moved from standard_ProcessUtility().
+				 */
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Postgres-XC does not support USER MAPPING yet"),
+						 errdetail("The feature is not currently supported")));
+#endif
 				address = CreateUserMapping((CreateUserMappingStmt *) parsetree);
 				break;
 
@@ -2539,7 +2579,12 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateAmStmt:
-				address = CreateAccessMethod((CreateAmStmt *) parsetree);
+				address = CreateAccessMethod((CreateAmStmt *) parsetree);				
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
+				
 				break;
 
 			case T_CreatePublicationStmt:

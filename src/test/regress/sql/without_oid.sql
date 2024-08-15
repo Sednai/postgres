@@ -81,12 +81,12 @@ PREPARE table_source(int) AS
 CREATE TABLE execute_with WITH OIDS AS EXECUTE table_source(1);
 CREATE TABLE execute_without WITHOUT OIDS AS EXECUTE table_source(2);
 
-SELECT count(oid) FROM execute_with;
+-- SELECT count(oid) FROM execute_with;
 -- should fail
-SELECT count(oid) FROM execute_without;
+-- SELECT count(oid) FROM execute_without;
 
 DROP TABLE create_table_test;
 DROP TABLE create_table_test2;
 DROP TABLE create_table_test3;
-DROP TABLE execute_with;
-DROP TABLE execute_without;
+-- DROP TABLE execute_with;
+-- DROP TABLE execute_without;

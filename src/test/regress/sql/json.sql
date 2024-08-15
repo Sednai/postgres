@@ -97,8 +97,10 @@ CREATE TEMP TABLE rows AS
 SELECT x, 'txt' || x as y
 FROM generate_series(1,3) AS x;
 
+WITH r AS (
 SELECT row_to_json(q,true)
-FROM rows q;
+FROM rows q)
+SELECT * FROM r ORDER by row_to_json->>'x';
 
 SELECT row_to_json(row((select array_agg(x) as d from generate_series(5,10) x)),false);
 

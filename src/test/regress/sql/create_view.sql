@@ -550,9 +550,11 @@ select * from tt17v order by q1,q2;
 select pg_get_viewdef('tt17v', true);
 select * from int8_tbl i where i.* in (values(i.*::int8_tbl)) order by q1,q2;
 
-create table tt15v_log(o tt15v, n tt15v, incr bool);
-create rule updlog as on update to tt15v do also
-  insert into tt15v_log values(old, new, row(old,old) < row(new,new));
+-- PGXC deactivated
+-- Table can not have view as type currently as view not pushed down
+-- create table tt15v_log(o tt15v, n tt15v, incr bool);
+-- create rule updlog as on update to tt15v do also
+--  insert into tt15v_log values(old, new, row(old,old) < row(new,new));
 \d+ tt15v
 
 -- check unique-ification of overlength names

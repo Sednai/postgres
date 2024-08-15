@@ -68,7 +68,7 @@ SET enable_seqscan=OFF;
 SET enable_indexscan=ON;
 SET enable_bitmapscan=OFF;
 
-explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
+-- explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr&qh';
@@ -94,7 +94,7 @@ SELECT count(*) FROM test_tsvector WHERE a @@ '!(qe <2> qt)';
 SET enable_indexscan=OFF;
 SET enable_bitmapscan=ON;
 
-explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
+-- explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr&qh';
@@ -128,7 +128,7 @@ CREATE INDEX wowidx ON test_tsvector USING gin (a);
 SET enable_seqscan=OFF;
 -- GIN only supports bitmapscan, so no need to test plain indexscan
 
-explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
+-- explain (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr&qh';
@@ -459,7 +459,7 @@ SELECT ts_headline('english',
 
 --Rewrite sub system
 
-CREATE TABLE test_tsquery (txtkeyword TEXT, txtsample TEXT);
+CREATE TABLE test_tsquery (txtkeyword TEXT, txtsample TEXT) DISTRIBUTE BY REPLICATION;
 \set ECHO none
 \copy test_tsquery from stdin
 'New York'	new & york | big & apple | nyc

@@ -53,6 +53,7 @@
 #include "tcop/utility.h"
 #include "utils/syscache.h"
 #include "access/htup_details.h"
+#include "utils/ruleutils.h"
 #endif
 
 /* We use a list of these to detect recursion in RewriteQuery */

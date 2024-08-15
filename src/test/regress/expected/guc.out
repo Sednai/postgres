@@ -148,7 +148,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  2006-08-13 12:34:56-07
 (1 row)
 
-SAVEPOINT first_sp;
+-- SAVEPOINT first_sp;
 SET vacuum_cost_delay TO 80;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
@@ -169,7 +169,8 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  13.08.2006 12:34:56 PDT
 (1 row)
 
-ROLLBACK TO first_sp;
+-- ROLLBACK TO first_sp;
+SET datestyle = 'MDY';
 SHOW datestyle;
  DateStyle 
 -----------
@@ -182,7 +183,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  2006-08-13 12:34:56-07
 (1 row)
 
-SAVEPOINT second_sp;
+-- SAVEPOINT second_sp;
 SET vacuum_cost_delay TO 90;
 SET datestyle = 'SQL, YMD';
 SHOW datestyle;
@@ -197,7 +198,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  08/13/2006 12:34:56 PDT
 (1 row)
 
-SAVEPOINT third_sp;
+-- SAVEPOINT third_sp;
 SET vacuum_cost_delay TO 100;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
@@ -218,7 +219,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  Sun Aug 13 12:34:56 2006 PDT
 (1 row)
 
-ROLLBACK TO third_sp;
+-- ROLLBACK TO third_sp;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
 -------------------
@@ -237,7 +238,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  08/13/2006 12:34:56 PDT
 (1 row)
 
-ROLLBACK TO second_sp;
+-- ROLLBACK TO second_sp;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
 -------------------
@@ -295,7 +296,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  2006-08-13 12:34:56-07
 (1 row)
 
-SAVEPOINT sp;
+-- SAVEPOINT sp;
 SET LOCAL vacuum_cost_delay TO 30;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
@@ -316,7 +317,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  Sun Aug 13 12:34:56 2006 PDT
 (1 row)
 
-ROLLBACK TO sp;
+-- ROLLBACK TO sp;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
 -------------------
@@ -374,7 +375,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  2006-08-13 12:34:56-07
 (1 row)
 
-SAVEPOINT sp;
+-- SAVEPOINT sp;
 SET LOCAL vacuum_cost_delay TO 30;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
@@ -395,7 +396,7 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
  Sun Aug 13 12:34:56 2006 PDT
 (1 row)
 
-RELEASE SAVEPOINT sp;
+-- RELEASE SAVEPOINT sp;
 SHOW vacuum_cost_delay;
  vacuum_cost_delay 
 -------------------

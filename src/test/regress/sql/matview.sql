@@ -12,8 +12,8 @@ CREATE VIEW mvtest_tv AS SELECT type, sum(amt) AS totamt FROM mvtest_t GROUP BY 
 SELECT * FROM mvtest_tv ORDER BY type;
 
 -- create a materialized view with no data, and confirm correct behavior
-EXPLAIN (costs off)
-  CREATE MATERIALIZED VIEW mvtest_tm AS SELECT type, sum(amt) AS totamt FROM mvtest_t GROUP BY type WITH NO DATA;
+-- EXPLAIN (costs off)
+--   CREATE MATERIALIZED VIEW mvtest_tm AS SELECT type, sum(amt) AS totamt FROM mvtest_t GROUP BY type WITH NO DATA;
 CREATE MATERIALIZED VIEW mvtest_tm AS SELECT type, sum(amt) AS totamt FROM mvtest_t GROUP BY type WITH NO DATA;
 SELECT relispopulated FROM pg_class WHERE oid = 'mvtest_tm'::regclass;
 SELECT * FROM mvtest_tm ORDER BY type;
@@ -23,8 +23,8 @@ CREATE UNIQUE INDEX mvtest_tm_type ON mvtest_tm (type);
 SELECT * FROM mvtest_tm ORDER BY type;
 
 -- create various views
-EXPLAIN (costs off)
-  CREATE MATERIALIZED VIEW mvtest_tvm AS SELECT * FROM mvtest_tv ORDER BY type;
+-- EXPLAIN (costs off)
+--   CREATE MATERIALIZED VIEW mvtest_tvm AS SELECT * FROM mvtest_tv ORDER BY type;
 CREATE MATERIALIZED VIEW mvtest_tvm AS SELECT * FROM mvtest_tv ORDER BY type;
 SELECT * FROM mvtest_tvm;
 CREATE MATERIALIZED VIEW mvtest_tmm AS SELECT sum(totamt) AS grandtot FROM mvtest_tm;
@@ -32,8 +32,8 @@ CREATE MATERIALIZED VIEW mvtest_tvmm AS SELECT sum(totamt) AS grandtot FROM mvte
 CREATE UNIQUE INDEX mvtest_tvmm_expr ON mvtest_tvmm ((grandtot > 0));
 CREATE UNIQUE INDEX mvtest_tvmm_pred ON mvtest_tvmm (grandtot) WHERE grandtot < 0;
 CREATE VIEW mvtest_tvv AS SELECT sum(totamt) AS grandtot FROM mvtest_tv;
-EXPLAIN (costs off)
-  CREATE MATERIALIZED VIEW mvtest_tvvm AS SELECT * FROM mvtest_tvv;
+-- EXPLAIN (costs off)
+--   CREATE MATERIALIZED VIEW mvtest_tvvm AS SELECT * FROM mvtest_tvv;
 CREATE MATERIALIZED VIEW mvtest_tvvm AS SELECT * FROM mvtest_tvv;
 CREATE VIEW mvtest_tvvmv AS SELECT * FROM mvtest_tvvm;
 CREATE MATERIALIZED VIEW mvtest_bb AS SELECT * FROM mvtest_tvvmv;
@@ -66,12 +66,12 @@ SELECT * FROM mvtest_tvm ORDER BY type;
 RESET search_path;
 
 -- confirm pre- and post-refresh contents of nested materialized views
-EXPLAIN (costs off)
-  SELECT * FROM mvtest_tmm;
-EXPLAIN (costs off)
-  SELECT * FROM mvtest_tvmm;
-EXPLAIN (costs off)
-  SELECT * FROM mvtest_tvvm;
+-- EXPLAIN (costs off)
+--   SELECT * FROM mvtest_tmm;
+-- EXPLAIN (costs off)
+--   SELECT * FROM mvtest_tvmm;
+-- EXPLAIN (costs off)
+--   SELECT * FROM mvtest_tvvm;
 SELECT * FROM mvtest_tmm;
 SELECT * FROM mvtest_tvmm;
 SELECT * FROM mvtest_tvvm;

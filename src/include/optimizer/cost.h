@@ -106,6 +106,9 @@ extern void cost_tableexprscan(Path *path, PlannerInfo *root,
 				   RelOptInfo *baserel, ParamPathInfo *param_info);
 extern void cost_valuesscan(Path *path, PlannerInfo *root,
 				RelOptInfo *baserel, ParamPathInfo *param_info);
+#ifdef PGXC
+extern void cost_remotequery(RemoteQueryPath *rqpath, PlannerInfo *root, RelOptInfo *rel);
+#endif
 extern void cost_tablefuncscan(Path *path, PlannerInfo *root,
 				   RelOptInfo *baserel, ParamPathInfo *param_info);
 extern void cost_ctescan(Path *path, PlannerInfo *root,

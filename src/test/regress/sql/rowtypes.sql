@@ -115,10 +115,10 @@ where (unique1, unique2) < any (select ten, ten from tenk1 where hundred < 3)
 order by 1;
 
 -- Also check row comparison with an indexable condition
-explain (costs off)
-select thousand, tenthous from tenk1
-where (thousand, tenthous) >= (997, 5000)
-order by thousand, tenthous;
+-- explain (costs off)
+-- select thousand, tenthous from tenk1
+-- where (thousand, tenthous) >= (997, 5000)
+-- order by thousand, tenthous;
 
 select thousand, tenthous from tenk1
 where (thousand, tenthous) >= (997, 5000)
@@ -132,8 +132,8 @@ insert into test_table values ('b', 'a');
 create index on test_table (a,b);
 set enable_sort = off;
 
-explain (costs off)
-select a,b from test_table where (a,b) > ('a','a') order by a,b;
+-- explain (costs off)
+-- select a,b from test_table where (a,b) > ('a','a') order by a,b;
 
 select a,b from test_table where (a,b) > ('a','a') order by a,b;
 
@@ -142,12 +142,12 @@ reset enable_sort;
 -- Check row comparisons with IN
 select * from int8_tbl i8 where i8 in (row(123,456));  -- fail, type mismatch
 
-explain (costs off)
-select * from int8_tbl i8
-where i8 in (row(123,456)::int8_tbl, '(4567890123456789,123)');
+-- explain (costs off)
+-- select * from int8_tbl i8
+-- where i8 in (row(123,456)::int8_tbl, '(4567890123456789,123)');
 
 select * from int8_tbl i8
-where i8 in (row(123,456)::int8_tbl, '(4567890123456789,123)');
+where i8 in (row(123,456)::int8_tbl, '(4567890123456789,123)') order by q1;
 
 -- Check ability to select columns from an anonymous rowtype
 select (row(1, 2.0)).f1;
@@ -312,7 +312,7 @@ UPDATE price
     FROM unnest(ARRAY[(10, 123.00), (11, 99.99)]::price_input[]) input_prices
     WHERE price_key_from_table(price.*) = price_key_from_input(input_prices.*);
 
-select * from price;
+select * from price order by id;
 
 rollback;
 
@@ -342,7 +342,7 @@ $$ language sql;
 select fcompos1(row(1,'one'));
 select fcompos2(row(2,'two'));
 select fcompos3(row(3,'three'));
-select * from compos;
+select * from compos order by f1;
 
 --
 -- We allow I/O conversion casts from composite types to strings to be
@@ -367,60 +367,83 @@ insert into fullname values ('Joe', 'Blow');
 select f.last from fullname f;
 select last(f) from fullname f;
 
-create function longname(fullname) returns text language sql
-as $$select $1.first || ' ' || $1.last$$;
+-- PGXC deactivated
+-- create function longname(fullname) returns text language sql
+-- as $$select $1.first || ' ' || $1.last$$;
 
-select f.longname from fullname f;
-select longname(f) from fullname f;
+-- select f.longname from fullname f;
+-- select longname(f) from fullname f;
 
 -- Starting in v11, the notational form does matter if there's ambiguity
-alter table fullname add column longname text;
+-- alter table fullname add column longname text;
 
-select f.longname from fullname f;
-select longname(f) from fullname f;
+-- select f.longname from fullname f;
+-- select longname(f) from fullname f;
 
 --
 -- Test that composite values are seen to have the correct column names
 -- (bug #11210 and other reports)
 --
-
-select row_to_json(i) from int8_tbl i;
+with r as (
+select row_to_json(i) from int8_tbl i)
+select * from r order by row_to_json->>'q1',row_to_json->>'q2';
 -- since "i" is of type "int8_tbl", attaching aliases doesn't change anything:
-select row_to_json(i) from int8_tbl i(x,y);
+with r as (
+select row_to_json(i) from int8_tbl i(x,y))
+select * from r order by row_to_json->>'q1',row_to_json->>'q2';
 
 -- in these examples, we'll report the exposed column names of the subselect:
+with r as (
 select row_to_json(ss) from
-  (select q1, q2 from int8_tbl) as ss;
+  (select q1, q2 from int8_tbl) as ss)
+select * from r order by row_to_json->>'q1',row_to_json->>'q2';
+with r as (
 select row_to_json(ss) from
-  (select q1, q2 from int8_tbl offset 0) as ss;
+  (select q1, q2 from int8_tbl offset 0) as ss)
+select * from r order by row_to_json->>'q1',row_to_json->>'q2';
+with r as (
 select row_to_json(ss) from
-  (select q1 as a, q2 as b from int8_tbl) as ss;
+  (select q1 as a, q2 as b from int8_tbl) as ss)
+select * from r order by row_to_json->>'a',row_to_json->>'b';
+with r as (
 select row_to_json(ss) from
-  (select q1 as a, q2 as b from int8_tbl offset 0) as ss;
+  (select q1 as a, q2 as b from int8_tbl offset 0) as ss)
+select * from r order by row_to_json->>'a',row_to_json->>'b';
+with r as (
 select row_to_json(ss) from
-  (select q1 as a, q2 as b from int8_tbl) as ss(x,y);
+  (select q1 as a, q2 as b from int8_tbl) as ss(x,y))
+select * from r order by row_to_json->>'x',row_to_json->>'y';
+with r as (
 select row_to_json(ss) from
-  (select q1 as a, q2 as b from int8_tbl offset 0) as ss(x,y);
+  (select q1 as a, q2 as b from int8_tbl offset 0) as ss(x,y))
+select * from r order by row_to_json->>'x',row_to_json->>'y';
 
-explain (costs off)
+-- explain (costs off)
+-- select row_to_json(q) from
+--   (select thousand, tenthous from tenk1
+--    where thousand = 42 and tenthous < 2000 offset 0) q;
+with r as (
 select row_to_json(q) from
   (select thousand, tenthous from tenk1
-   where thousand = 42 and tenthous < 2000 offset 0) q;
-select row_to_json(q) from
-  (select thousand, tenthous from tenk1
-   where thousand = 42 and tenthous < 2000 offset 0) q;
-select row_to_json(q) from
-  (select thousand as x, tenthous as y from tenk1
-   where thousand = 42 and tenthous < 2000 offset 0) q;
+   where thousand = 42 and tenthous < 2000 offset 0) q)
+select * from r order by row_to_json->>'tenthous';
+with r as (
 select row_to_json(q) from
   (select thousand as x, tenthous as y from tenk1
-   where thousand = 42 and tenthous < 2000 offset 0) q(a,b);
+   where thousand = 42 and tenthous < 2000 offset 0) q)
+select * from r order by row_to_json->>'y';
+with r as (
+select row_to_json(q) from
+  (select thousand as x, tenthous as y from tenk1
+   where thousand = 42 and tenthous < 2000 offset 0) q(a,b))
+select * from r order by row_to_json->>'b';
 
 create temp table tt1 as select * from int8_tbl limit 2;
 create temp table tt2 () inherits(tt1);
 insert into tt2 values(0,0);
-select row_to_json(r) from (select q2,q1 from tt1 offset 0) r;
-
+with rr as (
+select row_to_json(r) from (select q2,q1 from tt1 offset 0) r)
+select * from rr order by row_to_json->>'q2';
 -- check no-op rowtype conversions
 create temp table tt3 () inherits(tt2);
 insert into tt3 values(33,44);

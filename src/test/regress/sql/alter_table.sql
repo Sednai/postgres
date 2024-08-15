@@ -251,7 +251,7 @@ RESET ROLE;
 set enable_seqscan to off;
 set enable_bitmapscan to off;
 -- 5 values, sorted
-SELECT unique1 FROM tenk1 WHERE unique1 < 5;
+SELECT unique1 FROM tenk1 WHERE unique1 < 5 order by unique1;
 reset enable_seqscan;
 reset enable_bitmapscan;
 

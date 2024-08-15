@@ -124,7 +124,7 @@ create index gist_tbl_multi_index on gist_tbl using gist (p, c);
 -- execute the same
 select b, p from gist_tbl
 where b <@ box(point(4.5, 4.5), point(5.5, 5.5))
-and p <@ box(point(5,5), point(6, 6));
+and p <@ box(point(5,5), point(6, 6)) order by (b[0])[0];
 
 drop index gist_tbl_multi_index;
 
@@ -137,7 +137,7 @@ create index gist_tbl_multi_index on gist_tbl using gist (circle(p,1), p);
 -- select circle(p,1) from gist_tbl
 -- where p <@ box(point(5, 5), point(5.3, 5.3));
 select circle(p,1) from gist_tbl
-where p <@ box(point(5, 5), point(5.3, 5.3));
+where p <@ box(point(5, 5), point(5.3, 5.3)) order by (circle(p,1)[0])[0];
 
 -- Similarly, test that index rechecks involving a non-returnable column
 -- are done correctly.

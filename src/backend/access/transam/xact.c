@@ -641,7 +641,7 @@ AssignTransactionId(TransactionState s)
 	 * Workers synchronize transaction state at the beginning of each parallel
 	 * operation, so we can't account for new XIDs at this point.
 	 */
-	if (IsInParallelMode() || IsParallelWorker())
+	if (IsInParallelMode() || IsParallelWorker()) 
 		elog(ERROR, "cannot assign XIDs during a parallel operation");
 
 	/*
@@ -6863,6 +6863,8 @@ IsPGXCNodeXactDatanodeDirect(void)
 		   (IsPostmasterEnvironment || !useLocalXid) &&
 		   IsNormalProcessingMode() &&
 		   !IsAutoVacuumLauncherProcess() &&
+		   !IsConnFromDatanode() &&
+		   !IsParallelWorker() && 
 		   !IsConnFromCoord();
 }
 

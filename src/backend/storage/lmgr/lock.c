@@ -254,6 +254,9 @@ static HTAB *LockMethodLockHash;
 static HTAB *LockMethodProcLockHash;
 static HTAB *LockMethodLocalHash;
 
+static LockAcquireResult LockAcquireExtendedXC(const LOCKTAG *locktag,
+LOCKMODE lockmode, bool sessionLock, bool dontWait, bool reportMemoryError,
+bool only_increment, LOCALLOCK **locallockp);
 
 /* private state for error cleanup */
 static LOCALLOCK *StrongLockInProgress;
@@ -690,6 +693,28 @@ LockAcquire(const LOCKTAG *locktag,
 							   true, NULL);
 }
 
+#ifdef PGXC
+/*
+ * LockIncrementIfExists - Special purpose case of LockAcquire().
+ * This checks if there is already a reference to the lock. If yes,
+ * increments it, and returns true. If not, just returns back false.
+ * Effectively, it never creates a new lock.
+ */
+bool
+LockIncrementIfExists(const LOCKTAG *locktag,
+			LOCKMODE lockmode, bool sessionLock)
+{
+	int ret;
+
+	ret = LockAcquireExtendedXC(locktag, lockmode,
+	                            sessionLock,
+	                            true, /* never wait */
+								true, true, NULL);
+
+	return (ret == LOCKACQUIRE_ALREADY_HELD);
+}
+#endif
+
 
 /*
  * LockAcquireExtended - allows us to specify additional options
@@ -705,6 +730,9 @@ LockAcquire(const LOCKTAG *locktag,
  * If locallockp isn't NULL, *locallockp receives a pointer to the LOCALLOCK
  * table entry if a lock is successfully acquired, or NULL if not.
  */
+
+
+
 LockAcquireResult
 LockAcquireExtended(const LOCKTAG *locktag,
 					LOCKMODE lockmode,
@@ -713,6 +741,21 @@ LockAcquireExtended(const LOCKTAG *locktag,
 					bool reportMemoryError,
 					LOCALLOCK **locallockp)
 {
+#ifdef PGXC
+	return LockAcquireExtendedXC(locktag, lockmode, sessionLock, dontWait, reportMemoryError, false, locallockp);
+}
+
+LockAcquireResult
+LockAcquireExtendedXC(const LOCKTAG *locktag,
+					LOCKMODE lockmode,
+					bool sessionLock,
+					bool dontWait,
+					bool reportMemoryError,
+					bool only_increment,
+					LOCALLOCK **locallockp)
+{
+#endif
+
 	LOCKMETHODID lockmethodid = locktag->locktag_lockmethodid;
 	LockMethod	lockMethodTable;
 	LOCALLOCKTAG localtag;
@@ -816,6 +859,14 @@ LockAcquireExtended(const LOCKTAG *locktag,
 		else
 			return LOCKACQUIRE_ALREADY_HELD;
 	}
+
+#ifdef PGXC
+	else if (only_increment)
+	{
+		/* User does not want to create new lock if it does not already exist */
+		return LOCKACQUIRE_NOT_AVAIL;
+	}
+#endif
 
 	/*
 	 * Prepare to emit a WAL record if acquisition of this lock needs to be

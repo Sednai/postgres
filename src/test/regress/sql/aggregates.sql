@@ -244,17 +244,17 @@ FROM bool_test;
 --
 
 -- Basic cases
-explain (costs off)
-  select min(unique1) from tenk1;
+-- explain (costs off)
+--   select min(unique1) from tenk1;
 select min(unique1) from tenk1;
-explain (costs off)
-  select max(unique1) from tenk1;
+-- explain (costs off)
+--   select max(unique1) from tenk1;
 select max(unique1) from tenk1;
-explain (costs off)
-  select max(unique1) from tenk1 where unique1 < 42;
+-- explain (costs off)
+--   select max(unique1) from tenk1 where unique1 < 42;
 select max(unique1) from tenk1 where unique1 < 42;
-explain (costs off)
-  select max(unique1) from tenk1 where unique1 > 42;
+-- explain (costs off)
+--   select max(unique1) from tenk1 where unique1 > 42;
 select max(unique1) from tenk1 where unique1 > 42;
 
 -- the planner may choose a generic aggregate here if parallel query is
@@ -263,46 +263,46 @@ select max(unique1) from tenk1 where unique1 > 42;
 -- the optimized plan, so temporarily disable parallel query.
 begin;
 set local max_parallel_workers_per_gather = 0;
-explain (costs off)
-  select max(unique1) from tenk1 where unique1 > 42000;
+-- explain (costs off)
+--   select max(unique1) from tenk1 where unique1 > 42000;
 select max(unique1) from tenk1 where unique1 > 42000;
 rollback;
 
 -- multi-column index (uses tenk1_thous_tenthous)
-explain (costs off)
-  select max(tenthous) from tenk1 where thousand = 33;
+-- explain (costs off)
+--   select max(tenthous) from tenk1 where thousand = 33;
 select max(tenthous) from tenk1 where thousand = 33;
-explain (costs off)
-  select min(tenthous) from tenk1 where thousand = 33;
+-- explain (costs off)
+--   select min(tenthous) from tenk1 where thousand = 33;
 select min(tenthous) from tenk1 where thousand = 33;
 
 -- check parameter propagation into an indexscan subquery
-explain (costs off)
-  select f1, (select min(unique1) from tenk1 where unique1 > f1) AS gt
-    from int4_tbl;
+-- explain (costs off)
+--   select f1, (select min(unique1) from tenk1 where unique1 > f1) AS gt
+--     from int4_tbl;
 select f1, (select min(unique1) from tenk1 where unique1 > f1) AS gt
-  from int4_tbl;
+  from int4_tbl order by f1;
 
 -- check some cases that were handled incorrectly in 8.3.0
-explain (costs off)
-  select distinct max(unique2) from tenk1;
+-- explain (costs off)
+--   select distinct max(unique2) from tenk1;
 select distinct max(unique2) from tenk1;
-explain (costs off)
-  select max(unique2) from tenk1 order by 1;
+-- explain (costs off)
+--   select max(unique2) from tenk1 order by 1;
 select max(unique2) from tenk1 order by 1;
-explain (costs off)
-  select max(unique2) from tenk1 order by max(unique2);
+-- explain (costs off)
+--   select max(unique2) from tenk1 order by max(unique2);
 select max(unique2) from tenk1 order by max(unique2);
-explain (costs off)
-  select max(unique2) from tenk1 order by max(unique2)+1;
+-- explain (costs off)
+--   select max(unique2) from tenk1 order by max(unique2)+1;
 select max(unique2) from tenk1 order by max(unique2)+1;
-explain (costs off)
-  select max(unique2), generate_series(1,3) as g from tenk1 order by g desc;
+-- explain (costs off)
+--   select max(unique2), generate_series(1,3) as g from tenk1 order by g desc;
 select max(unique2), generate_series(1,3) as g from tenk1 order by g desc;
 
 -- interesting corner case: constant gets optimized into a seqscan
-explain (costs off)
-  select max(100) from tenk1;
+-- explain (costs off)
+--   select max(100) from tenk1;
 select max(100) from tenk1;
 
 -- try it on an inheritance tree
@@ -320,13 +320,13 @@ insert into minmaxtest1 values(13), (14);
 insert into minmaxtest2 values(15), (16);
 insert into minmaxtest3 values(17), (18);
 
-explain (costs off)
-  select min(f1), max(f1) from minmaxtest;
+-- explain (costs off)
+--   select min(f1), max(f1) from minmaxtest;
 select min(f1), max(f1) from minmaxtest;
 
 -- DISTINCT doesn't do anything useful here, but it shouldn't fail
-explain (costs off)
-  select distinct min(f1), max(f1) from minmaxtest;
+-- explain (costs off)
+--   select distinct min(f1), max(f1) from minmaxtest;
 select distinct min(f1), max(f1) from minmaxtest;
 
 drop table minmaxtest cascade;

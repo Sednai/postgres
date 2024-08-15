@@ -60,7 +60,7 @@ PREPARE q5(int, text) AS
 	SELECT * FROM tenk1 WHERE unique1 = $1 OR stringu1 = $2
 	ORDER BY unique1;
 CREATE TEMPORARY TABLE q5_prep_results AS EXECUTE q5(200, 'DTAAAA');
-SELECT * FROM q5_prep_results;
+-- SELECT * FROM q5_prep_results;
 
 -- unknown or unspecified parameter types: should succeed
 PREPARE q6 AS

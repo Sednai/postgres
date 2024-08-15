@@ -115,6 +115,9 @@ typedef struct CachedPlanSource
 	double		generic_cost;	/* cost of generic plan, or -1 if not known */
 	double		total_custom_cost;	/* total cost of custom plans so far */
 	int			num_custom_plans;	/* number of plans included in total */
+#ifdef PGXC
+	char	   *stmt_name;		/* If set, this is a copy of prepared stmt name */
+#endif
 } CachedPlanSource;
 
 /*
