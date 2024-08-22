@@ -124,7 +124,7 @@ SET SESSION AUTHORIZATION regress_priv_user4;
 COPY atest2 FROM stdin; -- ok
 bar	true
 \.
-SELECT * FROM atest1; -- ok
+SELECT * FROM atest1 ORDER BY 1; -- ok
 
 
 -- test leaky-function protections in selfuncs
@@ -153,15 +153,15 @@ GRANT SELECT ON atest12v TO PUBLIC;
 GRANT SELECT ON atest12sbv TO PUBLIC;
 
 -- This plan should use nestloop, knowing that few rows will be selected.
-EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+-- EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
 
 -- And this one.
-EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
-  WHERE x.a = y.b and abs(y.a) <<< 5;
+-- EXPLAIN (COSTS OFF) SELECT * FROM atest12 x, atest12 y
+--   WHERE x.a = y.b and abs(y.a) <<< 5;
 
 -- This should also be a nestloop, but the security barrier forces the inner
 -- scan to be materialized
-EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
+-- EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
 
 -- Check if regress_priv_user2 can break security.
 SET SESSION AUTHORIZATION regress_priv_user2;

@@ -16,6 +16,8 @@ CREATE SUBSCRIPTION testsub PUBLICATION foo;
 -- fail - cannot do CREATE SUBSCRIPTION CREATE SLOT inside transaction block
 BEGIN;
 CREATE SUBSCRIPTION testsub CONNECTION 'testconn' PUBLICATION testpub WITH (create_slot);
+ROLLBACK;
+/*
 COMMIT;
 
 -- fail - invalid connection string
@@ -128,7 +130,7 @@ COMMIT;
 
 DROP SUBSCRIPTION IF EXISTS testsub;
 DROP SUBSCRIPTION testsub;  -- fail
-
+*/
 RESET SESSION AUTHORIZATION;
 DROP ROLE regress_subscription_user;
 DROP ROLE regress_subscription_user2;

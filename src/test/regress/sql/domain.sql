@@ -52,11 +52,11 @@ COPY basictest (testvarchar) FROM stdin;
 short
 \.
 
-select * from basictest;
+select * from basictest order by 1;
 
 -- check that domains inherit operations from base types
 select testtext || testvarchar as concat, testnumeric + 42 as sum
-from basictest;
+from basictest order by 1;
 
 -- check that union/case/coalesce type resolution handles domains properly
 select coalesce(4::domainint4, 7) is of (int4) as t;

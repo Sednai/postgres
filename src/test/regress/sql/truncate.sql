@@ -2,12 +2,12 @@
 CREATE TABLE truncate_a (col1 integer primary key);
 INSERT INTO truncate_a VALUES (1);
 INSERT INTO truncate_a VALUES (2);
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
 -- Roll truncate back
 BEGIN;
 TRUNCATE truncate_a;
 ROLLBACK;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
 -- Commit the truncate this time
 BEGIN;
 TRUNCATE truncate_a;
@@ -16,7 +16,7 @@ SELECT * FROM truncate_a;
 
 -- Test foreign-key checks
 CREATE TABLE trunc_b (a int REFERENCES truncate_a);
-CREATE TABLE trunc_c (a serial PRIMARY KEY);
+CREATE TABLE trunc_c (a serial PRIMARY KEY) DISTRIBUTE BY REPLICATION;
 CREATE TABLE trunc_d (a int REFERENCES trunc_c);
 CREATE TABLE trunc_e (a int REFERENCES truncate_a, b int REFERENCES trunc_c);
 
@@ -188,47 +188,46 @@ ALTER SEQUENCE truncate_a_id1 OWNED BY truncate_a.id1;
 
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
 
 TRUNCATE truncate_a;
 
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
 
 TRUNCATE truncate_a RESTART IDENTITY;
 
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
 
 CREATE TABLE truncate_b (id int GENERATED ALWAYS AS IDENTITY (START WITH 44));
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- SELECT * FROM truncate_b;
 
-INSERT INTO truncate_b DEFAULT VALUES;
-INSERT INTO truncate_b DEFAULT VALUES;
-SELECT * FROM truncate_b;
+-- TRUNCATE truncate_b;
 
-TRUNCATE truncate_b;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- SELECT * FROM truncate_b;
 
-INSERT INTO truncate_b DEFAULT VALUES;
-INSERT INTO truncate_b DEFAULT VALUES;
-SELECT * FROM truncate_b;
+-- TRUNCATE truncate_b RESTART IDENTITY;
 
-TRUNCATE truncate_b RESTART IDENTITY;
-
-INSERT INTO truncate_b DEFAULT VALUES;
-INSERT INTO truncate_b DEFAULT VALUES;
-SELECT * FROM truncate_b;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- SELECT * FROM truncate_b;
 
 -- check rollback of a RESTART IDENTITY operation
 BEGIN;
-TRUNCATE truncate_a RESTART IDENTITY;
+-- TRUNCATE truncate_a RESTART IDENTITY;
 INSERT INTO truncate_a DEFAULT VALUES;
 SELECT * FROM truncate_a;
 ROLLBACK;
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY ID;
 
 DROP TABLE truncate_a;
 
@@ -288,6 +287,6 @@ SELECT * FROM tp_chk_data();
 SELECT tp_ins_data();
 -- should truncate all partitions
 TRUNCATE TABLE truncpart;
-SELECT * FROM tp_chk_data();
+SELECT * FROM tp_chk_data() ORDER BY 2;
 DROP TABLE truncprim, truncpart;
 DROP FUNCTION tp_ins_data(), tp_chk_data();

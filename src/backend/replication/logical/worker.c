@@ -981,7 +981,11 @@ apply_handle_truncate(StringInfo s)
 	 * replaying changes without further cascading. This might be later
 	 * changeable with a user specified option.
 	 */
+#ifdef PGXC
+	ExecuteTruncateGuts(rels, relids, relids_logged, DROP_RESTRICT, restart_seqs, NULL, NULL);
+#else
 	ExecuteTruncateGuts(rels, relids, relids_logged, DROP_RESTRICT, restart_seqs);
+#endif
 
 	foreach(lc, remote_rels)
 	{

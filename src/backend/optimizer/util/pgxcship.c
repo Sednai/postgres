@@ -1168,7 +1168,7 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		case T_PlaceHolderVar:
 		case T_AppendRelInfo:
 		case T_PlaceHolderInfo:
-
+		
 		case T_PathTarget: // That is the missing key
 		{
 			/* PGXCTODO: till we exhaust this list */
@@ -1180,8 +1180,9 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 			 */
 			return false;
 		}
+		case T_GroupingFunc:
 		break;
-
+	
 		default:
 			elog(ERROR, "unrecognized node type: %d",
 				 (int) nodeTag(node));

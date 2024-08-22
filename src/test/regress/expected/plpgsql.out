@@ -35,7 +35,7 @@ create unique index WSlot_name on WSlot using btree (slotname bpchar_ops);
 create table PField (
     name	text,
     comment	text
-);
+) distribute by replication;
 create unique index PField_name on PField using btree (name text_ops);
 create table PSlot (
     slotname	char(20),

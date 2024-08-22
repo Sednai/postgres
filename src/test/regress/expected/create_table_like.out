@@ -67,52 +67,19 @@ SELECT * FROM inhg; /* Two records with three columns in order x=x, xx=text, y=y
 
 DROP TABLE inhg;
 CREATE TABLE test_like_id_1 (a bigint GENERATED ALWAYS AS IDENTITY, b text);
-\d test_like_id_1
-                     Table "public.test_like_id_1"
- Column |  Type  | Collation | Nullable |           Default            
---------+--------+-----------+----------+------------------------------
- a      | bigint |           | not null | generated always as identity
- b      | text   |           |          | 
-
-INSERT INTO test_like_id_1 (b) VALUES ('b1');
-SELECT * FROM test_like_id_1;
- a | b  
----+----
- 1 | b1
-(1 row)
-
-CREATE TABLE test_like_id_2 (LIKE test_like_id_1);
-\d test_like_id_2
-          Table "public.test_like_id_2"
- Column |  Type  | Collation | Nullable | Default 
---------+--------+-----------+----------+---------
- a      | bigint |           | not null | 
- b      | text   |           |          | 
-
-INSERT INTO test_like_id_2 (b) VALUES ('b2');
-ERROR:  null value in column "a" violates not-null constraint
-DETAIL:  Failing row contains (null, b2).
-SELECT * FROM test_like_id_2;  -- identity was not copied
- a | b 
----+---
-(0 rows)
-
-CREATE TABLE test_like_id_3 (LIKE test_like_id_1 INCLUDING IDENTITY);
-\d test_like_id_3
-                     Table "public.test_like_id_3"
- Column |  Type  | Collation | Nullable |           Default            
---------+--------+-----------+----------+------------------------------
- a      | bigint |           | not null | generated always as identity
- b      | text   |           |          | 
-
-INSERT INTO test_like_id_3 (b) VALUES ('b3');
-SELECT * FROM test_like_id_3;  -- identity was copied and applied
- a | b  
----+----
- 1 | b3
-(1 row)
-
-DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
+ERROR:  GENERATED ALWAYS AS IDENTITY not supported in XC yet
+-- \d test_like_id_1
+-- INSERT INTO test_like_id_1 (b) VALUES ('b1');
+-- SELECT * FROM test_like_id_1;
+-- CREATE TABLE test_like_id_2 (LIKE test_like_id_1);
+-- \d test_like_id_2
+-- INSERT INTO test_like_id_2 (b) VALUES ('b2');
+-- SELECT * FROM test_like_id_2;  -- identity was not copied
+-- CREATE TABLE test_like_id_3 (LIKE test_like_id_1 INCLUDING IDENTITY);
+-- \d test_like_id_3
+-- INSERT INTO test_like_id_3 (b) VALUES ('b3');
+-- SELECT * FROM test_like_id_3;  -- identity was copied and applied
+-- DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
 -- Test renumbering of Vars when combining LIKE with inheritance
 CREATE TABLE test_like_4 (b int DEFAULT 42,
   c int NOT NULL,
@@ -142,19 +109,19 @@ Inherits: test_like_5,
 
 DROP TABLE test_like_4;
 DROP TABLE test_like_5, test_like_5x, test_like_5c;
-CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text); /* copies indexes */
+CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text) DISTRIBUTE BY REPLICATION; /* copies indexes */
 INSERT INTO inhg VALUES (5, 10);
 INSERT INTO inhg VALUES (20, 10); -- should fail
 ERROR:  duplicate key value violates unique constraint "inhg_pkey"
 DETAIL:  Key (xx)=(10) already exists.
 DROP TABLE inhg;
 /* Multiple primary keys creation should fail */
-CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, PRIMARY KEY(x)); /* fails */
+CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, PRIMARY KEY(x)) DISTRIBUTE BY REPLICATION; /* fails */
 ERROR:  multiple primary keys for table "inhg" are not allowed
-CREATE TABLE inhz (xx text DEFAULT 'text', yy int UNIQUE);
+CREATE TABLE inhz (xx text DEFAULT 'text', yy int UNIQUE) DISTRIBUTE BY REPLICATION;
 CREATE UNIQUE INDEX inhz_xx_idx on inhz (xx) WHERE xx <> 'test';
 /* Ok to create multiple unique indexes */
-CREATE TABLE inhg (x text UNIQUE, LIKE inhz INCLUDING INDEXES);
+CREATE TABLE inhg (x text UNIQUE, LIKE inhz INCLUDING INDEXES) DISTRIBUTE BY REPLICATION;
 INSERT INTO inhg (xx, yy, x) VALUES ('test', 5, 10);
 INSERT INTO inhg (xx, yy, x) VALUES ('test', 10, 15);
 INSERT INTO inhg (xx, yy, x) VALUES ('foo', 10, 15); -- should fail
@@ -163,7 +130,7 @@ DETAIL:  Key (x)=(15) already exists.
 DROP TABLE inhg;
 DROP TABLE inhz;
 /* Use primary key imported by LIKE for self-referential FK constraint */
-CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES);
+CREATE TABLE inhz (x text REFERENCES inhz, LIKE inhx INCLUDING INDEXES) DISTRIBUTE BY REPLICATION;
 \d inhz
               Table "public.inhz"
  Column | Type | Collation | Nullable | Default 
@@ -366,7 +333,11 @@ LINE 1: CREATE TABLE ctlt10 (LIKE ctlseq1);
                                   ^
 CREATE VIEW ctlv1 AS SELECT * FROM ctlt4;
 CREATE TABLE ctlt11 (LIKE ctlv1);
+ERROR:  Postgres-XC does not support VIEW in LIKE clauses
+DETAIL:  The feature is not currently supported
 CREATE TABLE ctlt11a (LIKE ctlv1 INCLUDING ALL);
+ERROR:  Postgres-XC does not support VIEW in LIKE clauses
+DETAIL:  The feature is not currently supported
 CREATE TYPE ctlty1 AS (a int, b text);
 CREATE TABLE ctlt12 (LIKE ctlty1);
 DROP SEQUENCE ctlseq1;
@@ -374,6 +345,8 @@ DROP TYPE ctlty1;
 DROP VIEW ctlv1;
 DROP TABLE IF EXISTS ctlt4, ctlt10, ctlt11, ctlt11a, ctlt12;
 NOTICE:  table "ctlt10" does not exist, skipping
+NOTICE:  table "ctlt11" does not exist, skipping
+NOTICE:  table "ctlt11a" does not exist, skipping
 /* LIKE WITH OIDS */
 CREATE TABLE has_oid (x INTEGER) WITH OIDS;
 CREATE TABLE no_oid (y INTEGER);
@@ -394,7 +367,7 @@ SELECT oid FROM like_test3;
 -----
 (0 rows)
 
-CREATE TABLE like_test4 (z INTEGER, PRIMARY KEY(oid), LIKE has_oid);
+CREATE TABLE like_test4 (z INTEGER, PRIMARY KEY(oid), LIKE has_oid) DISTRIBUTE BY HASH(z);
 SELECT oid FROM like_test4;
  oid 
 -----

@@ -191,7 +191,7 @@ UPDATE rw_view14 SET ctid=null WHERE a=3; -- should fail
 ERROR:  cannot update column "ctid" of view "rw_view14"
 DETAIL:  View columns that refer to system columns are not updatable.
 UPDATE rw_view14 SET b='ROW 3' WHERE a=3; -- should be OK
-SELECT * FROM base_tbl;
+SELECT * FROM base_tbl order by a;
  a  |   b    
 ----+--------
  -2 | Row -2
@@ -209,7 +209,7 @@ ERROR:  cannot insert into column "upper" of view "rw_view15"
 DETAIL:  View columns that are not columns of their base relation are not updatable.
 INSERT INTO rw_view15 (a) VALUES (3); -- should be OK
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT DO NOTHING; -- succeeds
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
  a  |    upper    
 ----+-------------
  -2 | ROW -2
@@ -221,7 +221,7 @@ SELECT * FROM rw_view15;
 (6 rows)
 
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO NOTHING; -- succeeds
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
  a  |    upper    
 ----+-------------
  -2 | ROW -2
@@ -233,7 +233,7 @@ SELECT * FROM rw_view15;
 (6 rows)
 
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO UPDATE set a = excluded.a; -- succeeds
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
  a  |    upper    
 ----+-------------
  -2 | ROW -2
@@ -247,7 +247,7 @@ SELECT * FROM rw_view15;
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO UPDATE set upper = 'blarg'; -- fails
 ERROR:  cannot insert into column "upper" of view "rw_view15"
 DETAIL:  View columns that are not columns of their base relation are not updatable.
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
  a  |    upper    
 ----+-------------
  -2 | ROW -2
@@ -258,7 +258,7 @@ SELECT * FROM rw_view15;
   3 | UNSPECIFIED
 (6 rows)
 
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
  a  |    upper    
 ----+-------------
  -2 | ROW -2
@@ -280,7 +280,7 @@ UPDATE rw_view15 SET upper=DEFAULT WHERE a=3; -- should fail
 ERROR:  cannot update column "upper" of view "rw_view15"
 DETAIL:  View columns that are not columns of their base relation are not updatable.
 UPDATE rw_view15 SET a=4 WHERE a=3; -- should be OK
-SELECT * FROM base_tbl;
+SELECT * FROM base_tbl order by a;
  a  |      b      
 ----+-------------
  -2 | Row -2
@@ -299,7 +299,7 @@ INSERT INTO rw_view16 (a, b) VALUES (3, 'Row 3'); -- should be OK
 UPDATE rw_view16 SET a=3, aa=-3 WHERE a=3; -- should fail
 ERROR:  multiple assignments to same column "a"
 UPDATE rw_view16 SET aa=-3 WHERE a=3; -- should be OK
-SELECT * FROM base_tbl;
+SELECT * FROM base_tbl order by a;
  a  |   b    
 ----+--------
  -2 | Row -2
@@ -415,22 +415,8 @@ SELECT * FROM base_tbl;
   5 | Unspecified
 (6 rows)
 
-EXPLAIN (costs off) UPDATE rw_view1 SET a=6 WHERE a=5;
-                    QUERY PLAN                    
---------------------------------------------------
- Update on base_tbl
-   ->  Index Scan using base_tbl_pkey on base_tbl
-         Index Cond: ((a > 0) AND (a = 5))
-(3 rows)
-
-EXPLAIN (costs off) DELETE FROM rw_view1 WHERE a=5;
-                    QUERY PLAN                    
---------------------------------------------------
- Delete on base_tbl
-   ->  Index Scan using base_tbl_pkey on base_tbl
-         Index Cond: ((a > 0) AND (a = 5))
-(3 rows)
-
+-- EXPLAIN (costs off) UPDATE rw_view1 SET a=6 WHERE a=5;
+-- EXPLAIN (costs off) DELETE FROM rw_view1 WHERE a=5;
 -- it's still updatable if we add a DO ALSO rule
 CREATE TABLE base_tbl_hist(ts timestamptz default now(), a int, b text);
 CREATE RULE base_tbl_log AS ON INSERT TO rw_view1 DO ALSO

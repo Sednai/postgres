@@ -13,6 +13,8 @@ SELECT char 'c' = char 'c' AS true;
 
 CREATE TABLE CHAR_TBL(f1 char);
 
+
+
 INSERT INTO CHAR_TBL (f1) VALUES ('a');
 
 INSERT INTO CHAR_TBL (f1) VALUES ('A');

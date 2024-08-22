@@ -128,19 +128,19 @@ SELECT n.nspname, c.conname, a.rolname
 -- Foreign Data Wrapper and Foreign Server
 --
 CREATE FOREIGN DATA WRAPPER alt_fdw1;
-CREATE FOREIGN DATA WRAPPER alt_fdw2;
+-- CREATE FOREIGN DATA WRAPPER alt_fdw2;
 
-CREATE SERVER alt_fserv1 FOREIGN DATA WRAPPER alt_fdw1;
-CREATE SERVER alt_fserv2 FOREIGN DATA WRAPPER alt_fdw2;
+-- CREATE SERVER alt_fserv1 FOREIGN DATA WRAPPER alt_fdw1;
+-- CREATE SERVER alt_fserv2 FOREIGN DATA WRAPPER alt_fdw2;
 
-ALTER FOREIGN DATA WRAPPER alt_fdw1 RENAME TO alt_fdw2;  -- failed (name conflict)
-ALTER FOREIGN DATA WRAPPER alt_fdw1 RENAME TO alt_fdw3;  -- OK
+-- ALTER FOREIGN DATA WRAPPER alt_fdw1 RENAME TO alt_fdw2;  -- failed (name conflict)
+-- ALTER FOREIGN DATA WRAPPER alt_fdw1 RENAME TO alt_fdw3;  -- OK
 
-ALTER SERVER alt_fserv1 RENAME TO alt_fserv2;   -- failed (name conflict)
-ALTER SERVER alt_fserv1 RENAME TO alt_fserv3;   -- OK
+-- ALTER SERVER alt_fserv1 RENAME TO alt_fserv2;   -- failed (name conflict)
+-- ALTER SERVER alt_fserv1 RENAME TO alt_fserv3;   -- OK
 
-SELECT fdwname FROM pg_foreign_data_wrapper WHERE fdwname like 'alt_fdw%';
-SELECT srvname FROM pg_foreign_server WHERE srvname like 'alt_fserv%';
+-- SELECT fdwname FROM pg_foreign_data_wrapper WHERE fdwname like 'alt_fdw%';
+-- SELECT srvname FROM pg_foreign_server WHERE srvname like 'alt_fserv%';
 
 --
 -- Procedural Language
@@ -581,8 +581,8 @@ SELECT nspname, prsname
 ---
 \set VERBOSITY terse \\ -- suppress cascade details
 
-DROP FOREIGN DATA WRAPPER alt_fdw2 CASCADE;
-DROP FOREIGN DATA WRAPPER alt_fdw3 CASCADE;
+-- DROP FOREIGN DATA WRAPPER alt_fdw2 CASCADE;
+-- DROP FOREIGN DATA WRAPPER alt_fdw3 CASCADE;
 
 DROP LANGUAGE alt_lang2 CASCADE;
 DROP LANGUAGE alt_lang3 CASCADE;

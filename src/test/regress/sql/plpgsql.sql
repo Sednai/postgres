@@ -43,7 +43,7 @@ create unique index WSlot_name on WSlot using btree (slotname bpchar_ops);
 create table PField (
     name	text,
     comment	text
-);
+) distribute by replication;
 
 create unique index PField_name on PField using btree (name text_ops);
 
@@ -1442,7 +1442,7 @@ SELECT recursion_test(4,3);
 --
 -- Test the FOUND magic variable
 --
-CREATE TABLE found_test_tbl (a int);
+CREATE TABLE found_test_tbl (a int) distribute by roundrobin;
 
 create function test_found()
   returns boolean as '

@@ -1,7 +1,7 @@
 --
 -- TRIGGERS
 --
-create table pkeys (pkey1 int4 not null, pkey2 text not null);
+create table pkeys (pkey1 int4 not null, pkey2 text not null) distribute by replication;
 create table fkeys (fkey1 int4, fkey2 text, fkey3 int);
 create table fkeys2 (fkey21 int4, fkey22 text, pkey23 int not null);
 create index fkeys_i on fkeys (fkey1, fkey2);
@@ -221,7 +221,7 @@ create table tttest (
 	price_val	int4,
 	price_on	int4,
 	price_off	int4 default 999999
-);
+) distribute by replication;
 create trigger ttdummy
 	before delete or update on tttest
 	for each row
@@ -235,7 +235,7 @@ create trigger ttserial
 insert into tttest values (1, 1, null);
 insert into tttest values (2, 2, null);
 insert into tttest values (3, 3, 0);
-select * from tttest;
+select * from tttest order by 1;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
         1 |         1 |       10 |    999999
@@ -244,17 +244,17 @@ select * from tttest;
 (3 rows)
 
 delete from tttest where price_id = 2;
-select * from tttest;
+select * from tttest order by 1;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
         1 |         1 |       10 |    999999
-        3 |         3 |       30 |    999999
         2 |         2 |       20 |        40
+        3 |         3 |       30 |    999999
 (3 rows)
 
 -- what do we see ?
 -- get current prices
-select * from tttest where price_off = 999999;
+select * from tttest where price_off = 999999 order by 1;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
         1 |         1 |       10 |    999999
@@ -263,26 +263,26 @@ select * from tttest where price_off = 999999;
 
 -- change price for price_id == 3
 update tttest set price_val = 30 where price_id = 3;
-select * from tttest;
+select * from tttest order by 1,2;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
         1 |         1 |       10 |    999999
         2 |         2 |       20 |        40
-        3 |        30 |       50 |    999999
         3 |         3 |       30 |        50
+        3 |        30 |       50 |    999999
 (4 rows)
 
 -- now we want to change pric_id in ALL tuples
 -- this gets us not what we need
 update tttest set price_id = 5 where price_id = 3;
-select * from tttest;
+select * from tttest order by 1,2;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
         1 |         1 |       10 |    999999
         2 |         2 |       20 |        40
         3 |         3 |       30 |        50
-        5 |        30 |       60 |    999999
         3 |        30 |       50 |        60
+        5 |        30 |       60 |    999999
 (5 rows)
 
 -- restore data as before last update:
@@ -294,7 +294,7 @@ select set_ttdummy(0);
 
 delete from tttest where price_id = 5;
 update tttest set price_off = 999999 where price_val = 30;
-select * from tttest;
+select * from tttest order by 1,2;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
         1 |         1 |       10 |    999999
@@ -305,7 +305,7 @@ select * from tttest;
 
 -- and try change price_id now!
 update tttest set price_id = 5 where price_id = 3;
-select * from tttest;
+select * from tttest order by 1,2;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
         1 |         1 |       10 |    999999
@@ -333,13 +333,13 @@ select set_ttdummy(0);
 (1 row)
 
 update tttest set price_on = -1 where price_id = 1;
-select * from tttest;
+select * from tttest order by 1,2;
  price_id | price_val | price_on | price_off 
 ----------+-----------+----------+-----------
+        1 |         1 |       -1 |    999999
         2 |         2 |       20 |        40
         5 |         3 |       30 |        50
         5 |        30 |       50 |    999999
-        1 |         1 |       -1 |    999999
 (4 rows)
 
 -- isn't it what we need ?

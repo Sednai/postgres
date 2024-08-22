@@ -1543,43 +1543,12 @@ ExecuteTruncate(TruncateStmt *stmt)
 	}
 
 #ifdef PGXC
-	/*
-	 * In Postgres-XC, TRUNCATE needs to be launched to remote nodes before the
-	 * AFTER triggers are launched. This insures that the triggers are being fired
-	 * by correct events.
-	 */
-	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-	{
-		bool is_temp = false;
-		RemoteQuery *step = makeNode(RemoteQuery);
-
-		foreach(cell, stmt->relations)
-		{
-			Oid relid;
-			RangeVar *rel = (RangeVar *) lfirst(cell);
-
-			relid = RangeVarGetRelid(rel, NoLock, false);
-			if (IsTempTable(relid))
-			{
-				is_temp = true;
-				break;
-			}
-		}
-
-        step->combine_type = COMBINE_TYPE_SAME;
-        step->exec_nodes = NULL;
-        step->sql_statement = pstrdup(sql_statement);
-        step->force_autocommit = false;
-        step->exec_type = EXEC_ON_DATANODES;
-        step->is_temp = is_temp;
-        ExecRemoteUtility(step);
-        pfree(step->sql_statement);
-        pfree(step);
-	}
-#endif
-
+	ExecuteTruncateGuts(rels, relids, relids_logged,
+						stmt->behavior, stmt->restart_seqs, stmt, sql_statement);
+#else
 	ExecuteTruncateGuts(rels, relids, relids_logged,
 						stmt->behavior, stmt->restart_seqs);
+#endif
 
 	/* And close the rels */
 	foreach(cell, rels)
@@ -1604,8 +1573,13 @@ ExecuteTruncate(TruncateStmt *stmt)
  * this information handy in this form.
  */
 void
+#ifdef PGXC
+ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
+					DropBehavior behavior, bool restart_seqs, TruncateStmt *stmt, const char *sql_statement)
+#else
 ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
 					DropBehavior behavior, bool restart_seqs)
+#endif
 {
 	List	   *rels;
 	List	   *seq_relids = NIL;
@@ -1878,6 +1852,43 @@ ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
 		ExecASTruncateTriggers(estate, resultRelInfo);
 		resultRelInfo++;
 	}
+
+#ifdef PGXC
+	/*
+	 * In Postgres-XC, TRUNCATE needs to be launched to remote nodes before the
+	 * AFTER triggers are launched. This insures that the triggers are being fired
+	 * by correct events.
+	 */
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+	{
+		bool is_temp = false;
+		RemoteQuery *step = makeNode(RemoteQuery);
+
+		foreach(cell, stmt->relations)
+		{
+			Oid relid;
+			RangeVar *rel = (RangeVar *) lfirst(cell);
+
+			relid = RangeVarGetRelid(rel, NoLock, false);
+			if (IsTempTable(relid))
+			{
+				is_temp = true;
+				break;
+			}
+		}
+
+        step->combine_type = COMBINE_TYPE_SAME;
+        step->exec_nodes = NULL;
+        step->sql_statement = pstrdup(sql_statement);
+        step->force_autocommit = false;
+        step->exec_type = EXEC_ON_DATANODES;
+        step->is_temp = is_temp;
+        ExecRemoteUtility(step);
+        pfree(step->sql_statement);
+        pfree(step);
+	}
+#endif
+
 
 	/* Handle queued AFTER triggers */
 	AfterTriggerEndQuery(estate);

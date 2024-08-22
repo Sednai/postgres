@@ -58,9 +58,13 @@ extern void ExecuteTruncate(TruncateStmt *stmt, const char *sql_statement);
 extern void ExecuteTruncate(TruncateStmt *stmt);
 #endif
 
+#ifdef PGXC
+extern void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
+					DropBehavior behavior, bool restart_seqs, TruncateStmt *stmt, const char *sql_statement);
+#else
 extern void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_logged,
 					DropBehavior behavior, bool restart_seqs);
-
+#endif
 extern void SetRelationHasSubclass(Oid relationId, bool relhassubclass);
 
 extern ObjectAddress renameatt(RenameStmt *stmt);

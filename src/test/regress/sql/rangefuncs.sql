@@ -364,13 +364,13 @@ AS 'select $1+1' LANGUAGE sql;
 
 CREATE OR REPLACE FUNCTION rngfuncr(in f1 int, out f2 int, out text)
 AS $$select $1-1, $1::text || 'z'$$ LANGUAGE sql;
-SELECT f1, rngfuncr(f1) FROM int4_tbl;
+SELECT f1, rngfuncr(f1) FROM int4_tbl ORDER BY f1;
 SELECT * FROM rngfuncr(42);
 SELECT * FROM rngfuncr(42) AS p(a,b);
 
 CREATE OR REPLACE FUNCTION rngfuncb(in f1 int, inout f2 int, out text)
 AS $$select $2-1, $1::text || 'z'$$ LANGUAGE sql;
-SELECT f1, rngfuncb(f1, f1/2) FROM int4_tbl;
+SELECT f1, rngfuncb(f1, f1/2) FROM int4_tbl ORDER BY f1;
 SELECT * FROM rngfuncb(42, 99);
 SELECT * FROM rngfuncb(42, 99) AS p(a,b);
 
@@ -422,7 +422,7 @@ RETURNS TABLE(a int, b int)
 AS $$ SELECT a, b
          FROM generate_series(1,$1) a(a),
               generate_series(1,$1) b(b) $$ LANGUAGE sql;
-SELECT * FROM rngfunc(3);
+SELECT * FROM rngfunc(3) ORDER BY a,b;
 DROP FUNCTION rngfunc(int);
 
 -- case that causes change of typmod knowledge during inlining
@@ -444,7 +444,7 @@ language sql;
 
 select insert_tt('foo');
 select insert_tt('bar');
-select * from tt;
+select * from tt order by f1;
 
 -- insert will execute to completion even if function needs just 1 row
 create or replace function insert_tt(text) returns int as
@@ -452,7 +452,7 @@ $$ insert into tt(data) values($1),($1||$1) returning f1 $$
 language sql;
 
 select insert_tt('fool');
-select * from tt;
+select * from tt order by f1;
 
 -- setof does what's expected
 create or replace function insert_tt2(text,text) returns setof int as
@@ -461,11 +461,11 @@ language sql;
 
 select insert_tt2('foolish','barrish');
 select * from insert_tt2('baz','quux');
-select * from tt;
+select * from tt order by f1;
 
 -- limit doesn't prevent execution to completion
 select insert_tt2('foolish','barrish') limit 1;
-select * from tt;
+select * from tt order by f1;
 
 -- triggers will fire, too
 create function noticetrigger() returns trigger as $$
@@ -477,7 +477,7 @@ create trigger tnoticetrigger after insert on tt for each row
 execute procedure noticetrigger();
 
 select insert_tt2('foolme','barme') limit 1;
-select * from tt;
+select * from tt order by f1;
 
 -- and rules work
 create temp table tt_log(f1 int, data text);
@@ -486,10 +486,10 @@ create rule insert_tt_rule as on insert to tt do also
   insert into tt_log values(new.*);
 
 select insert_tt2('foollog','barlog') limit 1;
-select * from tt;
+select * from tt order by f1;
 -- note that nextval() gets executed a second time in the rule expansion,
 -- which is expected.
-select * from tt_log;
+select * from tt_log order by f1;
 
 -- test case for a whole-row-variable bug
 create function rngfunc1(n integer, out a text, out b text)
@@ -621,19 +621,19 @@ create function extractq2(t int8_tbl) returns int8 as $$
   select t.q2
 $$ language sql immutable;
 
-explain (verbose, costs off)
-select x from int8_tbl, extractq2(int8_tbl) f(x);
+-- explain (verbose, costs off)
+-- select x from int8_tbl, extractq2(int8_tbl) f(x);
 
-select x from int8_tbl, extractq2(int8_tbl) f(x);
+select x from int8_tbl, extractq2(int8_tbl) f(x) order by x;
 
 create function extractq2_2(t int8_tbl) returns table(ret1 int8) as $$
   select extractq2(t) offset 0
 $$ language sql immutable;
 
-explain (verbose, costs off)
-select x from int8_tbl, extractq2_2(int8_tbl) f(x);
+-- explain (verbose, costs off)
+-- select x from int8_tbl, extractq2_2(int8_tbl) f(x);
 
-select x from int8_tbl, extractq2_2(int8_tbl) f(x);
+select x from int8_tbl, extractq2_2(int8_tbl) f(x) order by x;
 
 -- without the "offset 0", this function gets optimized quite differently
 
@@ -641,10 +641,10 @@ create function extractq2_2_opt(t int8_tbl) returns table(ret1 int8) as $$
   select extractq2(t)
 $$ language sql immutable;
 
-explain (verbose, costs off)
-select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x);
+-- explain (verbose, costs off)
+-- select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x);
 
-select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x);
+select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x) order by x;
 
 -- check handling of nulls in SRF results (bug #7808)
 

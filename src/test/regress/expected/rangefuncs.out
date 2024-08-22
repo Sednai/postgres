@@ -1461,14 +1461,14 @@ ERROR:  cannot change return type of existing function
 HINT:  Use DROP FUNCTION rngfunc(integer) first.
 CREATE OR REPLACE FUNCTION rngfuncr(in f1 int, out f2 int, out text)
 AS $$select $1-1, $1::text || 'z'$$ LANGUAGE sql;
-SELECT f1, rngfuncr(f1) FROM int4_tbl;
+SELECT f1, rngfuncr(f1) FROM int4_tbl ORDER BY f1;
      f1      |          rngfuncr          
 -------------+----------------------------
+ -2147483647 | (-2147483648,-2147483647z)
+     -123456 | (-123457,-123456z)
            0 | (-1,0z)
       123456 | (123455,123456z)
-     -123456 | (-123457,-123456z)
   2147483647 | (2147483646,2147483647z)
- -2147483647 | (-2147483648,-2147483647z)
 (5 rows)
 
 SELECT * FROM rngfuncr(42);
@@ -1485,14 +1485,14 @@ SELECT * FROM rngfuncr(42) AS p(a,b);
 
 CREATE OR REPLACE FUNCTION rngfuncb(in f1 int, inout f2 int, out text)
 AS $$select $2-1, $1::text || 'z'$$ LANGUAGE sql;
-SELECT f1, rngfuncb(f1, f1/2) FROM int4_tbl;
+SELECT f1, rngfuncb(f1, f1/2) FROM int4_tbl ORDER BY f1;
      f1      |          rngfuncb          
 -------------+----------------------------
+ -2147483647 | (-1073741824,-2147483647z)
+     -123456 | (-61729,-123456z)
            0 | (-1,0z)
       123456 | (61727,123456z)
-     -123456 | (-61729,-123456z)
   2147483647 | (1073741822,2147483647z)
- -2147483647 | (-1073741824,-2147483647z)
 (5 rows)
 
 SELECT * FROM rngfuncb(42, 99);
@@ -1579,7 +1579,7 @@ RETURNS TABLE(a int, b int)
 AS $$ SELECT a, b
          FROM generate_series(1,$1) a(a),
               generate_series(1,$1) b(b) $$ LANGUAGE sql;
-SELECT * FROM rngfunc(3);
+SELECT * FROM rngfunc(3) ORDER BY a,b;
  a | b 
 ---+---
  1 | 1
@@ -1624,7 +1624,7 @@ select insert_tt('bar');
          2
 (1 row)
 
-select * from tt;
+select * from tt order by f1;
  f1 | data 
 ----+------
   1 | foo
@@ -1641,7 +1641,7 @@ select insert_tt('fool');
          3
 (1 row)
 
-select * from tt;
+select * from tt order by f1;
  f1 |   data   
 ----+----------
   1 | foo
@@ -1668,7 +1668,7 @@ select * from insert_tt2('baz','quux');
           8
 (2 rows)
 
-select * from tt;
+select * from tt order by f1;
  f1 |   data   
 ----+----------
   1 | foo
@@ -1688,7 +1688,7 @@ select insert_tt2('foolish','barrish') limit 1;
           9
 (1 row)
 
-select * from tt;
+select * from tt order by f1;
  f1 |   data   
 ----+----------
   1 | foo
@@ -1719,7 +1719,7 @@ NOTICE:  noticetrigger 12 barme
          11
 (1 row)
 
-select * from tt;
+select * from tt order by f1;
  f1 |   data   
 ----+----------
   1 | foo
@@ -1748,7 +1748,7 @@ NOTICE:  noticetrigger 14 barlog
          13
 (1 row)
 
-select * from tt;
+select * from tt order by f1;
  f1 |   data   
 ----+----------
   1 | foo
@@ -1769,7 +1769,7 @@ select * from tt;
 
 -- note that nextval() gets executed a second time in the rule expansion,
 -- which is expected.
-select * from tt_log;
+select * from tt_log order by f1;
  f1 |  data   
 ----+---------
  15 | foollog
@@ -1998,74 +1998,47 @@ drop function rngfuncbar();
 create function extractq2(t int8_tbl) returns int8 as $$
   select t.q2
 $$ language sql immutable;
-explain (verbose, costs off)
-select x from int8_tbl, extractq2(int8_tbl) f(x);
-                QUERY PLAN                
-------------------------------------------
- Nested Loop
-   Output: f.x
-   ->  Seq Scan on public.int8_tbl
-         Output: int8_tbl.q1, int8_tbl.q2
-   ->  Function Scan on f
-         Output: f.x
-         Function Call: int8_tbl.q2
-(7 rows)
-
-select x from int8_tbl, extractq2(int8_tbl) f(x);
+-- explain (verbose, costs off)
+-- select x from int8_tbl, extractq2(int8_tbl) f(x);
+select x from int8_tbl, extractq2(int8_tbl) f(x) order by x;
          x         
 -------------------
+ -4567890123456789
+               123
                456
   4567890123456789
-               123
   4567890123456789
- -4567890123456789
 (5 rows)
 
 create function extractq2_2(t int8_tbl) returns table(ret1 int8) as $$
   select extractq2(t) offset 0
 $$ language sql immutable;
-explain (verbose, costs off)
-select x from int8_tbl, extractq2_2(int8_tbl) f(x);
-            QUERY PLAN             
------------------------------------
- Nested Loop
-   Output: ((int8_tbl.*).q2)
-   ->  Seq Scan on public.int8_tbl
-         Output: int8_tbl.*
-   ->  Result
-         Output: (int8_tbl.*).q2
-(6 rows)
-
-select x from int8_tbl, extractq2_2(int8_tbl) f(x);
+-- explain (verbose, costs off)
+-- select x from int8_tbl, extractq2_2(int8_tbl) f(x);
+select x from int8_tbl, extractq2_2(int8_tbl) f(x) order by x;
          x         
 -------------------
+ -4567890123456789
+               123
                456
   4567890123456789
-               123
   4567890123456789
- -4567890123456789
 (5 rows)
 
 -- without the "offset 0", this function gets optimized quite differently
 create function extractq2_2_opt(t int8_tbl) returns table(ret1 int8) as $$
   select extractq2(t)
 $$ language sql immutable;
-explain (verbose, costs off)
-select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x);
-         QUERY PLAN          
------------------------------
- Seq Scan on public.int8_tbl
-   Output: int8_tbl.q2
-(2 rows)
-
-select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x);
+-- explain (verbose, costs off)
+-- select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x);
+select x from int8_tbl, extractq2_2_opt(int8_tbl) f(x) order by x;
          x         
 -------------------
+ -4567890123456789
+               123
                456
   4567890123456789
-               123
   4567890123456789
- -4567890123456789
 (5 rows)
 
 -- check handling of nulls in SRF results (bug #7808)

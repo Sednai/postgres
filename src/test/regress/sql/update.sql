@@ -6,30 +6,30 @@ CREATE TABLE update_test (
     a   INT DEFAULT 10,
     b   INT,
     c   TEXT
-);
+) DISTRIBUTE BY REPLICATION;
 
 CREATE TABLE upsert_test (
     a   INT PRIMARY KEY,
     b   TEXT
-);
+) DISTRIBUTE BY REPLICATION;
 
 INSERT INTO update_test VALUES (5, 10, 'foo');
 INSERT INTO update_test(b, a) VALUES (15, 10);
 
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 
 UPDATE update_test SET a = DEFAULT, b = DEFAULT;
 
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 
 -- aliases for the UPDATE target table
 UPDATE update_test AS t SET b = 10 WHERE t.a = 10;
 
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 
 UPDATE update_test t SET b = t.b + 10 WHERE t.a = 10;
 
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 
 --
 -- Test VALUES in FROM

@@ -1033,8 +1033,26 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			/* forbidden in parallel mode due to CommandIsReadOnly */
 			LockTableCommand((LockStmt *) parsetree);
 #ifdef PGXC
-			if (IS_PGXC_COORDINATOR)
-				ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+			if (IS_PGXC_COORDINATOR) {
+				
+				RemoteQueryExecType exec = EXEC_ON_ALL_NODES;
+			
+				LockStmt *stmt = (LockStmt *) parsetree;
+
+				RangeVar *rln = linitial(stmt->relations);
+				
+				Relation rel = relation_openrv((RangeVar *) rln, ShareUpdateExclusiveLock);
+				
+				if( rel->rd_rel->relkind == RELKIND_VIEW
+				|| rel->rd_rel->relkind == RELKIND_MATVIEW
+				) {
+					exec = EXEC_ON_COORDS;
+				}
+				
+				relation_close(rel, NoLock);
+
+				ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, exec, false);
+			}
 #endif
 			break;
 
@@ -2165,9 +2183,6 @@ ProcessUtilitySlow(ParseState *pstate,
 
 			case T_CreateUserMappingStmt:
 #ifdef PGXC
-				/* K.Suzuki, Sep.2nd, 2013
-				 * Moved from standard_ProcessUtility().
-				 */
 				ereport(ERROR,
 						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 						 errmsg("Postgres-XC does not support USER MAPPING yet"),
@@ -2497,6 +2512,11 @@ ProcessUtilitySlow(ParseState *pstate,
 
 			case T_AlterTableMoveAllStmt:
 				AlterTableMoveAll((AlterTableMoveAllStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
+
 				/* commands are stashed in AlterTableMoveAll */
 				commandCollected = true;
 				break;
@@ -2588,10 +2608,22 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreatePublicationStmt:
+#ifdef PGXC
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Postgres-XC does not support CREATE PUBLICATION yet"),
+						 errdetail("The feature is not currently supported")));
+#endif
 				address = CreatePublication((CreatePublicationStmt *) parsetree);
 				break;
 
 			case T_AlterPublicationStmt:
+#ifdef PGXC
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Postgres-XC does not support ALTER PUBLICATION yet"),
+						 errdetail("The feature is not currently supported")));
+#endif
 				AlterPublication((AlterPublicationStmt *) parsetree);
 
 				/*
@@ -2602,11 +2634,23 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateSubscriptionStmt:
+#ifdef PGXC
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Postgres-XC does not support CREATE SUBSCRIPTION yet"),
+						 errdetail("The feature is not currently supported")));
+#endif
 				address = CreateSubscription((CreateSubscriptionStmt *) parsetree,
 											 isTopLevel);
 				break;
 
 			case T_AlterSubscriptionStmt:
+#ifdef PGXC
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("Postgres-XC does not support DROP SUBSCRIPTION yet"),
+						 errdetail("The feature is not currently supported")));
+#endif
 				address = AlterSubscription((AlterSubscriptionStmt *) parsetree);
 				break;
 
@@ -2618,6 +2662,20 @@ ProcessUtilitySlow(ParseState *pstate,
 
 			case T_CreateStatsStmt:
 				address = CreateStatistics((CreateStatsStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR) {
+					CreateStatsStmt *stmt = (CreateStatsStmt *) parsetree;
+					RangeVar *rln = linitial(stmt->relations);
+					Relation rel = relation_openrv((RangeVar *) rln, ShareUpdateExclusiveLock);
+
+					bool temp;
+					RemoteQueryExecType exec_type = ExecUtilityFindNodesRelkind(RelationGetRelid(rel), &temp);
+
+					relation_close(rel, NoLock);
+
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, exec_type, temp);
+				}
+#endif
 				break;
 
 			case T_AlterCollationStmt:

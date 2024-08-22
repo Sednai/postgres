@@ -753,7 +753,13 @@ transformColumnDefinition(CreateStmtContext *cxt, ColumnDef *column)
 						ereport(ERROR,
 								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 								 errmsg("identity columns are not supported on partitions")));
-
+#ifdef PGXC
+					if (constraint->generated_when) {
+						ereport(ERROR,
+								(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+								 errmsg("GENERATED ALWAYS AS IDENTITY not supported in XC yet")));
+					}
+#endif
 					ctype = typenameType(cxt->pstate, column->typeName, NULL);
 					typeOid = HeapTupleGetOid(ctype);
 					ReleaseSysCache(ctype);

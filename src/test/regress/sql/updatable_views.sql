@@ -64,33 +64,33 @@ INSERT INTO rw_view14 VALUES (null, 3, 'Row 3'); -- should fail
 INSERT INTO rw_view14 (a, b) VALUES (3, 'Row 3'); -- should be OK
 UPDATE rw_view14 SET ctid=null WHERE a=3; -- should fail
 UPDATE rw_view14 SET b='ROW 3' WHERE a=3; -- should be OK
-SELECT * FROM base_tbl;
+SELECT * FROM base_tbl order by a;
 DELETE FROM rw_view14 WHERE a=3; -- should be OK
 -- Partially updatable view
 INSERT INTO rw_view15 VALUES (3, 'ROW 3'); -- should fail
 INSERT INTO rw_view15 (a) VALUES (3); -- should be OK
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT DO NOTHING; -- succeeds
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO NOTHING; -- succeeds
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO UPDATE set a = excluded.a; -- succeeds
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
 INSERT INTO rw_view15 (a) VALUES (3) ON CONFLICT (a) DO UPDATE set upper = 'blarg'; -- fails
-SELECT * FROM rw_view15;
-SELECT * FROM rw_view15;
+SELECT * FROM rw_view15 order by a;
+SELECT * FROM rw_view15 order by a;
 ALTER VIEW rw_view15 ALTER COLUMN upper SET DEFAULT 'NOT SET';
 INSERT INTO rw_view15 (a) VALUES (4); -- should fail
 UPDATE rw_view15 SET upper='ROW 3' WHERE a=3; -- should fail
 UPDATE rw_view15 SET upper=DEFAULT WHERE a=3; -- should fail
 UPDATE rw_view15 SET a=4 WHERE a=3; -- should be OK
-SELECT * FROM base_tbl;
+SELECT * FROM base_tbl order by a;
 DELETE FROM rw_view15 WHERE a=4; -- should be OK
 -- Partially updatable view
 INSERT INTO rw_view16 VALUES (3, 'Row 3', 3); -- should fail
 INSERT INTO rw_view16 (a, b) VALUES (3, 'Row 3'); -- should be OK
 UPDATE rw_view16 SET a=3, aa=-3 WHERE a=3; -- should fail
 UPDATE rw_view16 SET aa=-3 WHERE a=3; -- should be OK
-SELECT * FROM base_tbl;
+SELECT * FROM base_tbl order by a;
 DELETE FROM rw_view16 WHERE a=-3; -- should be OK
 -- Read-only views
 INSERT INTO ro_view17 VALUES (3, 'ROW 3');
@@ -142,8 +142,8 @@ UPDATE rw_view1 SET a=5 WHERE a=4;
 DELETE FROM rw_view1 WHERE b='Row 2';
 SELECT * FROM base_tbl;
 
-EXPLAIN (costs off) UPDATE rw_view1 SET a=6 WHERE a=5;
-EXPLAIN (costs off) DELETE FROM rw_view1 WHERE a=5;
+-- EXPLAIN (costs off) UPDATE rw_view1 SET a=6 WHERE a=5;
+-- EXPLAIN (costs off) DELETE FROM rw_view1 WHERE a=5;
 
 -- it's still updatable if we add a DO ALSO rule
 

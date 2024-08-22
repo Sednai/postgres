@@ -50,6 +50,7 @@
 #include "utils/builtins.h"
 #include "pgxc/locator.h"
 #include "pgxc/pgxc.h"
+#include "../pl/plpgsql/src/plpgsql.h"
 #include "parser/parse_type.h"
 #include "parser/parsetree.h"
 #include "pgxc/xc_maintenance_mode.h"
@@ -3628,15 +3629,14 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 	 * It is necessary to fetch parameters
 	 * before looking at the output value.
 	 */
+	ParamExternData paras[paraminfo->numParams];
+
 	for (i = 0; i < paraminfo->numParams; i++)
 	{
-		ParamExternData *param;
-
-		param = &paraminfo->params[i];
-		ParamExternData prmdata;
-
-		if (!OidIsValid(param->ptype) && paraminfo->paramFetch != NULL)
-			(*paraminfo->paramFetch) (paraminfo, i + 1, false, &prmdata);
+		if (paraminfo->paramFetch != NULL)
+			(*paraminfo->paramFetch) (paraminfo, i + 1, false, &paras[i]);
+		else 
+			paras[i] = paraminfo->params[i];
 
 		/*
 		 * This is the last parameter found as useful, so we need
@@ -3644,7 +3644,7 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 		 * nodes. All the parameters prior to the last usable having no
 		 * type available will be considered as NULL entries.
 		 */
-		if (OidIsValid(param->ptype))
+		if (OidIsValid(paras[i].ptype))
 			real_num_params = i + 1;
 	}
 
@@ -3669,7 +3669,7 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 	/* Parameter values */
 	for (i = 0; i < real_num_params; i++)
 	{
-		ParamExternData *param = &paraminfo->params[i];
+		ParamExternData *param = &paras[i];
 		uint32 n32;
 
 		/*
@@ -3735,7 +3735,7 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 		rq_state->rqs_num_params = real_num_params;
 		rq_state->rqs_param_types = (Oid *) palloc(sizeof(Oid) * real_num_params);
 		for (i = 0; i < real_num_params; i++)
-			rq_state->rqs_param_types[i] = paraminfo->params[i].ptype;
+			rq_state->rqs_param_types[i] = paras[i].ptype;
 	}
 
 	/* Assign the newly allocated data row to paramval */

@@ -46,7 +46,7 @@ INSERT INTO uaccount VALUES
 CREATE TABLE category (
     cid        int primary key,
     cname      text
-);
+) DISTRIBUTE BY REPLICATION;
 GRANT ALL ON category TO public;
 INSERT INTO category VALUES
     (11, 'novel'),

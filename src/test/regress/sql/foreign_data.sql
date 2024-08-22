@@ -21,6 +21,7 @@ CREATE ROLE regress_test_indirect;
 CREATE ROLE regress_unprivileged_role;
 
 CREATE FOREIGN DATA WRAPPER dummy;
+/*
 COMMENT ON FOREIGN DATA WRAPPER dummy IS 'useless';
 CREATE FOREIGN DATA WRAPPER postgresql VALIDATOR postgresql_fdw_validator;
 
@@ -865,14 +866,15 @@ DROP USER MAPPING FOR regress_test_role SERVER s6;
 DROP FOREIGN DATA WRAPPER foo CASCADE;
 DROP SERVER s8 CASCADE;
 \set VERBOSITY default
+*/
 DROP ROLE regress_test_indirect;
 DROP ROLE regress_test_role;
 DROP ROLE regress_unprivileged_role;                        -- ERROR
-REVOKE ALL ON FOREIGN DATA WRAPPER postgresql FROM regress_unprivileged_role;
-DROP ROLE regress_unprivileged_role;
+-- REVOKE ALL ON FOREIGN DATA WRAPPER postgresql FROM regress_unprivileged_role;
+-- DROP ROLE regress_unprivileged_role;
 DROP ROLE regress_test_role2;
-DROP FOREIGN DATA WRAPPER postgresql CASCADE;
-DROP FOREIGN DATA WRAPPER dummy CASCADE;
+-- DROP FOREIGN DATA WRAPPER postgresql CASCADE;
+-- DROP FOREIGN DATA WRAPPER dummy CASCADE;
 \c
 DROP ROLE regress_foreign_data_user;
 

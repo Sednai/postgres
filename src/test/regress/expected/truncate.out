@@ -2,7 +2,7 @@
 CREATE TABLE truncate_a (col1 integer primary key);
 INSERT INTO truncate_a VALUES (1);
 INSERT INTO truncate_a VALUES (2);
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
  col1 
 ------
     1
@@ -13,7 +13,7 @@ SELECT * FROM truncate_a;
 BEGIN;
 TRUNCATE truncate_a;
 ROLLBACK;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
  col1 
 ------
     1
@@ -31,7 +31,7 @@ SELECT * FROM truncate_a;
 
 -- Test foreign-key checks
 CREATE TABLE trunc_b (a int REFERENCES truncate_a);
-CREATE TABLE trunc_c (a serial PRIMARY KEY);
+CREATE TABLE trunc_c (a serial PRIMARY KEY) DISTRIBUTE BY REPLICATION;
 CREATE TABLE trunc_d (a int REFERENCES trunc_c);
 CREATE TABLE trunc_e (a int REFERENCES truncate_a, b int REFERENCES trunc_c);
 TRUNCATE TABLE truncate_a;		-- fail
@@ -366,7 +366,7 @@ CREATE TABLE truncate_a (id serial,
 ALTER SEQUENCE truncate_a_id1 OWNED BY truncate_a.id1;
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
  id | id1 
 ----+-----
   1 |  33
@@ -376,7 +376,7 @@ SELECT * FROM truncate_a;
 TRUNCATE truncate_a;
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
  id | id1 
 ----+-----
   3 |  35
@@ -384,48 +384,35 @@ SELECT * FROM truncate_a;
 (2 rows)
 
 TRUNCATE truncate_a RESTART IDENTITY;
+ERROR:  PGXC does not support RESTART IDENTITY yet
+DETAIL:  The feature is not supported currently
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
  id | id1 
 ----+-----
-  1 |  33
-  2 |  34
-(2 rows)
+  3 |  35
+  4 |  36
+  5 |  37
+  6 |  38
+(4 rows)
 
 CREATE TABLE truncate_b (id int GENERATED ALWAYS AS IDENTITY (START WITH 44));
-INSERT INTO truncate_b DEFAULT VALUES;
-INSERT INTO truncate_b DEFAULT VALUES;
-SELECT * FROM truncate_b;
- id 
-----
- 44
- 45
-(2 rows)
-
-TRUNCATE truncate_b;
-INSERT INTO truncate_b DEFAULT VALUES;
-INSERT INTO truncate_b DEFAULT VALUES;
-SELECT * FROM truncate_b;
- id 
-----
- 46
- 47
-(2 rows)
-
-TRUNCATE truncate_b RESTART IDENTITY;
-INSERT INTO truncate_b DEFAULT VALUES;
-INSERT INTO truncate_b DEFAULT VALUES;
-SELECT * FROM truncate_b;
- id 
-----
- 44
- 45
-(2 rows)
-
+ERROR:  GENERATED ALWAYS AS IDENTITY not supported in XC yet
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- SELECT * FROM truncate_b;
+-- TRUNCATE truncate_b;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- SELECT * FROM truncate_b;
+-- TRUNCATE truncate_b RESTART IDENTITY;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- INSERT INTO truncate_b DEFAULT VALUES;
+-- SELECT * FROM truncate_b;
 -- check rollback of a RESTART IDENTITY operation
 BEGIN;
-TRUNCATE truncate_a RESTART IDENTITY;
+-- TRUNCATE truncate_a RESTART IDENTITY;
 INSERT INTO truncate_a DEFAULT VALUES;
 SELECT * FROM truncate_a;
  id | id1 
@@ -436,14 +423,16 @@ SELECT * FROM truncate_a;
 ROLLBACK;
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY ID;
  id | id1 
 ----+-----
-  1 |  33
-  2 |  34
   3 |  35
   4 |  36
-(4 rows)
+  5 |  37
+  6 |  38
+  7 |  39
+  8 |  40
+(6 rows)
 
 DROP TABLE truncate_a;
 SELECT nextval('truncate_a_id1'); -- fail, seq should have been dropped
@@ -529,7 +518,7 @@ SELECT tp_ins_data();
 
 -- should truncate all partitions
 TRUNCATE TABLE truncpart;
-SELECT * FROM tp_chk_data();
+SELECT * FROM tp_chk_data() ORDER BY 2;
    pktb    | pkval | fktb | fkval 
 -----------+-------+------+-------
  truncprim |     1 |      |      

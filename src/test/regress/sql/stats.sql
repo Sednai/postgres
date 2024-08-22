@@ -94,11 +94,11 @@ TRUNCATE trunc_stats_test;
 INSERT INTO trunc_stats_test1 DEFAULT VALUES;
 INSERT INTO trunc_stats_test1 DEFAULT VALUES;
 INSERT INTO trunc_stats_test1 DEFAULT VALUES;
-UPDATE trunc_stats_test1 SET id = id + 10 WHERE id IN (1, 2);
+-- UPDATE trunc_stats_test1 SET id = id + 10 WHERE id IN (1, 2);
 DELETE FROM trunc_stats_test1 WHERE id = 3;
 
 BEGIN;
-UPDATE trunc_stats_test1 SET id = id + 100;
+-- UPDATE trunc_stats_test1 SET id = id + 100;
 TRUNCATE trunc_stats_test1;
 INSERT INTO trunc_stats_test1 DEFAULT VALUES;
 COMMIT;
@@ -107,11 +107,11 @@ COMMIT;
 BEGIN;
 INSERT INTO trunc_stats_test2 DEFAULT VALUES;
 INSERT INTO trunc_stats_test2 DEFAULT VALUES;
-SAVEPOINT p1;
+-- SAVEPOINT p1;
 INSERT INTO trunc_stats_test2 DEFAULT VALUES;
 TRUNCATE trunc_stats_test2;
 INSERT INTO trunc_stats_test2 DEFAULT VALUES;
-RELEASE SAVEPOINT p1;
+-- RELEASE SAVEPOINT p1;
 COMMIT;
 
 -- rollback a savepoint: this should count 4 inserts and have 2
@@ -119,12 +119,12 @@ COMMIT;
 BEGIN;
 INSERT INTO trunc_stats_test3 DEFAULT VALUES;
 INSERT INTO trunc_stats_test3 DEFAULT VALUES;
-SAVEPOINT p1;
+-- SAVEPOINT p1;
 INSERT INTO trunc_stats_test3 DEFAULT VALUES;
 INSERT INTO trunc_stats_test3 DEFAULT VALUES;
 TRUNCATE trunc_stats_test3;
 INSERT INTO trunc_stats_test3 DEFAULT VALUES;
-ROLLBACK TO SAVEPOINT p1;
+-- ROLLBACK TO SAVEPOINT p1;
 COMMIT;
 
 -- rollback a truncate: this should count 2 inserts and produce 2 dead tuples

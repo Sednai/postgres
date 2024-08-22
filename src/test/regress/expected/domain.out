@@ -51,7 +51,7 @@ COPY basictest (testvarchar) FROM stdin; -- fail
 ERROR:  value too long for type character varying(5)
 CONTEXT:  COPY basictest, line 1, column testvarchar: "notsoshorttext"
 COPY basictest (testvarchar) FROM stdin;
-select * from basictest;
+select * from basictest order by 1;
  testint4 | testtext | testvarchar | testnumeric 
 ----------+----------+-------------+-------------
        88 | haha     | short       |      123.12
@@ -61,7 +61,7 @@ select * from basictest;
 
 -- check that domains inherit operations from base types
 select testtext || testvarchar as concat, testnumeric + 42 as sum
-from basictest;
+from basictest order by 1;
   concat   |  sum   
 -----------+--------
  hahashort | 165.12

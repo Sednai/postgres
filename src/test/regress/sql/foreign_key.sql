@@ -6,7 +6,7 @@
 --
 -- First test, check and cascade
 --
-CREATE TABLE PKTABLE ( ptest1 int PRIMARY KEY, ptest2 text );
+CREATE TABLE PKTABLE ( ptest1 int PRIMARY KEY, ptest2 text ) DISTRIBUTE BY REPLICATION;
 CREATE TABLE FKTABLE ( ftest1 int REFERENCES PKTABLE MATCH FULL ON DELETE CASCADE ON UPDATE CASCADE, ftest2 int );
 
 -- Insert test data into PKTABLE
@@ -26,19 +26,19 @@ INSERT INTO FKTABLE VALUES (NULL, 1);
 INSERT INTO FKTABLE VALUES (100, 2);
 
 -- Check FKTABLE
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1;
 
 -- Delete a row from PK TABLE
 DELETE FROM PKTABLE WHERE ptest1=1;
 
 -- Check FKTABLE for removal of matched row
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1;
 
 -- Update a row from PK TABLE
 UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1;
 
 DROP TABLE FKTABLE;
 DROP TABLE PKTABLE;
@@ -46,7 +46,7 @@ DROP TABLE PKTABLE;
 --
 -- check set NULL and table constraint on multiple columns
 --
-CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 text, PRIMARY KEY(ptest1, ptest2) );
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 text, PRIMARY KEY(ptest1, ptest2) ) DISTRIBUTE BY REPLICATION;
 CREATE TABLE FKTABLE ( ftest1 int, ftest2 int, ftest3 int, CONSTRAINT constrname FOREIGN KEY(ftest1, ftest2)
                        REFERENCES PKTABLE MATCH FULL ON DELETE SET NULL ON UPDATE SET NULL);
 
@@ -77,31 +77,31 @@ INSERT INTO FKTABLE VALUES (NULL, 2, 4);
 INSERT INTO FKTABLE VALUES (1, NULL, 4);
 
 -- Check FKTABLE
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2;
 
 -- Delete a row from PK TABLE
 DELETE FROM PKTABLE WHERE ptest1=1 and ptest2=2;
 
 -- Check FKTABLE for removal of matched row
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Delete another row from PK TABLE
 DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
 
 -- Check FKTABLE (should be no change)
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Update a row from PK TABLE
 UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Try altering the column type where foreign keys are involved
 ALTER TABLE PKTABLE ALTER COLUMN ptest1 TYPE bigint;
 ALTER TABLE FKTABLE ALTER COLUMN ftest1 TYPE bigint;
-SELECT * FROM PKTABLE;
-SELECT * FROM FKTABLE;
+SELECT * FROM PKTABLE ORDER BY 1,2;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 DROP TABLE PKTABLE CASCADE;
 DROP TABLE FKTABLE;
@@ -109,7 +109,7 @@ DROP TABLE FKTABLE;
 --
 -- check set default and table constraint on multiple columns
 --
-CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 text, PRIMARY KEY(ptest1, ptest2) );
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 text, PRIMARY KEY(ptest1, ptest2) ) DISTRIBUTE BY REPLICATION;
 CREATE TABLE FKTABLE ( ftest1 int DEFAULT -1, ftest2 int DEFAULT -2, ftest3 int, CONSTRAINT constrname2 FOREIGN KEY(ftest1, ftest2)
                        REFERENCES PKTABLE MATCH FULL ON DELETE SET DEFAULT ON UPDATE SET DEFAULT);
 
@@ -138,25 +138,25 @@ INSERT INTO FKTABLE VALUES (NULL, 2, 4);
 INSERT INTO FKTABLE VALUES (1, NULL, 4);
 
 -- Check FKTABLE
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Delete a row from PK TABLE
 DELETE FROM PKTABLE WHERE ptest1=1 and ptest2=2;
 
 -- Check FKTABLE to check for removal
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Delete another row from PK TABLE
 DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
 
 -- Check FKTABLE (should be no change)
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Update a row from PK TABLE
 UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- this should fail for lack of CASCADE
 DROP TABLE PKTABLE;
@@ -167,8 +167,8 @@ DROP TABLE FKTABLE;
 --
 -- First test, check with no on delete or on update
 --
-CREATE TABLE PKTABLE ( ptest1 int PRIMARY KEY, ptest2 text );
-CREATE TABLE FKTABLE ( ftest1 int REFERENCES PKTABLE MATCH FULL, ftest2 int );
+CREATE TABLE PKTABLE ( ptest1 int PRIMARY KEY, ptest2 text ) DISTRIBUTE BY REPLICATION;
+CREATE TABLE FKTABLE ( ftest1 int REFERENCES PKTABLE MATCH FULL, ftest2 int ) DISTRIBUTE BY REPLICATION;
 
 -- Insert test data into PKTABLE
 INSERT INTO PKTABLE VALUES (1, 'Test1');
@@ -187,7 +187,7 @@ INSERT INTO FKTABLE VALUES (NULL, 1);
 INSERT INTO FKTABLE VALUES (100, 2);
 
 -- Check FKTABLE
-SELECT * FROM FKTABLE;
+SELECT * FROM FKTABLE ORDER BY 1;
 
 -- Check PKTABLE
 SELECT * FROM PKTABLE;
@@ -217,9 +217,9 @@ DROP TABLE PKTABLE;
 -- MATCH SIMPLE
 
 -- Base test restricting update/delete
-CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 int, ptest4 text, PRIMARY KEY(ptest1, ptest2, ptest3) );
+CREATE TABLE PKTABLE ( ptest1 int, ptest2 int, ptest3 int, ptest4 text, PRIMARY KEY(ptest1, ptest2, ptest3) ) DISTRIBUTE BY REPLICATION;
 CREATE TABLE FKTABLE ( ftest1 int, ftest2 int, ftest3 int, ftest4 int,  CONSTRAINT constrname3
-			FOREIGN KEY(ftest1, ftest2, ftest3) REFERENCES PKTABLE);
+			FOREIGN KEY(ftest1, ftest2, ftest3) REFERENCES PKTABLE) DISTRIBUTE BY REPLICATION;
 
 -- Insert Primary Key values
 INSERT INTO PKTABLE VALUES (1, 2, 3, 'test1');

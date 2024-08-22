@@ -89,6 +89,13 @@ be_lo_open(PG_FUNCTION_ARGS)
 	LargeObjectDesc *lobjDesc;
 	int			fd;
 
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
+
 #if FSDB
 	elog(DEBUG4, "lo_open(%u,%d)", lobjId, mode);
 #endif
@@ -122,6 +129,13 @@ be_lo_close(PG_FUNCTION_ARGS)
 {
 	int32		fd = PG_GETARG_INT32(0);
 
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
+
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_UNDEFINED_OBJECT),
@@ -150,6 +164,12 @@ lo_read(int fd, char *buf, int len)
 {
 	int			status;
 	LargeObjectDesc *lobj;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
@@ -178,6 +198,12 @@ lo_write(int fd, const char *buf, int len)
 {
 	int			status;
 	LargeObjectDesc *lobj;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
@@ -200,10 +226,17 @@ lo_write(int fd, const char *buf, int len)
 Datum
 be_lo_lseek(PG_FUNCTION_ARGS)
 {
+	
 	int32		fd = PG_GETARG_INT32(0);
 	int32		offset = PG_GETARG_INT32(1);
 	int32		whence = PG_GETARG_INT32(2);
 	int64		status;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
@@ -229,6 +262,12 @@ be_lo_lseek64(PG_FUNCTION_ARGS)
 	int64		offset = PG_GETARG_INT64(1);
 	int32		whence = PG_GETARG_INT32(2);
 	int64		status;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
@@ -244,6 +283,12 @@ Datum
 be_lo_creat(PG_FUNCTION_ARGS)
 {
 	Oid			lobjId;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	lo_cleanup_needed = true;
 	lobjId = inv_create(InvalidOid);
@@ -255,6 +300,12 @@ Datum
 be_lo_create(PG_FUNCTION_ARGS)
 {
 	Oid			lobjId = PG_GETARG_OID(0);
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	lo_cleanup_needed = true;
 	lobjId = inv_create(lobjId);
@@ -267,6 +318,12 @@ be_lo_tell(PG_FUNCTION_ARGS)
 {
 	int32		fd = PG_GETARG_INT32(0);
 	int64		offset;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
@@ -290,6 +347,12 @@ be_lo_tell64(PG_FUNCTION_ARGS)
 {
 	int32		fd = PG_GETARG_INT32(0);
 	int64		offset;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
@@ -305,6 +368,12 @@ Datum
 be_lo_unlink(PG_FUNCTION_ARGS)
 {
 	Oid			lobjId = PG_GETARG_OID(0);
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	/*
 	 * Must be owner of the large object.  It would be cleaner to check this
@@ -385,6 +454,12 @@ Datum
 be_lo_import(PG_FUNCTION_ARGS)
 {
 	text	   *filename = PG_GETARG_TEXT_PP(0);
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	PG_RETURN_OID(lo_import_internal(filename, InvalidOid));
 }
@@ -412,6 +487,12 @@ lo_import_internal(text *filename, Oid lobjOid)
 	char		fnamebuf[MAXPGPATH];
 	LargeObjectDesc *lobj;
 	Oid			oid;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	/*
 	 * open the file to be read in
@@ -469,6 +550,12 @@ be_lo_export(PG_FUNCTION_ARGS)
 	char		fnamebuf[MAXPGPATH];
 	LargeObjectDesc *lobj;
 	mode_t		oumask;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	/*
 	 * open the inversion object (no need to test for failure)
@@ -530,6 +617,12 @@ static void
 lo_truncate_internal(int32 fd, int64 len)
 {
 	LargeObjectDesc *lobj;
+#ifdef PGXC
+	ereport(ERROR,
+			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+			 errmsg("Postgres-XC does not support large object yet"),
+			 errdetail("The feature is not currently supported")));
+#endif
 
 	if (fd < 0 || fd >= cookies_size || cookies[fd] == NULL)
 		ereport(ERROR,
