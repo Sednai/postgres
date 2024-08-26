@@ -101,7 +101,7 @@ SELECT class, b, c
 
 SELECT class, c FROM e_star* x WHERE x.c NOTNULL ORDER BY class,c;
 
-SELECT * FROM f_star* x WHERE x.c ISNULL ORDER BY a,e,(f[0])[0];
+SELECT * FROM f_star* x WHERE x.c ISNULL ORDER BY a,e;
 
 -- grouping and aggregation on inherited sets have been busted in the past...
 
@@ -204,17 +204,17 @@ SELECT p.name, name(p.hobbies), name(equipment(p.hobbies)) FROM ONLY person p OR
 --
 -- as above, but jeff needs advil and peet's coffee as well.
 --
-SELECT p.name, name(p.hobbies), name(equipment(p.hobbies)) FROM person* p;
+SELECT p.name, name(p.hobbies), name(equipment(p.hobbies)) FROM person* p ORDER BY 1,3;
 
 --
 -- just like the last two, but make sure that the target list fixup and
 -- unflattening is being done correctly.
 --
-SELECT name(equipment(p.hobbies)), p.name, name(p.hobbies) FROM ONLY person p;
+SELECT name(equipment(p.hobbies)), p.name, name(p.hobbies) FROM ONLY person p ORDER BY 2,1;
 
-SELECT (p.hobbies).equipment.name, p.name, name(p.hobbies) FROM person* p;
+SELECT (p.hobbies).equipment.name, p.name, name(p.hobbies) FROM person* p ORDER BY 2,1;
 
-SELECT (p.hobbies).equipment.name, name(p.hobbies), p.name FROM ONLY person p;
+SELECT (p.hobbies).equipment.name, name(p.hobbies), p.name FROM ONLY person p ORDER BY 3,1;
 
 SELECT name(equipment(p.hobbies)), name(p.hobbies), p.name FROM person* p ORDER BY 3,1;
 
@@ -230,13 +230,13 @@ SELECT name(equipment_named_ambiguous_1b(hobby_construct_named(text 'skywalking'
 
 SELECT name(equipment_named_ambiguous_1c(hobby_construct_named(text 'skywalking', text 'mer')));
 
-SELECT name(equipment_named_ambiguous_2a(text 'skywalking'));
+SELECT name(equipment_named_ambiguous_2a(text 'skywalking')) ORDER BY 1;
 
-SELECT name(equipment_named_ambiguous_2b(text 'skywalking'));
+SELECT name(equipment_named_ambiguous_2b(text 'skywalking')) ORDER BY 1;
 
 SELECT hobbies_by_name('basketball');
 
-SELECT name, overpaid(emp.*) FROM emp;
+SELECT name, overpaid(emp.*) FROM emp ORDER BY 1;
 
 --
 -- Try a few cases with SQL-spec row constructor expressions
@@ -245,7 +245,7 @@ SELECT * FROM equipment(ROW('skywalking', 'mer'));
 
 SELECT name(equipment(ROW('skywalking', 'mer')));
 
-SELECT *, name(equipment(h.*)) FROM hobbies_r h;
+SELECT *, name(equipment(h.*)) FROM hobbies_r h ORDER BY 2,3;
 
 SELECT *, (equipment(CAST((h.*) AS hobbies_r))).name FROM hobbies_r h ORDER BY 2,3;
 

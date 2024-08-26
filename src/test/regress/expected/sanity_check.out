@@ -165,6 +165,9 @@ pg_ts_parser|t
 pg_ts_template|t
 pg_type|t
 pg_user_mapping|t
+pgxc_class|t
+pgxc_group|t
+pgxc_node|t
 point_tbl|t
 polygon_tbl|t
 quad_box_tbl|t

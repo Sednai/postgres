@@ -35,7 +35,7 @@ extern int relation_is_updatable(Oid reloid,
 					  Bitmapset *include_cols);
 
 #ifdef PGXC
-extern List *QueryRewriteCTAS(Query *parsetree);
+extern List *QueryRewriteCTAS(Query *parsetree, bool execute);
 extern int pgxc_find_unique_index(Oid relid, int16 **indexed_col_numbers);
 extern bool is_pk_being_changed(const Query *query, int16 *indexed_col_numbers,
 								int count);

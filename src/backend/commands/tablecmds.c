@@ -835,7 +835,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	 *    should not try to find out the node list itself.
 	 */
 	if ((IS_PGXC_COORDINATOR || (isRestoreMode && stmt->distributeby != NULL))
-		&& relkind == RELKIND_RELATION)
+		&& (relkind == RELKIND_RELATION || relkind == RELKIND_PARTITIONED_TABLE) )
 	{
 		AddRelationDistribution(relationId, stmt->distributeby,
 								stmt->subcluster, inheritOids, descriptor);

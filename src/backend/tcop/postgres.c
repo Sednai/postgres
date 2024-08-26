@@ -841,7 +841,7 @@ pg_rewrite_query(Query *query)
 		 * into an INSERT INTO statement. This step is not carried out for
 		 * materialized views.
 		 */
-			querytree_list = QueryRewriteCTAS(query);
+			querytree_list = QueryRewriteCTAS(query, true);
 	}
 	else
 #endif

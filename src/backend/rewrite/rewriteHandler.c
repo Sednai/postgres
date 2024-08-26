@@ -4403,7 +4403,7 @@ QueryRewrite(Query *parsetree)
  * This function is not used for CTAS statements for materialized views.
  */
 List *
-QueryRewriteCTAS(Query *parsetree)
+QueryRewriteCTAS(Query *parsetree, bool execute)
 {
 	RangeVar *relation;
 	CreateStmt *create_stmt;
@@ -4487,7 +4487,7 @@ QueryRewriteCTAS(Query *parsetree)
 	if (lc != NULL)
 		ereport(ERROR,
 				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("CREATE TABLE AS specifies too many column names")));
+				 errmsg("too many column names were specified")));
 
 	/*
 	 * Set column information and the distribution mechanism (which will be
@@ -4533,35 +4533,42 @@ QueryRewriteCTAS(Query *parsetree)
     wrapper->stmt_len = -1;
 
 	/* Finally, fire off the query to run the DDL */
-	ProcessUtility(wrapper, cquery.data, PROCESS_UTILITY_TOPLEVEL, NULL, NULL, NULL,  /* Tentative fix.  Nedd a review.  K.Suzuki */
-					false,
-					NULL);
-
+	if(execute)
+		ProcessUtility(wrapper, cquery.data, PROCESS_UTILITY_TOPLEVEL, NULL, NULL, NULL,  /* Tentative fix.  Nedd a review.  K.Suzuki */
+						false,
+						NULL);
+	
 	/*
 	 * Now fold the CTAS statement into an INSERT INTO statement. The
 	 * utility is no more required.
 	 */
 	parsetree->utilityStmt = NULL;
 
-	/* Get the SELECT query string */
-	initStringInfo(&cquery);
-	deparse_query((Query *)stmt->query, &cquery, NIL, true, false);
-	selectstr = pstrdup(cquery.data);
+	if(!into->skipData) {
 
-	/* Now, finally build the INSERT INTO statement */
-	initStringInfo(&cquery);
+		/* Get the SELECT query string */
+		initStringInfo(&cquery);
+		deparse_query((Query *)stmt->query, &cquery, NIL, true, false);
+		selectstr = pstrdup(cquery.data);
 
-	if (relation->schemaname)
-		appendStringInfo(&cquery, "INSERT INTO %s.%s",
-				relation->schemaname, relation->relname);
-	else
-		appendStringInfo(&cquery, "INSERT INTO %s", relation->relname);
+		/* Now, finally build the INSERT INTO statement */
+		initStringInfo(&cquery);
 
-	appendStringInfo(&cquery, " %s", selectstr);
+		if (relation->schemaname)
+			appendStringInfo(&cquery, "INSERT INTO %s.%s",
+					relation->schemaname, relation->relname);
+		else
+			appendStringInfo(&cquery, "INSERT INTO %s", relation->relname);
 
-	raw_parsetree_list = pg_parse_query(cquery.data);
-	return pg_analyze_and_rewrite(linitial(raw_parsetree_list), cquery.data,
-			NULL, 0, NULL);
+		appendStringInfo(&cquery, " %s", selectstr);
+
+		raw_parsetree_list = pg_parse_query(cquery.data);
+		return pg_analyze_and_rewrite(linitial(raw_parsetree_list), cquery.data,
+				NULL, 0, NULL);
+	} else {
+		return NIL;
+	}
+
 }
 
 /*

@@ -44,7 +44,7 @@ GRANT regress_priv_group2 TO regress_priv_user4 WITH ADMIN OPTION;
 SET SESSION AUTHORIZATION regress_priv_user1;
 SELECT session_user, current_user;
 
-CREATE TABLE atest1 ( a int, b text );
+CREATE TABLE atest1 ( a int, b text ) DISTRIBUTE BY REPLICATION;
 SELECT * FROM atest1;
 INSERT INTO atest1 VALUES (1, 'one');
 DELETE FROM atest1;
@@ -61,7 +61,7 @@ GRANT ALL ON atest1 TO regress_priv_user2;
 GRANT SELECT ON atest1 TO regress_priv_user3, regress_priv_user4;
 SELECT * FROM atest1;
 
-CREATE TABLE atest2 (col1 varchar(10), col2 boolean);
+CREATE TABLE atest2 (col1 varchar(10), col2 boolean) DISTRIBUTE BY REPLICATION;
 GRANT SELECT ON atest2 TO regress_priv_user2;
 GRANT UPDATE ON atest2 TO regress_priv_user3;
 GRANT INSERT ON atest2 TO regress_priv_user4;
@@ -468,8 +468,8 @@ DELETE FROM atest5 WHERE two = 2; -- ok
 
 -- check inheritance cases
 SET SESSION AUTHORIZATION regress_priv_user1;
-CREATE TABLE atestp1 (f1 int, f2 int) WITH OIDS;
-CREATE TABLE atestp2 (fx int, fy int) WITH OIDS;
+CREATE TABLE atestp1 (f1 int, f2 int) WITH OIDS DISTRIBUTE BY ROUNDROBIN;
+CREATE TABLE atestp2 (fx int, fy int) WITH OIDS DISTRIBUTE BY ROUNDROBIN;
 CREATE TABLE atestc (fz int) INHERITS (atestp1, atestp2);
 GRANT SELECT(fx,fy,oid) ON atestp2 TO regress_priv_user2;
 GRANT SELECT(fx) ON atestc TO regress_priv_user2;

@@ -376,7 +376,7 @@ select 33 = all ('{33,null,33}');
 SELECT -1 != ALL(ARRAY(SELECT NULLIF(g.i, 900) FROM generate_series(1,1000) g(i)));
 
 -- test indexes on arrays
-create temp table arr_tbl (f1 int[] unique);
+create temp table arr_tbl (f1 int[] unique) distribute by replication;
 insert into arr_tbl values ('{1,2,3}');
 insert into arr_tbl values ('{1,2}');
 -- failure expected:

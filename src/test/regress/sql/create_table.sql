@@ -831,7 +831,7 @@ create table part_column_drop (
   d int,
   b int,
   useless_3 int
-) partition by range (id);
+) partition by range (id) distribute by replication;
 alter table part_column_drop drop column useless_1;
 alter table part_column_drop drop column useless_2;
 alter table part_column_drop drop column useless_3;

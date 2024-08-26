@@ -223,7 +223,7 @@ CREATE TABLE truncate_b (id int GENERATED ALWAYS AS IDENTITY (START WITH 44));
 BEGIN;
 -- TRUNCATE truncate_a RESTART IDENTITY;
 INSERT INTO truncate_a DEFAULT VALUES;
-SELECT * FROM truncate_a;
+SELECT * FROM truncate_a ORDER BY 1;
 ROLLBACK;
 INSERT INTO truncate_a DEFAULT VALUES;
 INSERT INTO truncate_a DEFAULT VALUES;
@@ -252,13 +252,14 @@ CREATE FUNCTION tp_ins_data() RETURNS void LANGUAGE plpgsql AS $$
 	INSERT INTO truncpart VALUES (1), (100), (150);
   END
 $$;
-CREATE FUNCTION tp_chk_data(OUT pktb regclass, OUT pkval int, OUT fktb regclass, OUT fkval int)
+-- PGXC does not guarantee matching oids on different nodes
+CREATE FUNCTION tp_chk_data(OUT pkval int, OUT fktb regclass, OUT fkval int)
   RETURNS SETOF record LANGUAGE plpgsql AS $$
   BEGIN
     RETURN QUERY SELECT
-      pk.tableoid::regclass, pk.a, fk.tableoid::regclass, fk.a
+      pk.a, fk.tableoid::regclass, fk.a
     FROM truncprim pk FULL JOIN truncpart fk USING (a)
-    ORDER BY 2, 4;
+    ORDER BY 1, 3;
   END
 $$;
 CREATE TABLE truncprim (a int PRIMARY KEY);

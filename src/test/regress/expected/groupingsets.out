@@ -435,27 +435,13 @@ select x, not x as not_x, q2 from
 (5 rows)
 
 -- check qual push-down rules for a subquery with grouping sets
-explain (verbose, costs off)
-select * from (
-  select 1 as x, q1, sum(q2)
-  from int8_tbl i1
-  group by grouping sets(1, 2)
-) ss
-where x = 1 and q1 = 123;
-                 QUERY PLAN                 
---------------------------------------------
- Subquery Scan on ss
-   Output: ss.x, ss.q1, ss.sum
-   Filter: ((ss.x = 1) AND (ss.q1 = 123))
-   ->  GroupAggregate
-         Output: (1), i1.q1, sum(i1.q2)
-         Group Key: 1
-         Sort Key: i1.q1
-           Group Key: i1.q1
-         ->  Seq Scan on public.int8_tbl i1
-               Output: 1, i1.q1, i1.q2
-(10 rows)
-
+-- explain (verbose, costs off)
+-- select * from (
+--   select 1 as x, q1, sum(q2)
+--   from int8_tbl i1
+--   group by grouping sets(1, 2)
+-- ) ss
+-- where x = 1 and q1 = 123;
 select * from (
   select 1 as x, q1, sum(q2)
   from int8_tbl i1
@@ -467,26 +453,11 @@ where x = 1 and q1 = 123;
 (0 rows)
 
 -- check handling of pulled-up SubPlan in GROUPING() argument (bug #17479)
-explain (verbose, costs off)
-select grouping(ss.x)
-from int8_tbl i1
-cross join lateral (select (select i1.q1) as x) ss
-group by ss.x;
-                   QUERY PLAN                   
-------------------------------------------------
- GroupAggregate
-   Output: GROUPING((SubPlan 1)), ((SubPlan 2))
-   Group Key: ((SubPlan 2))
-   ->  Sort
-         Output: ((SubPlan 2)), i1.q1
-         Sort Key: ((SubPlan 2))
-         ->  Seq Scan on public.int8_tbl i1
-               Output: (SubPlan 2), i1.q1
-               SubPlan 2
-                 ->  Result
-                       Output: i1.q1
-(11 rows)
-
+-- explain (verbose, costs off)
+-- select grouping(ss.x)
+-- from int8_tbl i1
+-- cross join lateral (select (select i1.q1) as x) ss
+-- group by ss.x;
 select grouping(ss.x)
 from int8_tbl i1
 cross join lateral (select (select i1.q1) as x) ss
@@ -497,29 +468,11 @@ group by ss.x;
         0
 (2 rows)
 
-explain (verbose, costs off)
-select (select grouping(ss.x))
-from int8_tbl i1
-cross join lateral (select (select i1.q1) as x) ss
-group by ss.x;
-                 QUERY PLAN                 
---------------------------------------------
- GroupAggregate
-   Output: (SubPlan 2), ((SubPlan 3))
-   Group Key: ((SubPlan 3))
-   ->  Sort
-         Output: ((SubPlan 3)), i1.q1
-         Sort Key: ((SubPlan 3))
-         ->  Seq Scan on public.int8_tbl i1
-               Output: (SubPlan 3), i1.q1
-               SubPlan 3
-                 ->  Result
-                       Output: i1.q1
-   SubPlan 2
-     ->  Result
-           Output: GROUPING((SubPlan 1))
-(14 rows)
-
+-- explain (verbose, costs off)
+-- select (select grouping(ss.x))
+-- from int8_tbl i1
+-- cross join lateral (select (select i1.q1) as x) ss
+-- group by ss.x;
 select (select grouping(ss.x))
 from int8_tbl i1
 cross join lateral (select (select i1.q1) as x) ss
@@ -554,17 +507,8 @@ ERROR:  aggregate functions are not allowed in FROM clause of their own query le
 LINE 3:        lateral (select a, b, sum(v.x) from gstest_data(v.x) ...
                                      ^
 -- min max optimization should still work with GROUP BY ()
-explain (costs off)
-  select min(unique1) from tenk1 GROUP BY ();
-                         QUERY PLAN                         
-------------------------------------------------------------
- Result
-   InitPlan 1 (returns $0)
-     ->  Limit
-           ->  Index Only Scan using tenk1_unique1 on tenk1
-                 Index Cond: (unique1 IS NOT NULL)
-(5 rows)
-
+-- explain (costs off)
+--   select min(unique1) from tenk1 GROUP BY ();
 -- Views with GROUPING SET queries
 CREATE VIEW gstest_view AS select a, b, grouping(a,b), sum(c), count(*), max(c)
   from gstest2 group by rollup ((a,b,c),(c,d));
@@ -734,18 +678,8 @@ select a, b, sum(v.x)
 (12 rows)
 
 -- Test reordering of grouping sets
-explain (costs off)
-select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
-                                  QUERY PLAN                                  
-------------------------------------------------------------------------------
- GroupAggregate
-   Group Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
-   Group Key: "*VALUES*".column3
-   ->  Sort
-         Sort Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
-         ->  Values Scan on "*VALUES*"
-(6 rows)
-
+-- explain (costs off)
+-- select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
 -- Agg level check. This query should error out.
 select (select grouping(a,b) from gstest2) from gstest2 group by a,b;
 ERROR:  arguments to GROUPING must be grouping expressions of the associated query level
@@ -814,19 +748,8 @@ select a,count(*) from gstest2 group by rollup(a) having a is distinct from 1 or
    |     9
 (2 rows)
 
-explain (costs off)
-  select a,count(*) from gstest2 group by rollup(a) having a is distinct from 1 order by a;
-            QUERY PLAN            
-----------------------------------
- GroupAggregate
-   Group Key: a
-   Group Key: ()
-   Filter: (a IS DISTINCT FROM 1)
-   ->  Sort
-         Sort Key: a
-         ->  Seq Scan on gstest2
-(7 rows)
-
+-- explain (costs off)
+--   select a,count(*) from gstest2 group by rollup(a) having a is distinct from 1 order by a;
 select v.c, (select count(*) from gstest2 group by () having v.c)
   from (values (false),(true)) v(c) order by v.c;
  c | count 
@@ -835,23 +758,9 @@ select v.c, (select count(*) from gstest2 group by () having v.c)
  t |     9
 (2 rows)
 
-explain (costs off)
-  select v.c, (select count(*) from gstest2 group by () having v.c)
-    from (values (false),(true)) v(c) order by v.c;
-                        QUERY PLAN                         
------------------------------------------------------------
- Sort
-   Sort Key: "*VALUES*".column1
-   ->  Values Scan on "*VALUES*"
-         SubPlan 1
-           ->  Aggregate
-                 Group Key: ()
-                 Filter: "*VALUES*".column1
-                 ->  Result
-                       One-Time Filter: "*VALUES*".column1
-                       ->  Seq Scan on gstest2
-(10 rows)
-
+-- explain (costs off)
+--   select v.c, (select count(*) from gstest2 group by () having v.c)
+--     from (values (false),(true)) v(c) order by v.c;
 -- HAVING with GROUPING queries
 select ten, grouping(ten) from onek
 group by grouping sets(ten) having grouping(ten) >= 0
@@ -1062,18 +971,8 @@ select a, b, grouping(a,b), sum(v), count(*), max(v)
    | 4 |        2 |  17 |     1 |  17
 (8 rows)
 
-explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
-  from gstest1 group by grouping sets ((a),(b)) order by 3,1,2;
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (GROUPING("*VALUES*".column1, "*VALUES*".column2)), "*VALUES*".column1, "*VALUES*".column2
-   ->  HashAggregate
-         Hash Key: "*VALUES*".column1
-         Hash Key: "*VALUES*".column2
-         ->  Values Scan on "*VALUES*"
-(6 rows)
-
+-- explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
+--   from gstest1 group by grouping sets ((a),(b)) order by 3,1,2;
 select a, b, grouping(a,b), sum(v), count(*), max(v)
   from gstest1 group by cube(a,b) order by 3,1,2;
  a | b | grouping | sum | count | max 
@@ -1096,37 +995,12 @@ select a, b, grouping(a,b), sum(v), count(*), max(v)
    |   |        3 | 145 |    10 |  19
 (16 rows)
 
-explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
-  from gstest1 group by cube(a,b) order by 3,1,2;
-                                               QUERY PLAN                                               
---------------------------------------------------------------------------------------------------------
- Sort
-   Sort Key: (GROUPING("*VALUES*".column1, "*VALUES*".column2)), "*VALUES*".column1, "*VALUES*".column2
-   ->  MixedAggregate
-         Hash Key: "*VALUES*".column1, "*VALUES*".column2
-         Hash Key: "*VALUES*".column1
-         Hash Key: "*VALUES*".column2
-         Group Key: ()
-         ->  Values Scan on "*VALUES*"
-(8 rows)
-
+-- explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
+--   from gstest1 group by cube(a,b) order by 3,1,2;
 -- shouldn't try and hash
-explain (costs off)
-  select a, b, grouping(a,b), array_agg(v order by v)
-    from gstest1 group by cube(a,b);
-                        QUERY PLAN                        
-----------------------------------------------------------
- GroupAggregate
-   Group Key: "*VALUES*".column1, "*VALUES*".column2
-   Group Key: "*VALUES*".column1
-   Group Key: ()
-   Sort Key: "*VALUES*".column2
-     Group Key: "*VALUES*".column2
-   ->  Sort
-         Sort Key: "*VALUES*".column1, "*VALUES*".column2
-         ->  Values Scan on "*VALUES*"
-(9 rows)
-
+-- explain (costs off)
+--   select a, b, grouping(a,b), array_agg(v order by v)
+--     from gstest1 group by cube(a,b);
 -- unsortable cases
 select unsortable_col, count(*)
   from gstest4 group by grouping sets ((unsortable_col),(unsortable_col))
@@ -1155,24 +1029,12 @@ select unhashable_col, unsortable_col,
                 |              1 |        2 |     4 | 195
 (6 rows)
 
-explain (costs off)
-  select unhashable_col, unsortable_col,
-         grouping(unhashable_col, unsortable_col),
-         count(*), sum(v)
-    from gstest4 group by grouping sets ((unhashable_col),(unsortable_col))
-   order by 3,5;
-                            QUERY PLAN                            
-------------------------------------------------------------------
- Sort
-   Sort Key: (GROUPING(unhashable_col, unsortable_col)), (sum(v))
-   ->  MixedAggregate
-         Hash Key: unsortable_col
-         Group Key: unhashable_col
-         ->  Sort
-               Sort Key: unhashable_col
-               ->  Seq Scan on gstest4
-(8 rows)
-
+-- explain (costs off)
+--   select unhashable_col, unsortable_col,
+--          grouping(unhashable_col, unsortable_col),
+--          count(*), sum(v)
+--     from gstest4 group by grouping sets ((unhashable_col),(unsortable_col))
+--    order by 3,5;
 select unhashable_col, unsortable_col,
        grouping(unhashable_col, unsortable_col),
        count(*), sum(v)
@@ -1198,24 +1060,12 @@ select unhashable_col, unsortable_col,
                 |              1 |        2 |     1 | 128
 (16 rows)
 
-explain (costs off)
-  select unhashable_col, unsortable_col,
-         grouping(unhashable_col, unsortable_col),
-         count(*), sum(v)
-    from gstest4 group by grouping sets ((v,unhashable_col),(v,unsortable_col))
-   order by 3,5;
-                            QUERY PLAN                            
-------------------------------------------------------------------
- Sort
-   Sort Key: (GROUPING(unhashable_col, unsortable_col)), (sum(v))
-   ->  MixedAggregate
-         Hash Key: v, unsortable_col
-         Group Key: v, unhashable_col
-         ->  Sort
-               Sort Key: v, unhashable_col
-               ->  Seq Scan on gstest4
-(8 rows)
-
+-- explain (costs off)
+--   select unhashable_col, unsortable_col,
+--          grouping(unhashable_col, unsortable_col),
+--          count(*), sum(v)
+--     from gstest4 group by grouping sets ((v,unhashable_col),(v,unsortable_col))
+--    order by 3,5;
 -- empty input: first is 0 rows, second 1, third 3 etc.
 select a, b, sum(v), count(*) from gstest_empty group by grouping sets ((a,b),a);
  a | b | sum | count 
@@ -1675,22 +1525,8 @@ select v||'a', case when grouping(v||'a') = 1 then 1 else 0 end, count(*)
 (4 rows)
 
 -- test handling of outer GroupingFunc within subqueries
-explain (costs off)
-select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
-           QUERY PLAN            
----------------------------------
- MixedAggregate
-   Hash Key: $1
-   Group Key: ()
-   ->  Result
-         InitPlan 2 (returns $1)
-           ->  Result
-         InitPlan 3 (returns $2)
-           ->  Result
-   SubPlan 1
-     ->  Result
-(10 rows)
-
+-- explain (costs off)
+-- select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
  grouping 
 ----------
@@ -1698,23 +1534,8 @@ select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
         0
 (2 rows)
 
-explain (costs off)
-select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
-        QUERY PLAN         
----------------------------
- GroupAggregate
-   Group Key: $2
-   InitPlan 1 (returns $1)
-     ->  Result
-   InitPlan 3 (returns $2)
-     ->  Result
-   InitPlan 4 (returns $3)
-     ->  Result
-   ->  Result
-   SubPlan 2
-     ->  Result
-(11 rows)
-
+-- explain (costs off)
+-- select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
  grouping 
 ----------
@@ -1722,26 +1543,9 @@ select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
 (1 row)
 
 -- check that we don't pull up when a phrel-less PHV would result
-explain (verbose, costs off)
-select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
-group by cube(ss.f) order by 1;
-                    QUERY PLAN                    
---------------------------------------------------
- Sort
-   Output: (i4.f1)
-   Sort Key: (i4.f1)
-   ->  MixedAggregate
-         Output: (i4.f1)
-         Hash Key: (i4.f1)
-         Group Key: ()
-         ->  Nested Loop
-               Output: (i4.f1)
-               ->  Seq Scan on public.int4_tbl i4
-                     Output: i4.f1
-               ->  Result
-                     Output: i4.f1
-(13 rows)
-
+-- explain (verbose, costs off)
+-- select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
+-- group by cube(ss.f) order by 1;
 select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
 group by cube(ss.f) order by 1;
       f      

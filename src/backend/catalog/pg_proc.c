@@ -918,7 +918,8 @@ fmgr_sql_validator(PG_FUNCTION_ARGS)
 
 #ifdef PGXC
 				/* Block CTAS in SQL functions */
-				if (IsA(parsetree, CreateTableAsStmt))
+				if (IsA(parsetree->stmt, CreateTableAsStmt)
+				)
 					ereport(ERROR,
 							(errcode(ERRCODE_SYNTAX_ERROR),
 							errmsg("In XC, SQL functions cannot contain utility statements")));

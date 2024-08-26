@@ -250,6 +250,14 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt, const char *queryString,
 	 * executed repeatedly.  (See also the same hack in DECLARE CURSOR and
 	 * PREPARE.)  XXX FIXME someday.
 	 */
+#ifdef PGXC
+Query *query = castNode(Query, copyObject(stmt->query));
+if (query->commandType == CMD_UTILITY &&
+		IsA(query->utilityStmt, CreateTableAsStmt) &&
+		((CreateTableAsStmt *)query->utilityStmt)->relkind != OBJECT_MATVIEW)
+			rewritten = QueryRewriteCTAS( castNode(Query, copyObject(stmt->query)), es->analyze);
+	else
+#endif
 	rewritten = QueryRewrite(castNode(Query, copyObject(stmt->query)));
 
 	/* emit opening boilerplate */

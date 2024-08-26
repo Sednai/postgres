@@ -98,9 +98,9 @@ create function int8alias1cmp(int8, int8alias1) returns int
 alter operator family integer_ops using btree add
   function 1 int8alias1cmp (int8, int8alias1);
 
-create table ec0 (ff int8 primary key, f1 int8, f2 int8);
-create table ec1 (ff int8 primary key, f1 int8alias1, f2 int8alias2);
-create table ec2 (xf int8 primary key, x1 int8alias1, x2 int8alias2);
+create table ec0 (ff int8 primary key, f1 int8, f2 int8) distribute by replication;
+create table ec1 (ff int8 primary key, f1 int8alias1, f2 int8alias2) distribute by replication;
+create table ec2 (xf int8 primary key, x1 int8alias1, x2 int8alias2) distribute by replication;
 
 -- for the moment we only want to look at nestloop plans
 set enable_hashjoin = off;
@@ -113,7 +113,7 @@ set enable_mergejoin = off;
 --
 
 -- explain (costs off)
---  select * from ec0 where ff = f1 and f1 = '42'::int8;
+--   select * from ec0 where ff = f1 and f1 = '42'::int8;
 -- explain (costs off)
 --   select * from ec0 where ff = f1 and f1 = '42'::int8alias1;
 -- explain (costs off)
@@ -256,9 +256,9 @@ revoke select on ec1 from regress_user_ectest;
 drop user regress_user_ectest;
 
 -- check that X=X is converted to X IS NOT NULL when appropriate
-explain (costs off)
-  select * from tenk1 where unique1 = unique1 and unique2 = unique2;
+-- explain (costs off)
+--   select * from tenk1 where unique1 = unique1 and unique2 = unique2;
 
 -- this could be converted, but isn't at present
-explain (costs off)
-  select * from tenk1 where unique1 = unique1 or unique2 = unique2;
+-- explain (costs off)
+--   select * from tenk1 where unique1 = unique1 or unique2 = unique2;

@@ -76,14 +76,14 @@ DROP TABLE ctas_nodata_4;
 -- CREATE TABLE AS/SELECT INTO as last command in a SQL function
 -- have been known to cause problems
 --
-CREATE FUNCTION make_table() RETURNS VOID
-AS $$
-  CREATE TABLE created_table AS SELECT * FROM int8_tbl;
-$$ LANGUAGE SQL;
-
-SELECT make_table();
-
-SELECT * FROM created_table;
+-- PGXC deactivated
+-- CREATE FUNCTION make_table() RETURNS VOID
+-- AS $$
+--   CREATE TABLE created_table AS SELECT * FROM int8_tbl;
+-- $$ LANGUAGE SQL;
+-- SELECT make_table();
+CREATE TABLE created_table AS SELECT * FROM int8_tbl;
+SELECT * FROM created_table ORDER BY 1,2;
 
 -- Try EXPLAIN ANALYZE SELECT INTO, but hide the output since it won't
 -- be stable.

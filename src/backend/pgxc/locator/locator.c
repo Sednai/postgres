@@ -743,7 +743,7 @@ GetRelationLocInfo(Oid relid)
 
 	if (rel->rd_locator_info)
 		ret_loc_info = CopyRelationLocInfo(rel->rd_locator_info);
-
+	
 	relation_close(rel, AccessShareLock);
 
 	return ret_loc_info;

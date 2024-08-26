@@ -41,7 +41,7 @@ SELECT session_user, current_user;
  regress_priv_user1 | regress_priv_user1
 (1 row)
 
-CREATE TABLE atest1 ( a int, b text );
+CREATE TABLE atest1 ( a int, b text ) DISTRIBUTE BY REPLICATION;
 SELECT * FROM atest1;
  a | b 
 ---+---
@@ -50,7 +50,6 @@ SELECT * FROM atest1;
 INSERT INTO atest1 VALUES (1, 'one');
 DELETE FROM atest1;
 UPDATE atest1 SET a = 1 WHERE b = 'blech';
-ERROR:  Partition column can't be updated in current XC version
 TRUNCATE atest1;
 BEGIN;
 LOCK atest1 IN ACCESS EXCLUSIVE MODE;
@@ -68,7 +67,7 @@ SELECT * FROM atest1;
 ---+---
 (0 rows)
 
-CREATE TABLE atest2 (col1 varchar(10), col2 boolean);
+CREATE TABLE atest2 (col1 varchar(10), col2 boolean) DISTRIBUTE BY REPLICATION;
 GRANT SELECT ON atest2 TO regress_priv_user2;
 GRANT UPDATE ON atest2 TO regress_priv_user3;
 GRANT INSERT ON atest2 TO regress_priv_user4;
@@ -96,14 +95,13 @@ INSERT INTO atest2 VALUES ('foo', true); -- fail
 ERROR:  permission denied for table atest2
 INSERT INTO atest1 SELECT 1, b FROM atest1; -- ok
 UPDATE atest1 SET a = 1 WHERE a = 2; -- ok
-ERROR:  Partition column can't be updated in current XC version
 UPDATE atest2 SET col2 = NOT col2; -- fail
 ERROR:  permission denied for table atest2
 SELECT * FROM atest1 ORDER BY 1 FOR UPDATE; -- ok
  a |  b  
 ---+-----
  1 | two
- 2 | two
+ 1 | two
 (2 rows)
 
 SELECT * FROM atest2 FOR UPDATE; -- fail
@@ -142,7 +140,7 @@ SELECT * FROM atest1 ORDER BY 1; -- ok
  a |  b  
 ---+-----
  1 | two
- 2 | two
+ 1 | two
 (2 rows)
 
 SELECT * FROM atest2; -- fail
@@ -152,7 +150,6 @@ ERROR:  permission denied for table atest1
 INSERT INTO atest2 VALUES ('foo', true); -- fail
 ERROR:  permission denied for table atest2
 INSERT INTO atest1 SELECT 1, b FROM atest1; -- fail
-ERROR:  Partition column can't be updated in current XC version
 UPDATE atest2 SET col2 = NULL; -- ok
 UPDATE atest2 SET col2 = NOT col2; -- fails; requires SELECT on atest2
 ERROR:  permission denied for table atest2
@@ -181,7 +178,7 @@ SELECT * FROM atest1 ORDER BY 1; -- ok
  a |  b  
 ---+-----
  1 | two
- 2 | two
+ 1 | two
 (2 rows)
 
 -- test leaky-function protections in selfuncs
@@ -660,8 +657,8 @@ ERROR:  permission denied for table atest5
 DELETE FROM atest5 WHERE two = 2; -- ok
 -- check inheritance cases
 SET SESSION AUTHORIZATION regress_priv_user1;
-CREATE TABLE atestp1 (f1 int, f2 int) WITH OIDS;
-CREATE TABLE atestp2 (fx int, fy int) WITH OIDS;
+CREATE TABLE atestp1 (f1 int, f2 int) WITH OIDS DISTRIBUTE BY ROUNDROBIN;
+CREATE TABLE atestp2 (fx int, fy int) WITH OIDS DISTRIBUTE BY ROUNDROBIN;
 CREATE TABLE atestc (fz int) INHERITS (atestp1, atestp2);
 GRANT SELECT(fx,fy,oid) ON atestp2 TO regress_priv_user2;
 GRANT SELECT(fx) ON atestc TO regress_priv_user2;

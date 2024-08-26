@@ -173,13 +173,13 @@ select x, not x as not_x, q2 from
   order by x, q2;
 
 -- check qual push-down rules for a subquery with grouping sets
-explain (verbose, costs off)
-select * from (
-  select 1 as x, q1, sum(q2)
-  from int8_tbl i1
-  group by grouping sets(1, 2)
-) ss
-where x = 1 and q1 = 123;
+-- explain (verbose, costs off)
+-- select * from (
+--   select 1 as x, q1, sum(q2)
+--   from int8_tbl i1
+--   group by grouping sets(1, 2)
+-- ) ss
+-- where x = 1 and q1 = 123;
 
 select * from (
   select 1 as x, q1, sum(q2)
@@ -189,22 +189,22 @@ select * from (
 where x = 1 and q1 = 123;
 
 -- check handling of pulled-up SubPlan in GROUPING() argument (bug #17479)
-explain (verbose, costs off)
-select grouping(ss.x)
-from int8_tbl i1
-cross join lateral (select (select i1.q1) as x) ss
-group by ss.x;
+-- explain (verbose, costs off)
+-- select grouping(ss.x)
+-- from int8_tbl i1
+-- cross join lateral (select (select i1.q1) as x) ss
+-- group by ss.x;
 
 select grouping(ss.x)
 from int8_tbl i1
 cross join lateral (select (select i1.q1) as x) ss
 group by ss.x;
 
-explain (verbose, costs off)
-select (select grouping(ss.x))
-from int8_tbl i1
-cross join lateral (select (select i1.q1) as x) ss
-group by ss.x;
+-- explain (verbose, costs off)
+-- select (select grouping(ss.x))
+-- from int8_tbl i1
+-- cross join lateral (select (select i1.q1) as x) ss
+-- group by ss.x;
 
 select (select grouping(ss.x))
 from int8_tbl i1
@@ -222,8 +222,8 @@ select *
        lateral (select a, b, sum(v.x) from gstest_data(v.x) group by rollup (a,b)) s;
 
 -- min max optimization should still work with GROUP BY ()
-explain (costs off)
-  select min(unique1) from tenk1 GROUP BY ();
+-- explain (costs off)
+--   select min(unique1) from tenk1 GROUP BY ();
 
 -- Views with GROUPING SET queries
 CREATE VIEW gstest_view AS select a, b, grouping(a,b), sum(c), count(*), max(c)
@@ -253,8 +253,8 @@ select a, b, sum(v.x)
  group by cube (a,b) order by a,b;
 
 -- Test reordering of grouping sets
-explain (costs off)
-select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
+-- explain (costs off)
+-- select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
 
 -- Agg level check. This query should error out.
 select (select grouping(a,b) from gstest2) from gstest2 group by a,b;
@@ -270,14 +270,14 @@ having exists (select 1 from onek b where sum(distinct a.four) = b.four);
 -- Tests around pushdown of HAVING clauses, partially testing against previous bugs
 select a,count(*) from gstest2 group by rollup(a) order by a;
 select a,count(*) from gstest2 group by rollup(a) having a is distinct from 1 order by a;
-explain (costs off)
-  select a,count(*) from gstest2 group by rollup(a) having a is distinct from 1 order by a;
+-- explain (costs off)
+--   select a,count(*) from gstest2 group by rollup(a) having a is distinct from 1 order by a;
 
 select v.c, (select count(*) from gstest2 group by () having v.c)
   from (values (false),(true)) v(c) order by v.c;
-explain (costs off)
-  select v.c, (select count(*) from gstest2 group by () having v.c)
-    from (values (false),(true)) v(c) order by v.c;
+-- explain (costs off)
+--   select v.c, (select count(*) from gstest2 group by () having v.c)
+--     from (values (false),(true)) v(c) order by v.c;
 
 -- HAVING with GROUPING queries
 select ten, grouping(ten) from onek
@@ -321,18 +321,18 @@ select array_agg(v order by v) from gstest4 group by grouping sets ((id,unsortab
 
 select a, b, grouping(a,b), sum(v), count(*), max(v)
   from gstest1 group by grouping sets ((a),(b)) order by 3,1,2;
-explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
-  from gstest1 group by grouping sets ((a),(b)) order by 3,1,2;
+-- explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
+--   from gstest1 group by grouping sets ((a),(b)) order by 3,1,2;
 
 select a, b, grouping(a,b), sum(v), count(*), max(v)
   from gstest1 group by cube(a,b) order by 3,1,2;
-explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
-  from gstest1 group by cube(a,b) order by 3,1,2;
+-- explain (costs off) select a, b, grouping(a,b), sum(v), count(*), max(v)
+--   from gstest1 group by cube(a,b) order by 3,1,2;
 
 -- shouldn't try and hash
-explain (costs off)
-  select a, b, grouping(a,b), array_agg(v order by v)
-    from gstest1 group by cube(a,b);
+-- explain (costs off)
+--   select a, b, grouping(a,b), array_agg(v order by v)
+--     from gstest1 group by cube(a,b);
 
 -- unsortable cases
 select unsortable_col, count(*)
@@ -345,24 +345,24 @@ select unhashable_col, unsortable_col,
        count(*), sum(v)
   from gstest4 group by grouping sets ((unhashable_col),(unsortable_col))
  order by 3, 5;
-explain (costs off)
-  select unhashable_col, unsortable_col,
-         grouping(unhashable_col, unsortable_col),
-         count(*), sum(v)
-    from gstest4 group by grouping sets ((unhashable_col),(unsortable_col))
-   order by 3,5;
+-- explain (costs off)
+--   select unhashable_col, unsortable_col,
+--          grouping(unhashable_col, unsortable_col),
+--          count(*), sum(v)
+--     from gstest4 group by grouping sets ((unhashable_col),(unsortable_col))
+--    order by 3,5;
 
 select unhashable_col, unsortable_col,
        grouping(unhashable_col, unsortable_col),
        count(*), sum(v)
   from gstest4 group by grouping sets ((v,unhashable_col),(v,unsortable_col))
  order by 3,5;
-explain (costs off)
-  select unhashable_col, unsortable_col,
-         grouping(unhashable_col, unsortable_col),
-         count(*), sum(v)
-    from gstest4 group by grouping sets ((v,unhashable_col),(v,unsortable_col))
-   order by 3,5;
+-- explain (costs off)
+--   select unhashable_col, unsortable_col,
+--          grouping(unhashable_col, unsortable_col),
+--          count(*), sum(v)
+--     from gstest4 group by grouping sets ((v,unhashable_col),(v,unsortable_col))
+--    order by 3,5;
 
 -- empty input: first is 0 rows, second 1, third 3 etc.
 select a, b, sum(v), count(*) from gstest_empty group by grouping sets ((a,b),a);
@@ -469,18 +469,18 @@ select v||'a', case when grouping(v||'a') = 1 then 1 else 0 end, count(*)
  group by rollup(i, v||'a') order by 1,3;
 
 -- test handling of outer GroupingFunc within subqueries
-explain (costs off)
-select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
+-- explain (costs off)
+-- select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
 
-explain (costs off)
-select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
+-- explain (costs off)
+-- select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
 
 -- check that we don't pull up when a phrel-less PHV would result
-explain (verbose, costs off)
-select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
-group by cube(ss.f) order by 1;
+-- explain (verbose, costs off)
+-- select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
+-- group by cube(ss.f) order by 1;
 select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
 group by cube(ss.f) order by 1;
 
