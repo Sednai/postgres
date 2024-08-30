@@ -4,7 +4,7 @@
  *		Common support routines for bin/scripts/
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/common.c
@@ -18,6 +18,7 @@
 #include <unistd.h>
 
 #include "common.h"
+#include "common/logging.h"
 #include "fe_utils/connect.h"
 #include "fe_utils/string_utils.h"
 
@@ -141,8 +142,8 @@ connectDatabase(const ConnParams *cparams, const char *progname,
 
 		if (!conn)
 		{
-			fprintf(stderr, _("%s: could not connect to database %s: out of memory\n"),
-					progname, cparams->dbname);
+			pg_log_error("could not connect to database %s: out of memory",
+						 cparams->dbname);
 			exit(1);
 		}
 
@@ -168,8 +169,8 @@ connectDatabase(const ConnParams *cparams, const char *progname,
 			PQfinish(conn);
 			return NULL;
 		}
-		fprintf(stderr, _("%s: could not connect to database %s: %s"),
-				progname, cparams->dbname, PQerrorMessage(conn));
+		pg_log_error("could not connect to database %s: %s",
+					 cparams->dbname, PQerrorMessage(conn));
 		exit(1);
 	}
 
@@ -224,10 +225,8 @@ executeQuery(PGconn *conn, const char *query, const char *progname, bool echo)
 	if (!res ||
 		PQresultStatus(res) != PGRES_TUPLES_OK)
 	{
-		fprintf(stderr, _("%s: query failed: %s"),
-				progname, PQerrorMessage(conn));
-		fprintf(stderr, _("%s: query was: %s\n"),
-				progname, query);
+		pg_log_error("query failed: %s", PQerrorMessage(conn));
+		pg_log_info("query was: %s", query);
 		PQfinish(conn);
 		exit(1);
 	}
@@ -252,10 +251,8 @@ executeCommand(PGconn *conn, const char *query,
 	if (!res ||
 		PQresultStatus(res) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, _("%s: query failed: %s"),
-				progname, PQerrorMessage(conn));
-		fprintf(stderr, _("%s: query was: %s\n"),
-				progname, query);
+		pg_log_error("query failed: %s", PQerrorMessage(conn));
+		pg_log_info("query was: %s", query);
 		PQfinish(conn);
 		exit(1);
 	}
@@ -296,9 +293,9 @@ executeMaintenanceCommand(PGconn *conn, const char *query, bool echo)
  * finish using them, pg_free(*table).  *columns is a pointer into "spec",
  * possibly to its NUL terminator.
  */
-static void
-split_table_columns_spec(const char *spec, int encoding,
-						 char **table, const char **columns)
+void
+splitTableColumnsSpec(const char *spec, int encoding,
+					  char **table, const char **columns)
 {
 	bool		inquotes = false;
 	const char *cp = spec;
@@ -342,7 +339,7 @@ appendQualifiedRelation(PQExpBuffer buf, const char *spec,
 	PGresult   *res;
 	int			ntups;
 
-	split_table_columns_spec(spec, PQclientEncoding(conn), &table, &columns);
+	splitTableColumnsSpec(spec, PQclientEncoding(conn), &table, &columns);
 
 	/*
 	 * Query must remain ABSOLUTELY devoid of unqualified names.  This would
@@ -359,7 +356,7 @@ appendQualifiedRelation(PQExpBuffer buf, const char *spec,
 	appendStringLiteralConn(&sql, table, conn);
 	appendPQExpBufferStr(&sql, "::pg_catalog.regclass;");
 
-	executeCommand(conn, "RESET search_path", progname, echo);
+	executeCommand(conn, "RESET search_path;", progname, echo);
 
 	/*
 	 * One row is a typical result, as is a nonexistent relation ERROR.
@@ -371,11 +368,10 @@ appendQualifiedRelation(PQExpBuffer buf, const char *spec,
 	ntups = PQntuples(res);
 	if (ntups != 1)
 	{
-		fprintf(stderr,
-				ngettext("%s: query returned %d row instead of one: %s\n",
-						 "%s: query returned %d rows instead of one: %s\n",
-						 ntups),
-				progname, ntups, sql.data);
+		pg_log_error(ngettext("query returned %d row instead of one: %s",
+							  "query returned %d rows instead of one: %s",
+							  ntups),
+					 ntups, sql.data);
 		PQfinish(conn);
 		exit(1);
 	}

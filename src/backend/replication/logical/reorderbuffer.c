@@ -4,7 +4,7 @@
  *	  PostgreSQL logical replay/reorder buffer management
  *
  *
- * Copyright (c) 2012-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -56,6 +56,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 
+#include "access/heapam.h"
 #include "access/rewriteheap.h"
 #include "access/transam.h"
 #include "access/tuptoaster.h"
@@ -78,7 +79,6 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/relfilenodemap.h"
-#include "utils/tqual.h"
 
 
 /* entry for a hash table we use to map from xid to our transaction state */
@@ -103,13 +103,21 @@ typedef struct ReorderBufferTupleCidEnt
 	CommandId	combocid;		/* just for debugging */
 } ReorderBufferTupleCidEnt;
 
+/* Virtual file descriptor with file offset tracking */
+typedef struct TXNEntryFile
+{
+	File		vfd;			/* -1 when the file is closed */
+	off_t		curOffset;		/* offset for next write or read. Reset to 0
+								 * when vfd is opened. */
+} TXNEntryFile;
+
 /* k-way in-order change iteration support structures */
 typedef struct ReorderBufferIterTXNEntry
 {
 	XLogRecPtr	lsn;
 	ReorderBufferChange *change;
 	ReorderBufferTXN *txn;
-	File		fd;
+	TXNEntryFile file;
 	XLogSegNo	segno;
 } ReorderBufferIterTXNEntry;
 
@@ -163,10 +171,10 @@ static const Size max_changes_in_memory = 4096;
 static ReorderBufferTXN *ReorderBufferGetTXN(ReorderBuffer *rb);
 static void ReorderBufferReturnTXN(ReorderBuffer *rb, ReorderBufferTXN *txn);
 static ReorderBufferTXN *ReorderBufferTXNByXid(ReorderBuffer *rb,
-					  TransactionId xid, bool create, bool *is_new,
-					  XLogRecPtr lsn, bool create_as_top);
+											   TransactionId xid, bool create, bool *is_new,
+											   XLogRecPtr lsn, bool create_as_top);
 static void ReorderBufferTransferSnapToParent(ReorderBufferTXN *txn,
-								  ReorderBufferTXN *subtxn);
+											  ReorderBufferTXN *subtxn);
 
 static void AssertTXNLsnOrder(ReorderBuffer *rb);
 
@@ -182,7 +190,7 @@ static void ReorderBufferIterTXNInit(ReorderBuffer *rb, ReorderBufferTXN *txn,
 									 ReorderBufferIterTXNState *volatile *iter_state);
 static ReorderBufferChange *ReorderBufferIterTXNNext(ReorderBuffer *rb, ReorderBufferIterTXNState *state);
 static void ReorderBufferIterTXNFinish(ReorderBuffer *rb,
-						   ReorderBufferIterTXNState *state);
+									   ReorderBufferIterTXNState *state);
 static void ReorderBufferExecuteInvalidations(ReorderBuffer *rb, ReorderBufferTXN *txn);
 
 /*
@@ -193,19 +201,19 @@ static void ReorderBufferExecuteInvalidations(ReorderBuffer *rb, ReorderBufferTX
 static void ReorderBufferCheckSerializeTXN(ReorderBuffer *rb, ReorderBufferTXN *txn);
 static void ReorderBufferSerializeTXN(ReorderBuffer *rb, ReorderBufferTXN *txn);
 static void ReorderBufferSerializeChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
-							 int fd, ReorderBufferChange *change);
+										 int fd, ReorderBufferChange *change);
 static Size ReorderBufferRestoreChanges(ReorderBuffer *rb, ReorderBufferTXN *txn,
-							File *fd, XLogSegNo *segno);
+										TXNEntryFile *file, XLogSegNo *segno);
 static void ReorderBufferRestoreChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
-						   char *change);
+									   char *change);
 static void ReorderBufferRestoreCleanup(ReorderBuffer *rb, ReorderBufferTXN *txn);
 static void ReorderBufferCleanupSerializedTXNs(const char *slotname);
 static void ReorderBufferSerializedPath(char *path, ReplicationSlot *slot,
-							TransactionId xid, XLogSegNo segno);
+										TransactionId xid, XLogSegNo segno);
 
 static void ReorderBufferFreeSnap(ReorderBuffer *rb, Snapshot snap);
 static Snapshot ReorderBufferCopySnap(ReorderBuffer *rb, Snapshot orig_snap,
-					  ReorderBufferTXN *txn, CommandId cid);
+									  ReorderBufferTXN *txn, CommandId cid);
 
 /* ---------------------------------------
  * toast reassembly support
@@ -214,9 +222,9 @@ static Snapshot ReorderBufferCopySnap(ReorderBuffer *rb, Snapshot orig_snap,
 static void ReorderBufferToastInitHash(ReorderBuffer *rb, ReorderBufferTXN *txn);
 static void ReorderBufferToastReset(ReorderBuffer *rb, ReorderBufferTXN *txn);
 static void ReorderBufferToastReplace(ReorderBuffer *rb, ReorderBufferTXN *txn,
-						  Relation relation, ReorderBufferChange *change);
+									  Relation relation, ReorderBufferChange *change);
 static void ReorderBufferToastAppendChunk(ReorderBuffer *rb, ReorderBufferTXN *txn,
-							  Relation relation, ReorderBufferChange *change);
+										  Relation relation, ReorderBufferChange *change);
 
 
 /*
@@ -473,8 +481,8 @@ ReorderBufferReturnTupleBuf(ReorderBuffer *rb, ReorderBufferTupleBuf *tuple)
 Oid *
 ReorderBufferGetRelids(ReorderBuffer *rb, int nrelids)
 {
-	Oid	   *relids;
-	Size	alloc_len;
+	Oid		   *relids;
+	Size		alloc_len;
 
 	alloc_len = sizeof(Oid) * nrelids;
 
@@ -1022,7 +1030,7 @@ ReorderBufferIterTXNInit(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 	for (off = 0; off < state->nr_txns; off++)
 	{
-		state->entries[off].fd = -1;
+		state->entries[off].file.vfd = -1;
 		state->entries[off].segno = 0;
 	}
 
@@ -1050,7 +1058,7 @@ ReorderBufferIterTXNInit(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		{
 			/* serialize remaining changes */
 			ReorderBufferSerializeTXN(rb, txn);
-			ReorderBufferRestoreChanges(rb, txn, &state->entries[off].fd,
+			ReorderBufferRestoreChanges(rb, txn, &state->entries[off].file,
 										&state->entries[off].segno);
 		}
 
@@ -1080,7 +1088,7 @@ ReorderBufferIterTXNInit(ReorderBuffer *rb, ReorderBufferTXN *txn,
 				/* serialize remaining changes */
 				ReorderBufferSerializeTXN(rb, cur_txn);
 				ReorderBufferRestoreChanges(rb, cur_txn,
-											&state->entries[off].fd,
+											&state->entries[off].file,
 											&state->entries[off].segno);
 			}
 			cur_change = dlist_head_element(ReorderBufferChange, node,
@@ -1159,7 +1167,7 @@ ReorderBufferIterTXNNext(ReorderBuffer *rb, ReorderBufferIterTXNState *state)
 		dlist_delete(&change->node);
 		dlist_push_tail(&state->old_change, &change->node);
 
-		if (ReorderBufferRestoreChanges(rb, entry->txn, &entry->fd,
+		if (ReorderBufferRestoreChanges(rb, entry->txn, &entry->file,
 										&state->entries[off].segno))
 		{
 			/* successfully restored changes from disk */
@@ -1198,8 +1206,8 @@ ReorderBufferIterTXNFinish(ReorderBuffer *rb,
 
 	for (off = 0; off < state->nr_txns; off++)
 	{
-		if (state->entries[off].fd != -1)
-			FileClose(state->entries[off].fd);
+		if (state->entries[off].file.vfd != -1)
+			FileClose(state->entries[off].file.vfd);
 	}
 
 	/* free memory we might have "leaked" in the last *Next call */
@@ -1304,7 +1312,7 @@ ReorderBufferCleanupTXN(ReorderBuffer *rb, ReorderBufferTXN *txn)
 
 /*
  * Build a hash with a (relfilenode, ctid) -> (cmin, cmax) mapping for use by
- * tqual.c's HeapTupleSatisfiesHistoricMVCC.
+ * HeapTupleSatisfiesHistoricMVCC.
  */
 static void
 ReorderBufferBuildTupleCidHash(ReorderBuffer *rb, ReorderBufferTXN *txn)
@@ -1362,8 +1370,8 @@ ReorderBufferBuildTupleCidHash(ReorderBuffer *rb, ReorderBufferTXN *txn)
 		else
 		{
 			/*
-			 * Maybe we already saw this tuple before in this transaction,
-			 * but if so it must have the same cmin.
+			 * Maybe we already saw this tuple before in this transaction, but
+			 * if so it must have the same cmin.
 			 */
 			Assert(ent->cmin == change->data.tuplecid.cmin);
 
@@ -1570,7 +1578,7 @@ ReorderBufferCommit(ReorderBuffer *rb, TransactionId xid,
 					/*
 					 * Mapped catalog tuple without data, emitted while
 					 * catalog table was in the process of being rewritten. We
-					 * can fail to look up the relfilenode, because the the
+					 * can fail to look up the relfilenode, because the
 					 * relmapper has no "historic" view, in contrast to normal
 					 * the normal catalog during decoding. Thus repeated
 					 * rewrites can cause a lookup failure. That's OK because
@@ -1964,7 +1972,7 @@ ReorderBufferAbortOld(ReorderBuffer *rb, TransactionId oldestRunningXid)
 }
 
 /*
- * Forget the contents of a transaction if we aren't interested in it's
+ * Forget the contents of a transaction if we aren't interested in its
  * contents. Needs to be first called for subtransactions and then for the
  * toplevel xid.
  *
@@ -2503,8 +2511,8 @@ ReorderBufferSerializeChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			}
 		case REORDER_BUFFER_CHANGE_TRUNCATE:
 			{
-				Size	size;
-				char   *data;
+				Size		size;
+				char	   *data;
 
 				/* account for the OIDs of truncated relations */
 				size = sizeof(Oid) * change->data.truncate.nrelids;
@@ -2568,11 +2576,12 @@ ReorderBufferSerializeChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
  */
 static Size
 ReorderBufferRestoreChanges(ReorderBuffer *rb, ReorderBufferTXN *txn,
-							File *fd, XLogSegNo *segno)
+							TXNEntryFile *file, XLogSegNo *segno)
 {
 	Size		restored = 0;
 	XLogSegNo	last_segno;
 	dlist_mutable_iter cleanup_iter;
+	File	   *fd = &file->vfd;
 
 	Assert(txn->first_lsn != InvalidXLogRecPtr);
 	Assert(txn->final_lsn != InvalidXLogRecPtr);
@@ -2616,6 +2625,10 @@ ReorderBufferRestoreChanges(ReorderBuffer *rb, ReorderBufferTXN *txn,
 										*segno);
 
 			*fd = PathNameOpenFile(path, O_RDONLY | PG_BINARY);
+
+			/* No harm in resetting the offset even in case of failure */
+			file->curOffset = 0;
+
 			if (*fd < 0 && errno == ENOENT)
 			{
 				*fd = -1;
@@ -2635,8 +2648,9 @@ ReorderBufferRestoreChanges(ReorderBuffer *rb, ReorderBufferTXN *txn,
 		 * end of this file.
 		 */
 		ReorderBufferSerializeReserve(rb, sizeof(ReorderBufferDiskChange));
-		readBytes = FileRead(*fd, rb->outbuf, sizeof(ReorderBufferDiskChange),
-							 WAIT_EVENT_REORDER_BUFFER_READ);
+		readBytes = FileRead(file->vfd, rb->outbuf,
+							 sizeof(ReorderBufferDiskChange),
+							 file->curOffset, WAIT_EVENT_REORDER_BUFFER_READ);
 
 		/* eof */
 		if (readBytes == 0)
@@ -2657,15 +2671,18 @@ ReorderBufferRestoreChanges(ReorderBuffer *rb, ReorderBufferTXN *txn,
 							readBytes,
 							(uint32) sizeof(ReorderBufferDiskChange))));
 
+		file->curOffset += readBytes;
+
 		ondisk = (ReorderBufferDiskChange *) rb->outbuf;
 
 		ReorderBufferSerializeReserve(rb,
 									  sizeof(ReorderBufferDiskChange) + ondisk->size);
 		ondisk = (ReorderBufferDiskChange *) rb->outbuf;
 
-		readBytes = FileRead(*fd,
+		readBytes = FileRead(file->vfd,
 							 rb->outbuf + sizeof(ReorderBufferDiskChange),
 							 ondisk->size - sizeof(ReorderBufferDiskChange),
+							 file->curOffset,
 							 WAIT_EVENT_REORDER_BUFFER_READ);
 
 		if (readBytes < 0)
@@ -2678,6 +2695,8 @@ ReorderBufferRestoreChanges(ReorderBuffer *rb, ReorderBufferTXN *txn,
 					 errmsg("could not read from reorderbuffer spill file: read %d instead of %u bytes",
 							readBytes,
 							(uint32) (ondisk->size - sizeof(ReorderBufferDiskChange)))));
+
+		file->curOffset += readBytes;
 
 		/*
 		 * ok, read a full change from disk, now restore it into proper
@@ -2819,7 +2838,7 @@ ReorderBufferRestoreChange(ReorderBuffer *rb, ReorderBufferTXN *txn,
 			/* the base struct contains all the data, easy peasy */
 		case REORDER_BUFFER_CHANGE_TRUNCATE:
 			{
-				Oid	   *relids;
+				Oid		   *relids;
 
 				relids = ReorderBufferGetRelids(rb,
 												change->data.truncate.nrelids);
@@ -2899,7 +2918,7 @@ ReorderBufferCleanupSerializedTXNs(const char *slotname)
 			if (unlink(path) != 0)
 				ereport(ERROR,
 						(errcode_for_file_access(),
-						 errmsg("could not remove file \"%s\" during removal of pg_replslot/%s/*.xid: %m",
+						 errmsg("could not remove file \"%s\" during removal of pg_replslot/%s/xid*: %m",
 								path, slotname)));
 		}
 	}
@@ -2919,7 +2938,7 @@ ReorderBufferSerializedPath(char *path, ReplicationSlot *slot, TransactionId xid
 
 	XLogSegNoOffsetToRecPtr(segno, 0, wal_segment_size, recptr);
 
-	snprintf(path, MAXPGPATH, "pg_replslot/%s/xid-%u-lsn-%X-%X.snap",
+	snprintf(path, MAXPGPATH, "pg_replslot/%s/xid-%u-lsn-%X-%X.spill",
 			 NameStr(MyReplicationSlot->data.name),
 			 xid,
 			 (uint32) (recptr >> 32), (uint32) recptr);
@@ -3417,7 +3436,10 @@ ApplyLogicalMappingFile(HTAB *tuplecid_data, Oid relid, const char *fname)
 		}
 	}
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(ERROR,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", path)));
 }
 
 

@@ -11,7 +11,7 @@
  *		as this notice is not removed.
  *
  *	The author is not responsible for loss or damages that may
- *	result from it's use.
+ *	result from its use.
  *
  *
  * IDENTIFICATION
@@ -140,8 +140,6 @@ typedef struct _dumpOptions
 {
 	ConnParams	cparams;
 
-	bool		oids;
-
 	int			binary_upgrade;
 
 	/* various user-settable parameters */
@@ -150,10 +148,10 @@ typedef struct _dumpOptions
 	int			dumpSections;	/* bitmask of chosen sections */
 	bool		aclsSkip;
 	const char *lockWaitTimeout;
+	int			dump_inserts;	/* 0 = COPY, otherwise rows per INSERT */
 
 	/* flags for various command-line long options */
 	int			disable_dollar_quoting;
-	int			dump_inserts;
 	int			column_inserts;
 	int			if_exists;
 	int			no_comments;
@@ -181,6 +179,7 @@ typedef struct _dumpOptions
 	char	   *outputSuperuser;
 
 	int			sequence_data;	/* dump sequence data even in schema-only mode */
+	int			do_nothing;
 } DumpOptions;
 
 /*
@@ -263,18 +262,6 @@ extern void ConnectDatabase(Archive *AHX,
 extern void DisconnectDatabase(Archive *AHX);
 extern PGconn *GetConnection(Archive *AHX);
 
-/* Called to add a TOC entry */
-extern void ArchiveEntry(Archive *AHX,
-			 CatalogId catalogId, DumpId dumpId,
-			 const char *tag,
-			 const char *namespace, const char *tablespace,
-			 const char *owner, bool withOids,
-			 const char *desc, teSection section,
-			 const char *defn,
-			 const char *dropStmt, const char *copyStmt,
-			 const DumpId *deps, int nDeps,
-			 DataDumperPtr dumpFn, void *dumpArg);
-
 /* Called to write *data* to the archive */
 extern void WriteData(Archive *AH, const void *data, size_t dLen);
 
@@ -294,8 +281,8 @@ extern Archive *OpenArchive(const char *FileSpec, const ArchiveFormat fmt);
 
 /* Create a new archive */
 extern Archive *CreateArchive(const char *FileSpec, const ArchiveFormat fmt,
-			  const int compression, bool dosync, ArchiveMode mode,
-			  SetupWorkerPtrType setupDumpWorker);
+							  const int compression, bool dosync, ArchiveMode mode,
+							  SetupWorkerPtrType setupDumpWorker);
 
 /* The --list option */
 extern void PrintTOCSummary(Archive *AH);

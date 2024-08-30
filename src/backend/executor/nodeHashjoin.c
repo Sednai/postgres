@@ -3,7 +3,7 @@
  * nodeHashjoin.c
  *	  Routines to handle hash join nodes
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -140,15 +140,15 @@
 #define HJ_FILL_INNER(hjstate)	((hjstate)->hj_NullOuterTupleSlot != NULL)
 
 static TupleTableSlot *ExecHashJoinOuterGetTuple(PlanState *outerNode,
-						  HashJoinState *hjstate,
-						  uint32 *hashvalue);
+												 HashJoinState *hjstate,
+												 uint32 *hashvalue);
 static TupleTableSlot *ExecParallelHashJoinOuterGetTuple(PlanState *outerNode,
-								  HashJoinState *hjstate,
-								  uint32 *hashvalue);
+														 HashJoinState *hjstate,
+														 uint32 *hashvalue);
 static TupleTableSlot *ExecHashJoinGetSavedTuple(HashJoinState *hjstate,
-						  BufFile *file,
-						  uint32 *hashvalue,
-						  TupleTableSlot *tupleSlot);
+												 BufFile *file,
+												 uint32 *hashvalue,
+												 TupleTableSlot *tupleSlot);
 static bool ExecHashJoinNewBatch(HashJoinState *hjstate);
 static bool ExecParallelHashJoinNewBatch(HashJoinState *hjstate);
 static void ExecParallelHashJoinPartitionOuter(HashJoinState *node);
@@ -284,6 +284,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				 */
 				hashtable = ExecHashTableCreate(hashNode,
 												node->hj_HashOperators,
+												node->hj_Collations,
 												HJ_FILL_INNER(node));
 				node->hj_HashTable = hashtable;
 
@@ -419,15 +420,21 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 				if (batchno != hashtable->curbatch &&
 					node->hj_CurSkewBucketNo == INVALID_SKEW_BUCKET_NO)
 				{
+					bool		shouldFree;
+					MinimalTuple mintuple = ExecFetchSlotMinimalTuple(outerTupleSlot,
+																	  &shouldFree);
+
 					/*
 					 * Need to postpone this outer tuple to a later batch.
 					 * Save it in the corresponding outer-batch file.
 					 */
 					Assert(parallel_state == NULL);
 					Assert(batchno > hashtable->curbatch);
-					ExecHashJoinSaveTuple(ExecFetchSlotMinimalTuple(outerTupleSlot),
-										  hashvalue,
+					ExecHashJoinSaveTuple(mintuple, hashvalue,
 										  &hashtable->outerBatchFile[batchno]);
+
+					if (shouldFree)
+						heap_free_minimal_tuple(mintuple);
 
 					/* Loop around, staying in HJ_NEED_NEW_OUTER state */
 					continue;
@@ -642,12 +649,9 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	HashJoinState *hjstate;
 	Plan	   *outerNode;
 	Hash	   *hashNode;
-	List	   *lclauses;
-	List	   *rclauses;
-	List	   *hoperators;
 	TupleDesc	outerDesc,
 				innerDesc;
-	ListCell   *l;
+	const TupleTableSlotOps *ops;
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
@@ -692,13 +696,15 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	/*
 	 * Initialize result slot, type and projection.
 	 */
-	ExecInitResultTupleSlotTL(estate, &hjstate->js.ps);
+	ExecInitResultTupleSlotTL(&hjstate->js.ps, &TTSOpsVirtual);
 	ExecAssignProjectionInfo(&hjstate->js.ps, NULL);
 
 	/*
 	 * tuple table initialization
 	 */
-	hjstate->hj_OuterTupleSlot = ExecInitExtraTupleSlot(estate, outerDesc);
+	ops = ExecGetResultSlotOps(outerPlanState(hjstate), NULL);
+	hjstate->hj_OuterTupleSlot = ExecInitExtraTupleSlot(estate, outerDesc,
+														ops);
 
 	/*
 	 * detect whether we need only consider the first matching inner tuple
@@ -715,17 +721,17 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 		case JOIN_LEFT:
 		case JOIN_ANTI:
 			hjstate->hj_NullInnerTupleSlot =
-				ExecInitNullTupleSlot(estate, innerDesc);
+				ExecInitNullTupleSlot(estate, innerDesc, &TTSOpsVirtual);
 			break;
 		case JOIN_RIGHT:
 			hjstate->hj_NullOuterTupleSlot =
-				ExecInitNullTupleSlot(estate, outerDesc);
+				ExecInitNullTupleSlot(estate, outerDesc, &TTSOpsVirtual);
 			break;
 		case JOIN_FULL:
 			hjstate->hj_NullOuterTupleSlot =
-				ExecInitNullTupleSlot(estate, outerDesc);
+				ExecInitNullTupleSlot(estate, outerDesc, &TTSOpsVirtual);
 			hjstate->hj_NullInnerTupleSlot =
-				ExecInitNullTupleSlot(estate, innerDesc);
+				ExecInitNullTupleSlot(estate, innerDesc, &TTSOpsVirtual);
 			break;
 		default:
 			elog(ERROR, "unrecognized join type: %d",
@@ -767,30 +773,10 @@ ExecInitHashJoin(HashJoin *node, EState *estate, int eflags)
 	hjstate->hj_CurSkewBucketNo = INVALID_SKEW_BUCKET_NO;
 	hjstate->hj_CurTuple = NULL;
 
-	/*
-	 * Deconstruct the hash clauses into outer and inner argument values, so
-	 * that we can evaluate those subexpressions separately.  Also make a list
-	 * of the hash operator OIDs, in preparation for looking up the hash
-	 * functions to use.
-	 */
-	lclauses = NIL;
-	rclauses = NIL;
-	hoperators = NIL;
-	foreach(l, node->hashclauses)
-	{
-		OpExpr	   *hclause = lfirst_node(OpExpr, l);
-
-		lclauses = lappend(lclauses, ExecInitExpr(linitial(hclause->args),
-												  (PlanState *) hjstate));
-		rclauses = lappend(rclauses, ExecInitExpr(lsecond(hclause->args),
-												  (PlanState *) hjstate));
-		hoperators = lappend_oid(hoperators, hclause->opno);
-	}
-	hjstate->hj_OuterHashKeys = lclauses;
-	hjstate->hj_InnerHashKeys = rclauses;
-	hjstate->hj_HashOperators = hoperators;
-	/* child Hash node needs to evaluate inner hash keys, too */
-	((HashState *) innerPlanState(hjstate))->hashkeys = rclauses;
+	hjstate->hj_OuterHashKeys = ExecInitExprList(node->hashkeys,
+												 (PlanState *) hjstate);
+	hjstate->hj_HashOperators = node->hashoperators;
+	hjstate->hj_Collations = node->hashcollations;
 
 	hjstate->hj_JoinState = HJ_BUILD_HASHTABLE;
 	hjstate->hj_MatchedOuter = false;
@@ -967,9 +953,10 @@ ExecParallelHashJoinOuterGetTuple(PlanState *outerNode,
 									   hashvalue);
 		if (tuple != NULL)
 		{
-			slot = ExecStoreMinimalTuple(tuple,
-										 hjstate->hj_OuterTupleSlot,
-										 false);
+			ExecForceStoreMinimalTuple(tuple,
+									   hjstate->hj_OuterTupleSlot,
+									   false);
+			slot = hjstate->hj_OuterTupleSlot;
 			return slot;
 		}
 		else
@@ -1188,9 +1175,10 @@ ExecParallelHashJoinNewBatch(HashJoinState *hjstate)
 					while ((tuple = sts_parallel_scan_next(inner_tuples,
 														   &hashvalue)))
 					{
-						slot = ExecStoreMinimalTuple(tuple,
-													 hjstate->hj_HashTupleSlot,
-													 false);
+						ExecForceStoreMinimalTuple(tuple,
+												   hjstate->hj_HashTupleSlot,
+												   false);
+						slot = hjstate->hj_HashTupleSlot;
 						ExecParallelHashTableInsertCurrentBatch(hashtable, slot,
 																hashvalue);
 					}
@@ -1316,7 +1304,8 @@ ExecHashJoinGetSavedTuple(HashJoinState *hjstate,
 				(errcode_for_file_access(),
 				 errmsg("could not read from hash-join temporary file: read only %zu of %zu bytes",
 						nread, header[1] - sizeof(uint32))));
-	return ExecStoreMinimalTuple(tuple, tupleSlot, true);
+	ExecForceStoreMinimalTuple(tuple, tupleSlot, true);
+	return tupleSlot;
 }
 
 
@@ -1439,11 +1428,16 @@ ExecParallelHashJoinPartitionOuter(HashJoinState *hjstate)
 		{
 			int			batchno;
 			int			bucketno;
+			bool		shouldFree;
+			MinimalTuple mintup = ExecFetchSlotMinimalTuple(slot, &shouldFree);
 
 			ExecHashGetBucketAndBatch(hashtable, hashvalue, &bucketno,
 									  &batchno);
 			sts_puttuple(hashtable->batches[batchno].outer_tuples,
-						 &hashvalue, ExecFetchSlotMinimalTuple(slot));
+						 &hashvalue, mintup);
+
+			if (shouldFree)
+				heap_free_minimal_tuple(mintup);
 		}
 		CHECK_FOR_INTERRUPTS();
 	}

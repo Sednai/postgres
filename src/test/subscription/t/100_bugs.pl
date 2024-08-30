@@ -3,7 +3,7 @@ use strict;
 use warnings;
 use PostgresNode;
 use TestLib;
-use Test::More tests => 6;
+use Test::More tests => 7;
 
 # Bug #15114
 
@@ -30,7 +30,8 @@ $node_publisher->safe_psql('postgres',
 	"CREATE TABLE tab1 (a int PRIMARY KEY, b int)");
 
 $node_publisher->safe_psql('postgres',
-	"CREATE FUNCTION double(x int) RETURNS int IMMUTABLE LANGUAGE SQL AS 'select x * 2'");
+	"CREATE FUNCTION double(x int) RETURNS int IMMUTABLE LANGUAGE SQL AS 'select x * 2'"
+);
 
 # an index with a predicate that lends itself to constant expressions
 # evaluation
@@ -42,7 +43,8 @@ $node_subscriber->safe_psql('postgres',
 	"CREATE TABLE tab1 (a int PRIMARY KEY, b int)");
 
 $node_subscriber->safe_psql('postgres',
-	"CREATE FUNCTION double(x int) RETURNS int IMMUTABLE LANGUAGE SQL AS 'select x * 2'");
+	"CREATE FUNCTION double(x int) RETURNS int IMMUTABLE LANGUAGE SQL AS 'select x * 2'"
+);
 
 $node_subscriber->safe_psql('postgres',
 	"CREATE INDEX ON tab1 (b) WHERE a > double(1)");
@@ -51,14 +53,14 @@ $node_publisher->safe_psql('postgres',
 	"CREATE PUBLICATION pub1 FOR ALL TABLES");
 
 $node_subscriber->safe_psql('postgres',
-	"CREATE SUBSCRIPTION sub1 CONNECTION '$publisher_connstr application_name=sub1' PUBLICATION pub1");
+	"CREATE SUBSCRIPTION sub1 CONNECTION '$publisher_connstr' PUBLICATION pub1"
+);
 
 $node_publisher->wait_for_catchup('sub1');
 
 # This would crash, first on the publisher, and then (if the publisher
 # is fixed) on the subscriber.
-$node_publisher->safe_psql('postgres',
-	"INSERT INTO tab1 VALUES (1, 2)");
+$node_publisher->safe_psql('postgres', "INSERT INTO tab1 VALUES (1, 2)");
 
 $node_publisher->wait_for_catchup('sub1');
 
@@ -149,7 +151,7 @@ $publisher_connstr = $node_publisher->connstr . ' dbname=postgres';
 $node_publisher->safe_psql('postgres',
 	"CREATE PUBLICATION tap_pub FOR TABLE tab_replidentity_index");
 $node_subscriber->safe_psql('postgres',
-	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr application_name=tap_sub' PUBLICATION tap_pub"
+	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr' PUBLICATION tap_pub"
 );
 
 # Wait for initial table sync to finish
@@ -178,8 +180,8 @@ is( $node_subscriber->safe_psql(
 $node_publisher->stop('fast');
 $node_subscriber->stop('fast');
 
-# The bug was that when the REPLICA IDENTITY FULL is used with dropped columns,
-# we fail to apply updates and deletes
+# The bug was that when the REPLICA IDENTITY FULL is used with dropped or
+# generated columns, we fail to apply updates and deletes
 my $node_publisher_d_cols = get_new_node('node_publisher_d_cols');
 $node_publisher_d_cols->init(allows_streaming => 'logical');
 $node_publisher_d_cols->start;
@@ -192,14 +194,18 @@ $node_publisher_d_cols->safe_psql(
 	'postgres', qq(
 	CREATE TABLE dropped_cols (a int, b_drop int, c int);
 	ALTER TABLE dropped_cols REPLICA IDENTITY FULL;
-	CREATE PUBLICATION pub_dropped_cols FOR TABLE dropped_cols;
+	CREATE TABLE generated_cols (a int, b_gen int GENERATED ALWAYS AS (5 * a) STORED, c int);
+	ALTER TABLE generated_cols REPLICA IDENTITY FULL;
+	CREATE PUBLICATION pub_dropped_cols FOR TABLE dropped_cols, generated_cols;
 	-- some initial data
 	INSERT INTO dropped_cols VALUES (1, 1, 1);
+	INSERT INTO generated_cols (a, c) VALUES (1, 1);
 ));
 
 $node_subscriber_d_cols->safe_psql(
 	'postgres', qq(
 	 CREATE TABLE dropped_cols (a int, b_drop int, c int);
+	 CREATE TABLE generated_cols (a int, b_gen int GENERATED ALWAYS AS (5 * a) STORED, c int);
 ));
 
 my $publisher_connstr_d_cols =
@@ -222,6 +228,7 @@ $node_subscriber_d_cols->safe_psql(
 $node_publisher_d_cols->safe_psql(
 	'postgres', qq(
 		UPDATE dropped_cols SET a = 100;
+		UPDATE generated_cols SET a = 100;
 ));
 $node_publisher_d_cols->wait_for_catchup('sub_dropped_cols');
 
@@ -229,6 +236,11 @@ is( $node_subscriber_d_cols->safe_psql(
 		'postgres', "SELECT count(*) FROM dropped_cols WHERE a = 100"),
 	qq(1),
 	'replication with RI FULL and dropped columns');
+
+is( $node_subscriber_d_cols->safe_psql(
+		'postgres', "SELECT count(*) FROM generated_cols WHERE a = 100"),
+	qq(1),
+	'replication with RI FULL and generated columns');
 
 $node_publisher_d_cols->stop('fast');
 $node_subscriber_d_cols->stop('fast');

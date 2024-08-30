@@ -57,6 +57,7 @@ step s1r	{ ROLLBACK; }
 
 session s2
 step s2b	{ BEGIN ISOLATION LEVEL READ COMMITTED; }
+step s2u	{ UPDATE foo SET b='EFG' WHERE a=1; }
 step s2u2	{ UPDATE footrg SET b='XYZ' WHERE a=1; }
 step s2i	{ INSERT INTO bar VALUES(7); }
 step s2d	{ DELETE FROM foo WHERE a=1; }
@@ -65,6 +66,7 @@ step s2c	{ COMMIT; }
 # Concurrency error from ExecUpdate and ExecDelete.
 permutation s1b s2b s1u s1c s2d s2c
 permutation s1b s2b s1u s2d s1c s2c
+permutation s1b s2b s1u s2u s1c s2c
 permutation s1b s2b s2d s1u s2c s1c
 
 # Concurrency error from GetTupleForTrigger

@@ -20,6 +20,8 @@ mkdir $testdir
 # invoke pgbench
 sub pgbench
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($opts, $stat, $out, $err, $name) = @_;
 	command_checks_all([ 'pgbench', split(/\s+/, $opts) ],
 		$stat, $out, $err, $name);
@@ -29,6 +31,8 @@ sub pgbench
 # invoke pgbench with scripts
 sub pgbench_scripts
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($opts, $stat, $out, $err, $name, $files) = @_;
 	my @cmd = ('pgbench', split /\s+/, $opts);
 	my @filenames = ();
@@ -153,7 +157,7 @@ my @options = (
 		]
 	],
 
-	# loging sub-options
+	# logging sub-options
 	[
 		'sampling => log', '--sampling-rate=0.01',
 		[qr{log sampling .* only when}]
@@ -285,6 +289,22 @@ my @script_tests = (
 		'too many arguments for hash',
 		[qr{unexpected number of arguments \(hash\)}],
 		{ 'bad-hash-2.sql' => "\\set i hash(1,2,3)\n" }
+	],
+	# overflow
+	[
+		'bigint overflow 1',
+		[qr{bigint constant overflow}],
+		{ 'overflow-1.sql' => "\\set i 100000000000000000000\n" }
+	],
+	[
+		'double overflow 2',
+		[qr{double constant overflow}],
+		{ 'overflow-2.sql' => "\\set d 1.0E309\n" }
+	],
+	[
+		'double overflow 3',
+		[qr{double constant overflow}],
+		{ 'overflow-3.sql' => "\\set d .1E310\n" }
 	],);
 
 for my $t (@script_tests)

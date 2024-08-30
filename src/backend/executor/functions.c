@@ -3,7 +3,7 @@
  * functions.c
  *	  Execution of SQL-language functions
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -150,26 +150,32 @@ typedef struct SQLFunctionParseInfo
 /* non-export function prototypes */
 static Node *sql_fn_param_ref(ParseState *pstate, ParamRef *pref);
 static Node *sql_fn_post_column_ref(ParseState *pstate,
-					   ColumnRef *cref, Node *var);
+									ColumnRef *cref, Node *var);
 static Node *sql_fn_make_param(SQLFunctionParseInfoPtr pinfo,
-				  int paramno, int location);
+							   int paramno, int location);
 static Node *sql_fn_resolve_param_name(SQLFunctionParseInfoPtr pinfo,
-						  const char *paramname, int location);
+									   const char *paramname, int location);
 static List *init_execution_state(List *queryTree_list,
-					 SQLFunctionCachePtr fcache,
-					 bool lazyEvalOK);
-static void init_sql_fcache(FmgrInfo *finfo, Oid collation, bool lazyEvalOK);
+								  SQLFunctionCachePtr fcache,
+								  bool lazyEvalOK);
+static void init_sql_fcache(FunctionCallInfo fcinfo, Oid collation, bool lazyEvalOK);
 static void postquel_start(execution_state *es, SQLFunctionCachePtr fcache);
 static bool postquel_getnext(execution_state *es, SQLFunctionCachePtr fcache);
 static void postquel_end(execution_state *es);
 static void postquel_sub_params(SQLFunctionCachePtr fcache,
-					FunctionCallInfo fcinfo);
+								FunctionCallInfo fcinfo);
 static Datum postquel_get_single_result(TupleTableSlot *slot,
-						   FunctionCallInfo fcinfo,
-						   SQLFunctionCachePtr fcache,
-						   MemoryContext resultcontext);
+										FunctionCallInfo fcinfo,
+										SQLFunctionCachePtr fcache,
+										MemoryContext resultcontext);
 static void sql_exec_error_callback(void *arg);
 static void ShutdownSQLFunction(Datum arg);
+static bool check_sql_fn_retval_ext2(Oid func_id,
+									 FunctionCallInfo fcinfo,
+									 Oid rettype, char prokind,
+									 List *queryTreeList,
+									 bool *modifyTargetList,
+									 JunkFilter **junkFilter);
 static void sqlfunction_startup(DestReceiver *self, int operation, TupleDesc typeinfo);
 static bool sqlfunction_receive(TupleTableSlot *slot, DestReceiver *self);
 static void sqlfunction_shutdown(DestReceiver *self);
@@ -595,8 +601,9 @@ init_execution_state(List *queryTree_list,
  * Initialize the SQLFunctionCache for a SQL function
  */
 static void
-init_sql_fcache(FmgrInfo *finfo, Oid collation, bool lazyEvalOK)
+init_sql_fcache(FunctionCallInfo fcinfo, Oid collation, bool lazyEvalOK)
 {
+	FmgrInfo   *finfo = fcinfo->flinfo;
 	Oid			foid = finfo->fn_oid;
 	MemoryContext fcontext;
 	MemoryContext oldcontext;
@@ -748,11 +755,13 @@ init_sql_fcache(FmgrInfo *finfo, Oid collation, bool lazyEvalOK)
 	 * coerce the returned rowtype to the desired form (unless the result type
 	 * is VOID, in which case there's nothing to coerce to).
 	 */
-	fcache->returnsTuple = check_sql_fn_retval(foid,
-											   rettype,
-											   flat_query_list,
-											   NULL,
-											   &fcache->junkFilter);
+	fcache->returnsTuple = check_sql_fn_retval_ext2(foid,
+													fcinfo,
+													rettype,
+													procedureStruct->prokind,
+													flat_query_list,
+													NULL,
+													&fcache->junkFilter);
 
 	if (fcache->returnsTuple)
 	{
@@ -914,21 +923,10 @@ postquel_sub_params(SQLFunctionCachePtr fcache,
 	{
 		ParamListInfo paramLI;
 		Oid		   *argtypes = fcache->pinfo->argtypes;
-		int			i;
 
 		if (fcache->paramLI == NULL)
 		{
-			paramLI = (ParamListInfo)
-				palloc(offsetof(ParamListInfoData, params) +
-					   nargs * sizeof(ParamExternData));
-			/* we have static list of params, so no hooks needed */
-			paramLI->paramFetch = NULL;
-			paramLI->paramFetchArg = NULL;
-			paramLI->paramCompile = NULL;
-			paramLI->paramCompileArg = NULL;
-			paramLI->parserSetup = NULL;
-			paramLI->parserSetupArg = NULL;
-			paramLI->numParams = nargs;
+			paramLI = makeParamList(nargs);
 			fcache->paramLI = paramLI;
 		}
 		else
@@ -937,7 +935,7 @@ postquel_sub_params(SQLFunctionCachePtr fcache,
 			Assert(paramLI->numParams == nargs);
 		}
 
-		for (i = 0; i < nargs; i++)
+		for (int i = 0; i < nargs; i++)
 		{
 			ParamExternData *prm = &paramLI->params[i];
 
@@ -953,8 +951,8 @@ postquel_sub_params(SQLFunctionCachePtr fcache,
 			 * infrastructure.  (Examining the parse trees is not good enough,
 			 * because of possible function inlining during planning.)
 			 */
-			prm->isnull = fcinfo->argnull[i];
-			prm->value = MakeExpandedObjectReadOnly(fcinfo->arg[i],
+			prm->isnull = fcinfo->args[i].isnull;
+			prm->value = MakeExpandedObjectReadOnly(fcinfo->args[i].value,
 													prm->isnull,
 													get_typlen(argtypes[i]));
 			prm->pflags = 0;
@@ -991,7 +989,7 @@ postquel_get_single_result(TupleTableSlot *slot,
 	{
 		/* We must return the whole tuple as a Datum. */
 		fcinfo->isnull = false;
-		value = ExecFetchSlotTupleDatum(slot);
+		value = ExecFetchSlotHeapTupleDatum(slot);
 	}
 	else
 	{
@@ -1083,7 +1081,7 @@ fmgr_sql(PG_FUNCTION_ARGS)
 
 	if (fcache == NULL)
 	{
-		init_sql_fcache(fcinfo->flinfo, PG_GET_COLLATION(), lazyEvalOK);
+		init_sql_fcache(fcinfo, PG_GET_COLLATION(), lazyEvalOK);
 		fcache = (SQLFunctionCachePtr) fcinfo->flinfo->fn_extra;
 	}
 
@@ -1609,6 +1607,36 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 					bool *modifyTargetList,
 					JunkFilter **junkFilter)
 {
+	/* Wrapper function to preserve ABI compatibility in released branches */
+	return check_sql_fn_retval_ext2(func_id, NULL, rettype,
+									PROKIND_FUNCTION,
+									queryTreeList,
+									modifyTargetList,
+									junkFilter);
+}
+
+bool
+check_sql_fn_retval_ext(Oid func_id, Oid rettype, char prokind,
+						List *queryTreeList,
+						bool *modifyTargetList,
+						JunkFilter **junkFilter)
+{
+	/* Wrapper function to preserve ABI compatibility in released branches */
+	return check_sql_fn_retval_ext2(func_id, NULL, rettype,
+									prokind,
+									queryTreeList,
+									modifyTargetList,
+									junkFilter);
+}
+
+static bool
+check_sql_fn_retval_ext2(Oid func_id,
+						 FunctionCallInfo fcinfo,
+						 Oid rettype, char prokind,
+						 List *queryTreeList,
+						 bool *modifyTargetList,
+						 JunkFilter **junkFilter)
+{
 	Query	   *parse;
 	List	  **tlist_ptr;
 	List	   *tlist;
@@ -1626,7 +1654,7 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 
 	/*
 	 * If it's declared to return VOID, we don't care what's in the function.
-	 * (This takes care of the procedure case, as well.)
+	 * (This takes care of procedures with no output parameters, as well.)
 	 */
 	if (rettype == VOIDOID)
 		return false;
@@ -1739,7 +1767,8 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 
 		/* Set up junk filter if needed */
 		if (junkFilter)
-			*junkFilter = ExecInitJunkFilter(tlist, false, NULL);
+			*junkFilter = ExecInitJunkFilter(tlist,
+											 MakeSingleTupleTableSlot(NULL, &TTSOpsMinimalTuple));
 	}
 	else if (fn_typtype == TYPTYPE_COMPOSITE || rettype == RECORDOID)
 	{
@@ -1752,6 +1781,7 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 		 * result type, so there is no way to produce a domain-over-composite
 		 * result except by computing it as an explicit single-column result.
 		 */
+		TypeFuncClass tfclass;
 		TupleDesc	tupdesc;
 		int			tupnatts;	/* physical number of columns in tuple */
 		int			tuplogcols; /* # of nondeleted columns in tuple */
@@ -1770,8 +1800,13 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 		 * will succeed for any composite restype.  For the moment we rely on
 		 * runtime type checking to catch any discrepancy, but it'd be nice to
 		 * do better at parse time.
+		 *
+		 * We must *not* do this for a procedure, however.  Procedures with
+		 * output parameter(s) have rettype RECORD, and the CALL code expects
+		 * to get results corresponding to the list of output parameters, even
+		 * when there's just one parameter that's composite.
 		 */
-		if (tlistlen == 1)
+		if (tlistlen == 1 && prokind != PROKIND_PROCEDURE)
 		{
 			TargetEntry *tle = (TargetEntry *) linitial(tlist);
 
@@ -1792,23 +1827,42 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 				}
 				/* Set up junk filter if needed */
 				if (junkFilter)
-					*junkFilter = ExecInitJunkFilter(tlist, false, NULL);
+				{
+					TupleTableSlot *slot =
+					MakeSingleTupleTableSlot(NULL, &TTSOpsMinimalTuple);
+
+					*junkFilter = ExecInitJunkFilter(tlist, slot);
+				}
 				return false;	/* NOT returning whole tuple */
 			}
 		}
 
 		/*
-		 * Is the rowtype fixed, or determined only at runtime?  (Note we
+		 * Identify the output rowtype, resolving polymorphism if possible
+		 * (that is, if we were passed an fcinfo).
+		 */
+		if (fcinfo)
+			tfclass = get_call_result_type(fcinfo, NULL, &tupdesc);
+		else
+			tfclass = get_func_result_type(func_id, NULL, &tupdesc);
+
+		/*
+		 * Is the rowtype known, or determined only at runtime?  (Note we
 		 * cannot see TYPEFUNC_COMPOSITE_DOMAIN here.)
 		 */
-		if (get_func_result_type(func_id, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
+		if (tfclass != TYPEFUNC_COMPOSITE)
 		{
 			/*
 			 * Assume we are returning the whole tuple. Crosschecking against
 			 * what the caller expects will happen at runtime.
 			 */
 			if (junkFilter)
-				*junkFilter = ExecInitJunkFilter(tlist, false, NULL);
+			{
+				TupleTableSlot *slot;
+
+				slot = MakeSingleTupleTableSlot(NULL, &TTSOpsMinimalTuple);
+				*junkFilter = ExecInitJunkFilter(tlist, slot);
+			}
 			return true;
 		}
 		Assert(tupdesc);
@@ -1949,9 +2003,14 @@ check_sql_fn_retval(Oid func_id, Oid rettype, List *queryTreeList,
 
 		/* Set up junk filter if needed */
 		if (junkFilter)
+		{
+			TupleTableSlot *slot =
+			MakeSingleTupleTableSlot(NULL, &TTSOpsMinimalTuple);
+
 			*junkFilter = ExecInitJunkFilterConversion(tlist,
 													   CreateTupleDescCopy(tupdesc),
-													   NULL);
+													   slot);
+		}
 
 		/* Report that we are returning entire tuple result */
 		return true;

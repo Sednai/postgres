@@ -107,9 +107,158 @@ Check constraints:
 Inherits: test_like_5,
           test_like_5x
 
-DROP TABLE test_like_4;
+DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
+CREATE TABLE test_like_gen_1 (a int, b int GENERATED ALWAYS AS (a * 2) STORED);
+\d test_like_gen_1
+                        Table "public.test_like_gen_1"
+ Column |  Type   | Collation | Nullable |              Default               
+--------+---------+-----------+----------+------------------------------------
+ a      | integer |           |          | 
+ b      | integer |           |          | generated always as (a * 2) stored
+
+INSERT INTO test_like_gen_1 (a) VALUES (1);
+SELECT * FROM test_like_gen_1;
+ a | b 
+---+---
+ 1 | 2
+(1 row)
+
+CREATE TABLE test_like_gen_2 (LIKE test_like_gen_1);
+\d test_like_gen_2
+          Table "public.test_like_gen_2"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ a      | integer |           |          | 
+ b      | integer |           |          | 
+
+INSERT INTO test_like_gen_2 (a) VALUES (1);
+SELECT * FROM test_like_gen_2;
+ a | b 
+---+---
+ 1 |  
+(1 row)
+
+CREATE TABLE test_like_gen_3 (LIKE test_like_gen_1 INCLUDING GENERATED);
+\d test_like_gen_3
+                        Table "public.test_like_gen_3"
+ Column |  Type   | Collation | Nullable |              Default               
+--------+---------+-----------+----------+------------------------------------
+ a      | integer |           |          | 
+ b      | integer |           |          | generated always as (a * 2) stored
+
+INSERT INTO test_like_gen_3 (a) VALUES (1);
+SELECT * FROM test_like_gen_3;
+ a | b 
+---+---
+ 1 | 2
+(1 row)
+
+DROP TABLE test_like_gen_1, test_like_gen_2, test_like_gen_3;
+-- also test generated column with a "forward" reference (bug #16342)
+CREATE TABLE test_like_4 (b int DEFAULT 42,
+  c int GENERATED ALWAYS AS (a * 2) STORED,
+  a int CHECK (a > 0));
+\d test_like_4
+                          Table "public.test_like_4"
+ Column |  Type   | Collation | Nullable |              Default               
+--------+---------+-----------+----------+------------------------------------
+ b      | integer |           |          | 42
+ c      | integer |           |          | generated always as (a * 2) stored
+ a      | integer |           |          | 
+Check constraints:
+    "test_like_4_a_check" CHECK (a > 0)
+
+CREATE TABLE test_like_4a (LIKE test_like_4);
+CREATE TABLE test_like_4b (LIKE test_like_4 INCLUDING DEFAULTS);
+CREATE TABLE test_like_4c (LIKE test_like_4 INCLUDING GENERATED);
+CREATE TABLE test_like_4d (LIKE test_like_4 INCLUDING DEFAULTS INCLUDING GENERATED);
+\d test_like_4a
+            Table "public.test_like_4a"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ b      | integer |           |          | 
+ c      | integer |           |          | 
+ a      | integer |           |          | 
+
+INSERT INTO test_like_4a (a) VALUES(11);
+SELECT a, b, c FROM test_like_4a;
+ a  | b | c 
+----+---+---
+ 11 |   |  
+(1 row)
+
+\d test_like_4b
+            Table "public.test_like_4b"
+ Column |  Type   | Collation | Nullable | Default 
+--------+---------+-----------+----------+---------
+ b      | integer |           |          | 42
+ c      | integer |           |          | 
+ a      | integer |           |          | 
+
+INSERT INTO test_like_4b (a) VALUES(11);
+SELECT a, b, c FROM test_like_4b;
+ a  | b  | c 
+----+----+---
+ 11 | 42 |  
+(1 row)
+
+\d test_like_4c
+                         Table "public.test_like_4c"
+ Column |  Type   | Collation | Nullable |              Default               
+--------+---------+-----------+----------+------------------------------------
+ b      | integer |           |          | 
+ c      | integer |           |          | generated always as (a * 2) stored
+ a      | integer |           |          | 
+
+INSERT INTO test_like_4c (a) VALUES(11);
+SELECT a, b, c FROM test_like_4c;
+ a  | b | c  
+----+---+----
+ 11 |   | 22
+(1 row)
+
+\d test_like_4d
+                         Table "public.test_like_4d"
+ Column |  Type   | Collation | Nullable |              Default               
+--------+---------+-----------+----------+------------------------------------
+ b      | integer |           |          | 42
+ c      | integer |           |          | generated always as (a * 2) stored
+ a      | integer |           |          | 
+
+INSERT INTO test_like_4d (a) VALUES(11);
+SELECT a, b, c FROM test_like_4d;
+ a  | b  | c  
+----+----+----
+ 11 | 42 | 22
+(1 row)
+
+-- Test renumbering of Vars when combining LIKE with inheritance
+CREATE TABLE test_like_5 (x point, y point, z point);
+CREATE TABLE test_like_5x (p int CHECK (p > 0),
+   q int GENERATED ALWAYS AS (p * 2) STORED);
+CREATE TABLE test_like_5c (LIKE test_like_4 INCLUDING ALL)
+  INHERITS (test_like_5, test_like_5x);
+\d test_like_5c
+                         Table "public.test_like_5c"
+ Column |  Type   | Collation | Nullable |              Default               
+--------+---------+-----------+----------+------------------------------------
+ x      | point   |           |          | 
+ y      | point   |           |          | 
+ z      | point   |           |          | 
+ p      | integer |           |          | 
+ q      | integer |           |          | generated always as (p * 2) stored
+ b      | integer |           |          | 42
+ c      | integer |           |          | generated always as (a * 2) stored
+ a      | integer |           |          | 
+Check constraints:
+    "test_like_4_a_check" CHECK (a > 0)
+    "test_like_5x_p_check" CHECK (p > 0)
+Inherits: test_like_5,
+          test_like_5x
+
+DROP TABLE test_like_4, test_like_4a, test_like_4b, test_like_4c, test_like_4d;
 DROP TABLE test_like_5, test_like_5x, test_like_5c;
-CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text) DISTRIBUTE BY REPLICATION; /* copies indexes */
+CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text); /* copies indexes */
 INSERT INTO inhg VALUES (5, 10);
 INSERT INTO inhg VALUES (20, 10); -- should fail
 ERROR:  duplicate key value violates unique constraint "inhg_pkey"
@@ -260,7 +409,7 @@ Indexes:
 Check constraints:
     "ctlt1_a_check" CHECK (length(a) > 2)
 Statistics objects:
-    "public"."ctlt_all_a_b_stat" (ndistinct, dependencies) ON a, b FROM ctlt_all
+    "public"."ctlt_all_a_b_stat" (ndistinct, dependencies, mcv) ON a, b FROM ctlt_all
 
 SELECT c.relname, objsubid, description FROM pg_description, pg_index i, pg_class c WHERE classoid = 'pg_class'::regclass AND objoid = i.indexrelid AND c.oid = i.indexrelid AND i.indrelid = 'ctlt_all'::regclass ORDER BY c.relname, objsubid;
     relname     | objsubid | description 
@@ -298,7 +447,7 @@ Indexes:
 Check constraints:
     "ctlt1_a_check" CHECK (length(a) > 2)
 Statistics objects:
-    "public"."pg_attrdef_a_b_stat" (ndistinct, dependencies) ON a, b FROM public.pg_attrdef
+    "public"."pg_attrdef_a_b_stat" (ndistinct, dependencies, mcv) ON a, b FROM public.pg_attrdef
 
 DROP TABLE public.pg_attrdef;
 -- Check that LIKE isn't confused when new table masks the old, either
@@ -319,7 +468,7 @@ Indexes:
 Check constraints:
     "ctlt1_a_check" CHECK (length(a) > 2)
 Statistics objects:
-    "ctl_schema"."ctlt1_a_b_stat" (ndistinct, dependencies) ON a, b FROM ctlt1
+    "ctl_schema"."ctlt1_a_b_stat" (ndistinct, dependencies, mcv) ON a, b FROM ctlt1
 
 ROLLBACK;
 DROP TABLE ctlt1, ctlt2, ctlt3, ctlt4, ctlt12_storage, ctlt12_comments, ctlt1_inh, ctlt13_inh, ctlt13_like, ctlt_all, ctla, ctlb CASCADE;
@@ -345,39 +494,3 @@ DROP TYPE ctlty1;
 DROP VIEW ctlv1;
 DROP TABLE IF EXISTS ctlt4, ctlt10, ctlt11, ctlt11a, ctlt12;
 NOTICE:  table "ctlt10" does not exist, skipping
-NOTICE:  table "ctlt11" does not exist, skipping
-NOTICE:  table "ctlt11a" does not exist, skipping
-/* LIKE WITH OIDS */
-CREATE TABLE has_oid (x INTEGER) WITH OIDS;
-CREATE TABLE no_oid (y INTEGER);
-CREATE TABLE like_test (z INTEGER, LIKE has_oid);
-SELECT oid FROM like_test;
- oid 
------
-(0 rows)
-
-CREATE TABLE like_test2 (z INTEGER, LIKE no_oid);
-SELECT oid FROM like_test2; -- fail
-ERROR:  column "oid" does not exist
-LINE 1: SELECT oid FROM like_test2;
-               ^
-CREATE TABLE like_test3 (z INTEGER, LIKE has_oid, LIKE no_oid);
-SELECT oid FROM like_test3;
- oid 
------
-(0 rows)
-
-CREATE TABLE like_test4 (z INTEGER, PRIMARY KEY(oid), LIKE has_oid) DISTRIBUTE BY HASH(z);
-SELECT oid FROM like_test4;
- oid 
------
-(0 rows)
-
-CREATE TABLE like_test5 (z INTEGER, LIKE no_oid) WITH OIDS;
-SELECT oid FROM like_test5;
- oid 
------
-(0 rows)
-
-DROP TABLE has_oid, no_oid, like_test, like_test2, like_test3,
-  like_test4, like_test5;

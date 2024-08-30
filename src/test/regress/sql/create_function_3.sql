@@ -233,8 +233,6 @@ SELECT double_append(array_append(ARRAY[q1], q2), q3)
   FROM (VALUES(1,2,3), (4,5,6)) v(q1,q2,q3);
 
 -- Cleanup
-\set VERBOSITY terse \\ -- suppress cascade details
 DROP SCHEMA temp_func_test CASCADE;
-\set VERBOSITY default
 DROP USER regress_unpriv_user;
 RESET search_path;

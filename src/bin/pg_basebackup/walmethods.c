@@ -5,7 +5,7 @@
  * NOTE! The caller must ensure that only one method is instantiated in
  *		 any given program, and that it's only instantiated once!
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  src/bin/pg_basebackup/walmethods.c
@@ -24,7 +24,7 @@
 #include "pgtar.h"
 #include "common/file_perm.h"
 #include "common/file_utils.h"
-
+#include "common/logging.h"
 #include "receivelog.h"
 #include "streamutil.h"
 
@@ -176,8 +176,8 @@ dir_open_for_write(const char *pathname, const char *temp_suffix, size_t pad_to_
 	 */
 	if (dir_data->sync)
 	{
-		if (fsync_fname(tmppath, false, progname) != 0 ||
-			fsync_parent_path(tmppath, progname) != 0)
+		if (fsync_fname(tmppath, false) != 0 ||
+			fsync_parent_path(tmppath) != 0)
 		{
 			dir_data->lasterrno = errno;
 #ifdef HAVE_LIBZ
@@ -264,7 +264,10 @@ dir_close(Walfile f, WalCloseMethod method)
 
 #ifdef HAVE_LIBZ
 	if (dir_data->compression > 0)
+	{
+		errno = 0;				/* in case gzclose() doesn't set it */
 		r = gzclose(df->gzfp);
+	}
 	else
 #endif
 		r = close(df->fd);
@@ -291,7 +294,7 @@ dir_close(Walfile f, WalCloseMethod method)
 			snprintf(tmppath2, sizeof(tmppath2), "%s/%s",
 					 dir_data->basedir, filename2);
 			pg_free(filename2);
-			r = durable_rename(tmppath, tmppath2, progname);
+			r = durable_rename(tmppath, tmppath2);
 		}
 		else if (method == CLOSE_UNLINK)
 		{
@@ -313,9 +316,9 @@ dir_close(Walfile f, WalCloseMethod method)
 			 */
 			if (dir_data->sync)
 			{
-				r = fsync_fname(df->fullpath, false, progname);
+				r = fsync_fname(df->fullpath, false);
 				if (r == 0)
-					r = fsync_parent_path(df->fullpath, progname);
+					r = fsync_parent_path(df->fullpath);
 			}
 		}
 	}
@@ -413,7 +416,7 @@ dir_finish(void)
 		 * Files are fsynced when they are closed, but we need to fsync the
 		 * directory entry here as well.
 		 */
-		if (fsync_fname(dir_data->basedir, true, progname) != 0)
+		if (fsync_fname(dir_data->basedir, true) != 0)
 		{
 			dir_data->lasterrno = errno;
 			return false;
@@ -578,7 +581,7 @@ tar_write(Walfile f, const void *buf, size_t count)
 #ifdef HAVE_LIBZ
 	else
 	{
-		if (!tar_write_compressed_data((void *) buf, count, false))
+		if (!tar_write_compressed_data(unconstify(void *, buf), count, false))
 			return -1;
 		((TarMethodFile *) f)->currpos += count;
 		return count;
@@ -1095,8 +1098,8 @@ tar_finish(void)
 
 	if (tar_data->sync)
 	{
-		if (fsync_fname(tar_data->tarfilename, false, progname) != 0 ||
-			fsync_parent_path(tar_data->tarfilename, progname) != 0)
+		if (fsync_fname(tar_data->tarfilename, false) != 0 ||
+			fsync_parent_path(tar_data->tarfilename) != 0)
 		{
 			tar_data->lasterrno = errno;
 			return false;

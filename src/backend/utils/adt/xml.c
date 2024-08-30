@@ -4,7 +4,7 @@
  *	  XML data type support.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/utils/adt/xml.c
@@ -65,9 +65,20 @@
 #if LIBXML_VERSION >= 20704
 #define HAVE_XMLSTRUCTUREDERRORCONTEXT 1
 #endif
+
+/*
+ * libxml2 2.12 decided to insert "const" into the error handler API.
+ */
+#if LIBXML_VERSION >= 21200
+#define PgXmlErrorPtr const xmlError *
+#else
+#define PgXmlErrorPtr xmlErrorPtr
+#endif
+
 #endif							/* USE_LIBXML */
 
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
@@ -117,10 +128,10 @@ struct PgXmlErrorContext
 };
 
 static xmlParserInputPtr xmlPgEntityLoader(const char *URL, const char *ID,
-				  xmlParserCtxtPtr ctxt);
-static void xml_errorHandler(void *data, xmlErrorPtr error);
+										   xmlParserCtxtPtr ctxt);
+static void xml_errorHandler(void *data, PgXmlErrorPtr error);
 static void xml_ereport_by_code(int level, int sqlcode,
-					const char *msg, int errcode);
+								const char *msg, int errcode);
 static void chopStringInfoNewlines(StringInfo str);
 static void appendStringInfoLineSeparator(StringInfo str);
 
@@ -136,41 +147,41 @@ static char *xml_pstrdup(const char *string);
 #endif							/* USE_LIBXMLCONTEXT */
 
 static xmlChar *xml_text2xmlChar(text *in);
-static int parse_xml_decl(const xmlChar *str, size_t *lenp,
-			   xmlChar **version, xmlChar **encoding, int *standalone);
+static int	parse_xml_decl(const xmlChar *str, size_t *lenp,
+						   xmlChar **version, xmlChar **encoding, int *standalone);
 static bool print_xml_decl(StringInfo buf, const xmlChar *version,
-			   pg_enc encoding, int standalone);
+						   pg_enc encoding, int standalone);
 static bool xml_doctype_in_content(const xmlChar *str);
 static xmlDocPtr xml_parse(text *data, XmlOptionType xmloption_arg,
-		  bool preserve_whitespace, int encoding);
+						   bool preserve_whitespace, int encoding);
 static text *xml_xmlnodetoxmltype(xmlNodePtr cur, PgXmlErrorContext *xmlerrcxt);
-static int xml_xpathobjtoxmlarray(xmlXPathObjectPtr xpathobj,
-					   ArrayBuildState *astate,
-					   PgXmlErrorContext *xmlerrcxt);
+static int	xml_xpathobjtoxmlarray(xmlXPathObjectPtr xpathobj,
+								   ArrayBuildState *astate,
+								   PgXmlErrorContext *xmlerrcxt);
 static xmlChar *pg_xmlCharStrndup(const char *str, size_t len);
 #endif							/* USE_LIBXML */
 
 static void xmldata_root_element_start(StringInfo result, const char *eltname,
-						   const char *xmlschema, const char *targetns,
-						   bool top_level);
+									   const char *xmlschema, const char *targetns,
+									   bool top_level);
 static void xmldata_root_element_end(StringInfo result, const char *eltname);
 static StringInfo query_to_xml_internal(const char *query, char *tablename,
-					  const char *xmlschema, bool nulls, bool tableforest,
-					  const char *targetns, bool top_level);
+										const char *xmlschema, bool nulls, bool tableforest,
+										const char *targetns, bool top_level);
 static const char *map_sql_table_to_xmlschema(TupleDesc tupdesc, Oid relid,
-						   bool nulls, bool tableforest, const char *targetns);
+											  bool nulls, bool tableforest, const char *targetns);
 static const char *map_sql_schema_to_xmlschema_types(Oid nspid,
-								  List *relid_list, bool nulls,
-								  bool tableforest, const char *targetns);
+													 List *relid_list, bool nulls,
+													 bool tableforest, const char *targetns);
 static const char *map_sql_catalog_to_xmlschema_types(List *nspid_list,
-								   bool nulls, bool tableforest,
-								   const char *targetns);
+													  bool nulls, bool tableforest,
+													  const char *targetns);
 static const char *map_sql_type_to_xml_name(Oid typeoid, int typmod);
 static const char *map_sql_typecoll_to_xmlschema_types(List *tupdesc_list);
 static const char *map_sql_type_to_xmlschema_type(Oid typeoid, int typmod);
 static void SPI_sql_row_to_xmlelement(uint64 rownum, StringInfo result,
-						  char *tablename, bool nulls, bool tableforest,
-						  const char *targetns, bool top_level);
+									  char *tablename, bool nulls, bool tableforest,
+									  const char *targetns, bool top_level);
 
 /* XMLTABLE support */
 #ifdef USE_LIBXML
@@ -194,13 +205,13 @@ typedef struct XmlTableBuilderData
 static void XmlTableInitOpaque(struct TableFuncScanState *state, int natts);
 static void XmlTableSetDocument(struct TableFuncScanState *state, Datum value);
 static void XmlTableSetNamespace(struct TableFuncScanState *state, const char *name,
-					 const char *uri);
+								 const char *uri);
 static void XmlTableSetRowFilter(struct TableFuncScanState *state, const char *path);
 static void XmlTableSetColumnFilter(struct TableFuncScanState *state,
-						const char *path, int colnum);
+									const char *path, int colnum);
 static bool XmlTableFetchRow(struct TableFuncScanState *state);
 static Datum XmlTableGetValue(struct TableFuncScanState *state, int colnum,
-				 Oid typid, int32 typmod, bool *isnull);
+							  Oid typid, int32 typmod, bool *isnull);
 static void XmlTableDestroyOpaque(struct TableFuncScanState *state);
 
 const TableFuncRoutine XmlTableRoutine =
@@ -1177,6 +1188,36 @@ pg_xmlCharStrndup(const char *str, size_t len)
 }
 
 /*
+ * Copy xmlChar string to PostgreSQL-owned memory, freeing the input.
+ *
+ * The input xmlChar is freed regardless of success of the copy.
+ */
+static char *
+xml_pstrdup_and_free(xmlChar *str)
+{
+	char	   *result;
+
+	if (str)
+	{
+		PG_TRY();
+		{
+			result = pstrdup((char *) str);
+		}
+		PG_CATCH();
+		{
+			xmlFree(str);
+			PG_RE_THROW();
+		}
+		PG_END_TRY();
+		xmlFree(str);
+	}
+	else
+		result = NULL;
+
+	return result;
+}
+
+/*
  * str is the null-terminated input string.  Remaining arguments are
  * output arguments; each can be NULL if value is not wanted.
  * version and encoding are returned as locally-palloc'd strings.
@@ -1506,17 +1547,13 @@ xml_parse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace,
 	PG_TRY();
 	{
 		bool		parse_as_document = false;
+		int			options;
 		int			res_code;
 		size_t		count = 0;
 		xmlChar    *version = NULL;
 		int			standalone = 0;
 
 		xmlInitParser();
-
-		ctxt = xmlNewParserCtxt();
-		if (ctxt == NULL || xmlerrcxt->err_occurred)
-			xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
-						"could not allocate parser context");
 
 		/* Decide whether to parse as document or content */
 		if (xmloption_arg == XMLOPTION_DOCUMENT)
@@ -1536,20 +1573,30 @@ xml_parse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace,
 				parse_as_document = true;
 		}
 
+		/*
+		 * Select parse options.
+		 *
+		 * Note that here we try to apply DTD defaults (XML_PARSE_DTDATTR)
+		 * according to SQL/XML:2008 GR 10.16.7.d: 'Default values defined by
+		 * internal DTD are applied'.  As for external DTDs, we try to support
+		 * them too (see SQL/XML:2008 GR 10.16.7.e), but that doesn't really
+		 * happen because xmlPgEntityLoader prevents it.
+		 */
+		options = XML_PARSE_NOENT | XML_PARSE_DTDATTR
+			| (preserve_whitespace ? 0 : XML_PARSE_NOBLANKS);
+
 		if (parse_as_document)
 		{
-			/*
-			 * Note, that here we try to apply DTD defaults
-			 * (XML_PARSE_DTDATTR) according to SQL/XML:2008 GR 10.16.7.d:
-			 * 'Default values defined by internal DTD are applied'. As for
-			 * external DTDs, we try to support them too, (see SQL/XML:2008 GR
-			 * 10.16.7.e)
-			 */
+			ctxt = xmlNewParserCtxt();
+			if (ctxt == NULL || xmlerrcxt->err_occurred)
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+							"could not allocate parser context");
+
 			doc = xmlCtxtReadDoc(ctxt, utf8string,
-								 NULL,
+								 NULL,	/* no URL */
 								 "UTF-8",
-								 XML_PARSE_NOENT | XML_PARSE_DTDATTR
-								 | (preserve_whitespace ? 0 : XML_PARSE_NOBLANKS));
+								 options);
+
 			if (doc == NULL || xmlerrcxt->err_occurred)
 			{
 				/* Use original option to decide which error code to throw */
@@ -1563,17 +1610,36 @@ xml_parse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace,
 		}
 		else
 		{
+			xmlNodePtr	root;
+
+			/* set up document with empty root node to be the context node */
 			doc = xmlNewDoc(version);
 			Assert(doc->encoding == NULL);
 			doc->encoding = xmlStrdup((const xmlChar *) "UTF-8");
 			doc->standalone = standalone;
 
+			root = xmlNewNode(NULL, (const xmlChar *) "content-root");
+			if (root == NULL || xmlerrcxt->err_occurred)
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+							"could not allocate xml node");
+			/* This attaches root to doc, so we need not free it separately. */
+			xmlDocSetRootElement(doc, root);
+
 			/* allow empty content */
 			if (*(utf8string + count))
 			{
-				res_code = xmlParseBalancedChunkMemory(doc, NULL, NULL, 0,
-													   utf8string + count, NULL);
-				if (res_code != 0 || xmlerrcxt->err_occurred)
+				xmlNodePtr	node_list = NULL;
+				xmlParserErrors res;
+
+				res = xmlParseInNodeContext(root,
+											(char *) utf8string + count,
+											strlen((char *) utf8string + count),
+											options,
+											&node_list);
+
+				xmlFreeNodeList(node_list);
+
+				if (res != XML_ERR_OK || xmlerrcxt->err_occurred)
 					xml_ereport(xmlerrcxt, ERROR, ERRCODE_INVALID_XML_CONTENT,
 								"invalid XML content");
 			}
@@ -1592,7 +1658,8 @@ xml_parse(text *data, XmlOptionType xmloption_arg, bool preserve_whitespace,
 	}
 	PG_END_TRY();
 
-	xmlFreeParserCtxt(ctxt);
+	if (ctxt != NULL)
+		xmlFreeParserCtxt(ctxt);
 
 	pg_xml_done(xmlerrcxt, false);
 
@@ -1721,7 +1788,7 @@ xml_ereport(PgXmlErrorContext *errcxt, int level, int sqlcode, const char *msg)
  * Error handler for libxml errors and warnings
  */
 static void
-xml_errorHandler(void *data, xmlErrorPtr error)
+xml_errorHandler(void *data, PgXmlErrorPtr error)
 {
 	PgXmlErrorContext *xmlerrcxt = (PgXmlErrorContext *) data;
 	xmlParserCtxtPtr ctxt = (xmlParserCtxtPtr) error->ctxt;
@@ -1773,6 +1840,19 @@ xml_errorHandler(void *data, xmlErrorPtr error)
 	switch (domain)
 	{
 		case XML_FROM_PARSER:
+
+			/*
+			 * XML_ERR_NOT_WELL_BALANCED is typically reported after some
+			 * other, more on-point error.  Furthermore, libxml2 2.13 reports
+			 * it under a completely different set of rules than prior
+			 * versions.  To avoid cross-version behavioral differences,
+			 * suppress it so long as we already logged some error.
+			 */
+			if (error->code == XML_ERR_NOT_WELL_BALANCED &&
+				xmlerrcxt->err_occurred)
+				return;
+			/* fall through */
+
 		case XML_FROM_NONE:
 		case XML_FROM_MEMORY:
 		case XML_FROM_IO:
@@ -2691,10 +2771,10 @@ table_to_xmlschema(PG_FUNCTION_ARGS)
 	const char *result;
 	Relation	rel;
 
-	rel = heap_open(relid, AccessShareLock);
+	rel = table_open(relid, AccessShareLock);
 	result = map_sql_table_to_xmlschema(rel->rd_att, relid, nulls,
 										tableforest, targetns);
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 	PG_RETURN_XML_P(cstring_to_xmltype(result));
 }
@@ -2769,10 +2849,10 @@ table_to_xml_and_xmlschema(PG_FUNCTION_ARGS)
 	Relation	rel;
 	const char *xmlschema;
 
-	rel = heap_open(relid, AccessShareLock);
+	rel = table_open(relid, AccessShareLock);
 	xmlschema = map_sql_table_to_xmlschema(rel->rd_att, relid, nulls,
 										   tableforest, targetns);
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 	PG_RETURN_XML_P(stringinfo_to_xmltype(table_to_xml_internal(relid,
 																xmlschema, nulls, tableforest,
@@ -2930,9 +3010,9 @@ schema_to_xmlschema_internal(const char *schemaname, bool nulls,
 	{
 		Relation	rel;
 
-		rel = heap_open(lfirst_oid(cell), AccessShareLock);
+		rel = table_open(lfirst_oid(cell), AccessShareLock);
 		tupdesc_list = lappend(tupdesc_list, CreateTupleDescCopy(rel->rd_att));
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 	}
 
 	appendStringInfoString(result,
@@ -3070,9 +3150,9 @@ database_to_xmlschema_internal(bool nulls, bool tableforest,
 	{
 		Relation	rel;
 
-		rel = heap_open(lfirst_oid(cell), AccessShareLock);
+		rel = table_open(lfirst_oid(cell), AccessShareLock);
 		tupdesc_list = lappend(tupdesc_list, CreateTupleDescCopy(rel->rd_att));
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 	}
 
 	appendStringInfoString(result,
@@ -3786,45 +3866,69 @@ SPI_sql_row_to_xmlelement(uint64 rownum, StringInfo result, char *tablename,
 #ifdef USE_LIBXML
 
 /*
- * Convert XML node to text (dump subtree in case of element,
- * return value otherwise)
+ * Convert XML node to text.
+ *
+ * For attribute and text nodes, return the escaped text.  For anything else,
+ * dump the whole subtree.
  */
 static text *
 xml_xmlnodetoxmltype(xmlNodePtr cur, PgXmlErrorContext *xmlerrcxt)
 {
 	xmltype    *result;
 
-	if (cur->type == XML_ELEMENT_NODE)
+	if (cur->type != XML_ATTRIBUTE_NODE && cur->type != XML_TEXT_NODE)
 	{
-		xmlBufferPtr buf;
-		xmlNodePtr	cur_copy;
-
-		buf = xmlBufferCreate();
-
-		/*
-		 * The result of xmlNodeDump() won't contain namespace definitions
-		 * from parent nodes, but xmlCopyNode() duplicates a node along with
-		 * its required namespace definitions.
-		 */
-		cur_copy = xmlCopyNode(cur, 1);
-
-		if (cur_copy == NULL)
-			xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
-						"could not copy node");
+		void		(*volatile nodefree) (xmlNodePtr) = NULL;
+		volatile xmlBufferPtr buf = NULL;
+		volatile xmlNodePtr cur_copy = NULL;
 
 		PG_TRY();
 		{
-			xmlNodeDump(buf, NULL, cur_copy, 0, 1);
+			int			bytes;
+
+			buf = xmlBufferCreate();
+			if (buf == NULL || xmlerrcxt->err_occurred)
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+							"could not allocate xmlBuffer");
+
+			/*
+			 * Produce a dump of the node that we can serialize.  xmlNodeDump
+			 * does that, but the result of that function won't contain
+			 * namespace definitions from ancestor nodes, so we first do a
+			 * xmlCopyNode() which duplicates the node along with its required
+			 * namespace definitions.
+			 *
+			 * Some old libxml2 versions such as 2.7.6 produce partially
+			 * broken XML_DOCUMENT_NODE nodes (unset content field) when
+			 * copying them.  xmlNodeDump of such a node works fine, but
+			 * xmlFreeNode crashes; set us up to call xmlFreeDoc instead.
+			 */
+			cur_copy = xmlCopyNode(cur, 1);
+			if (cur_copy == NULL || xmlerrcxt->err_occurred)
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+							"could not copy node");
+			nodefree = (cur_copy->type == XML_DOCUMENT_NODE) ?
+				(void (*) (xmlNodePtr)) xmlFreeDoc : xmlFreeNode;
+
+			bytes = xmlNodeDump(buf, NULL, cur_copy, 0, 0);
+			if (bytes == -1 || xmlerrcxt->err_occurred)
+				xml_ereport(xmlerrcxt, ERROR, ERRCODE_OUT_OF_MEMORY,
+							"could not dump node");
+
 			result = xmlBuffer_to_xmltype(buf);
 		}
 		PG_CATCH();
 		{
-			xmlFreeNode(cur_copy);
-			xmlBufferFree(buf);
+			if (nodefree)
+				nodefree(cur_copy);
+			if (buf)
+				xmlBufferFree(buf);
 			PG_RE_THROW();
 		}
 		PG_END_TRY();
-		xmlFreeNode(cur_copy);
+
+		if (nodefree)
+			nodefree(cur_copy);
 		xmlBufferFree(buf);
 	}
 	else
@@ -4587,9 +4691,9 @@ XmlTableGetValue(TableFuncScanState *state, int colnum,
 		/*
 		 * There are four possible cases, depending on the number of nodes
 		 * returned by the XPath expression and the type of the target column:
-		 * a) XPath returns no nodes.  b) One node is returned, and column is
-		 * of type XML.  c) One node, column type other than XML.  d) Multiple
-		 * nodes are returned.
+		 * a) XPath returns no nodes.  b) The target type is XML (return all
+		 * as XML).  For non-XML return types:  c) One node (return content).
+		 * d) Multiple nodes (error).
 		 */
 		if (xpathobj->type == XPATH_NODESET)
 		{
@@ -4602,89 +4706,69 @@ XmlTableGetValue(TableFuncScanState *state, int colnum,
 			{
 				*isnull = true;
 			}
-			else if (count == 1 && typid == XMLOID)
+			else
 			{
-				text	   *textstr;
-
-				/* simple case, result is one value */
-				textstr = xml_xmlnodetoxmltype(xpathobj->nodesetval->nodeTab[0],
-											   xtCxt->xmlerrcxt);
-				cstr = text_to_cstring(textstr);
-			}
-			else if (count == 1)
-			{
-				xmlChar    *str;
-				xmlNodePtr	node;
-
-				node = xpathobj->nodesetval->nodeTab[0];
-				if (node->type == XML_NAMESPACE_DECL)
-					ereport(ERROR,
-							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-							 errmsg("XMLTABLE cannot cast a namespace node to a non-XML result type")));
-
-				/*
-				 * Most nodes (elements and even attributes) store their data
-				 * in children nodes. If they don't have children nodes, it
-				 * means that they are empty (e.g. <element/>). Text nodes and
-				 * CDATA sections are an exception: they don't have children
-				 * but have content in the Text/CDATA node itself.
-				 */
-				if (node->type != XML_CDATA_SECTION_NODE &&
-					node->type != XML_TEXT_NODE)
-					node = node->xmlChildrenNode;
-
-				str = xmlNodeListGetString(xtCxt->doc, node, 1);
-				if (str != NULL)
+				if (typid == XMLOID)
 				{
-					PG_TRY();
+					text	   *textstr;
+					StringInfoData str;
+
+					/* Concatenate serialized values */
+					initStringInfo(&str);
+					for (int i = 0; i < count; i++)
 					{
-						cstr = pstrdup((char *) str);
+						textstr =
+							xml_xmlnodetoxmltype(xpathobj->nodesetval->nodeTab[i],
+												 xtCxt->xmlerrcxt);
+
+						appendStringInfoText(&str, textstr);
 					}
-					PG_CATCH();
-					{
-						xmlFree(str);
-						PG_RE_THROW();
-					}
-					PG_END_TRY();
-					xmlFree(str);
+					cstr = str.data;
 				}
 				else
 				{
-					/* Ensure mapping of empty tags to PostgreSQL values. */
-					cstr = "";
+					xmlChar    *str;
+
+					if (count > 1)
+						ereport(ERROR,
+								(errcode(ERRCODE_CARDINALITY_VIOLATION),
+								 errmsg("more than one value returned by column XPath expression")));
+
+					str = xmlXPathCastNodeSetToString(xpathobj->nodesetval);
+					cstr = str ? xml_pstrdup_and_free(str) : "";
 				}
-			}
-			else
-			{
-				StringInfoData str;
-				int			i;
-
-				Assert(count > 1);
-
-				/*
-				 * When evaluating the XPath expression returns multiple
-				 * nodes, the result is the concatenation of them all. The
-				 * target type must be XML.
-				 */
-				if (typid != XMLOID)
-					ereport(ERROR,
-							(errcode(ERRCODE_CARDINALITY_VIOLATION),
-							 errmsg("more than one value returned by column XPath expression")));
-
-				/* Concatenate serialized values */
-				initStringInfo(&str);
-				for (i = 0; i < count; i++)
-				{
-					appendStringInfoText(&str,
-										 xml_xmlnodetoxmltype(xpathobj->nodesetval->nodeTab[i],
-															  xtCxt->xmlerrcxt));
-				}
-				cstr = str.data;
 			}
 		}
 		else if (xpathobj->type == XPATH_STRING)
 		{
-			cstr = (char *) xpathobj->stringval;
+			/* Content should be escaped when target will be XML */
+			if (typid == XMLOID)
+				cstr = escape_xml((char *) xpathobj->stringval);
+			else
+				cstr = (char *) xpathobj->stringval;
+		}
+		else if (xpathobj->type == XPATH_BOOLEAN)
+		{
+			char		typcategory;
+			bool		typispreferred;
+			xmlChar    *str;
+
+			/* Allow implicit casting from boolean to numbers */
+			get_type_category_preferred(typid, &typcategory, &typispreferred);
+
+			if (typcategory != TYPCATEGORY_NUMERIC)
+				str = xmlXPathCastBooleanToString(xpathobj->boolval);
+			else
+				str = xmlXPathCastNumberToString(xmlXPathCastBooleanToNumber(xpathobj->boolval));
+
+			cstr = xml_pstrdup_and_free(str);
+		}
+		else if (xpathobj->type == XPATH_NUMBER)
+		{
+			xmlChar    *str;
+
+			str = xmlXPathCastNumberToString(xpathobj->floatval);
+			cstr = xml_pstrdup_and_free(str);
 		}
 		else
 			elog(ERROR, "unexpected XPath object type %u", xpathobj->type);

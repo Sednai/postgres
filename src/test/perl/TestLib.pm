@@ -33,9 +33,11 @@ our @EXPORT = qw(
   check_mode_recursive
   chmod_recursive
   check_pg_config
+  scan_server_header
   system_or_bail
   system_log
   run_log
+  run_command
   pump_until
 
   command_ok
@@ -69,6 +71,7 @@ BEGIN
 	  PGCONNECT_TIMEOUT
 	  PGDATA
 	  PGDATABASE
+	  PGGSSENCMODE
 	  PGGSSLIB
 	  PGHOSTADDR
 	  PGKRBSRVNAME
@@ -87,6 +90,7 @@ BEGIN
 	  PGUSER
 	  PGPORT
 	  PGHOST
+	  PG_COLOR
 	);
 	delete @ENV{@envkeys};
 
@@ -240,6 +244,16 @@ sub run_log
 	return IPC::Run::run(@_);
 }
 
+sub run_command
+{
+	my ($cmd) = @_;
+	my ($stdout, $stderr);
+	my $result = IPC::Run::run $cmd, '>', \$stdout, '2>', \$stderr;
+	chomp($stdout);
+	chomp($stderr);
+	return ($stdout, $stderr);
+}
+
 =pod
 
 =item pump_until(proc, timeout, stream, until)
@@ -366,7 +380,7 @@ sub check_mode_recursive
 				unless (defined($file_stat))
 				{
 					my $is_ENOENT = $!{ENOENT};
-					my $msg = "unable to stat $File::Find::name: $!";
+					my $msg       = "unable to stat $File::Find::name: $!";
 					if ($is_ENOENT)
 					{
 						warn $msg;
@@ -446,6 +460,39 @@ sub chmod_recursive
 	return;
 }
 
+# Returns an array that stores all the matches of the given regular expression
+# within the PostgreSQL installation's C<header_path>.  This can be used to
+# retrieve specific value patterns from the installation's header files.
+sub scan_server_header
+{
+	my ($header_path, $regexp) = @_;
+
+	my ($stdout, $stderr);
+	my $result = IPC::Run::run [ 'pg_config', '--includedir-server' ], '>',
+	  \$stdout, '2>', \$stderr
+	  or die "could not execute pg_config";
+	chomp($stdout);
+	$stdout =~ s/\r$//;
+
+	open my $header_h, '<', "$stdout/$header_path" or die "$!";
+
+	my @match = undef;
+	while (<$header_h>)
+	{
+		my $line = $_;
+
+		if (@match = $line =~ /^$regexp/)
+		{
+			last;
+		}
+	}
+
+	close $header_h;
+	die "could not find match in header $header_path\n"
+	  unless @match;
+	return @match;
+}
+
 # Check presence of a given regexp within pg_config.h for the installation
 # where tests are running, returning a match status result depending on
 # that.
@@ -470,6 +517,7 @@ sub check_pg_config
 #
 sub command_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $test_name) = @_;
 	my $result = run_log($cmd);
 	ok($result, $test_name);
@@ -478,6 +526,7 @@ sub command_ok
 
 sub command_fails
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $test_name) = @_;
 	my $result = run_log($cmd);
 	ok(!$result, $test_name);
@@ -486,6 +535,7 @@ sub command_fails
 
 sub command_exit_is
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $expected, $test_name) = @_;
 	print("# Running: " . join(" ", @{$cmd}) . "\n");
 	my $h = IPC::Run::start $cmd;
@@ -504,6 +554,7 @@ sub command_exit_is
 
 sub program_help_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd) = @_;
 	my ($stdout, $stderr);
 	print("# Running: $cmd --help\n");
@@ -517,6 +568,7 @@ sub program_help_ok
 
 sub program_version_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd) = @_;
 	my ($stdout, $stderr);
 	print("# Running: $cmd --version\n");
@@ -530,6 +582,7 @@ sub program_version_ok
 
 sub program_options_handling_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd) = @_;
 	my ($stdout, $stderr);
 	print("# Running: $cmd --not-a-valid-option\n");
@@ -543,6 +596,7 @@ sub program_options_handling_ok
 
 sub command_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $expected_stdout, $test_name) = @_;
 	my ($stdout, $stderr);
 	print("# Running: " . join(" ", @{$cmd}) . "\n");
@@ -555,6 +609,7 @@ sub command_like
 
 sub command_like_safe
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 
 	# Doesn't rely on detecting end of file on the file descriptors,
 	# which can fail, causing the process to hang, notably on Msys
@@ -575,6 +630,7 @@ sub command_like_safe
 
 sub command_fails_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
 	my ($cmd, $expected_stderr, $test_name) = @_;
 	my ($stdout, $stderr);
 	print("# Running: " . join(" ", @{$cmd}) . "\n");
@@ -593,6 +649,8 @@ sub command_fails_like
 # - test_name: name of test
 sub command_checks_all
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($cmd, $expected_ret, $out, $err, $test_name) = @_;
 
 	# run command

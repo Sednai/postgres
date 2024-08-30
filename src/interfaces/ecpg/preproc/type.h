@@ -53,10 +53,10 @@ void		ECPGfree_type(struct ECPGtype *);
    size is the maxsize in case it is a varchar. Otherwise it is the size of
 	   the variable (required to do array fetches of structs).
  */
-void ECPGdump_a_type(FILE *, const char *, struct ECPGtype *, const int,
-				const char *, struct ECPGtype *, const int,
-				const char *, const char *, char *,
-				const char *, const char *);
+void		ECPGdump_a_type(FILE *, const char *, struct ECPGtype *, const int,
+							const char *, struct ECPGtype *, const int,
+							const char *, const char *, char *,
+							const char *, const char *);
 
 /* A simple struct to keep a variable and its type. */
 struct ECPGtemp_type
@@ -106,6 +106,12 @@ struct prep
 	char	   *type;
 };
 
+struct exec
+{
+	char	   *name;
+	char	   *type;
+};
+
 struct this_type
 {
 	char	   *type_storage;
@@ -145,13 +151,25 @@ struct typedefs
 	struct typedefs *next;
 };
 
+/*
+ * Info about a defined symbol (macro), coming from a -D command line switch
+ * or a define command in the program.  These are stored in a simple list.
+ * Because ecpg supports compiling multiple files per run, we have to remember
+ * the command-line definitions and be able to revert to those; this motivates
+ * storing cmdvalue separately from value.
+ * name and value are separately-malloc'd strings; cmdvalue typically isn't.
+ * used is NULL unless we are currently expanding the macro, in which case
+ * it points to the buffer before the one scanning the macro; we reset it
+ * to NULL upon returning to that buffer.  This is used to prevent recursive
+ * expansion of the macro.
+ */
 struct _defines
 {
-	char	   *old;
-	char	   *new;
-	int			pertinent;
-	void	   *used;
-	struct _defines *next;
+	char	   *name;			/* symbol's name */
+	char	   *value;			/* current value, or NULL if undefined */
+	const char *cmdvalue;		/* value set on command line, or NULL */
+	void	   *used;			/* buffer pointer, or NULL */
+	struct _defines *next;		/* list link */
 };
 
 /* This is a linked list of the variable names and types. */

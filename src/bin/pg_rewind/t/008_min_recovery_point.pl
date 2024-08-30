@@ -85,21 +85,15 @@ $node_3->safe_psql('postgres', "checkpoint");
 
 # reconfigure node_1 as a standby following node_3
 my $node_3_connstr = $node_3->connstr;
-
-unlink($node_2->data_dir . '/recovery.conf');
-$node_1->append_conf('recovery.conf', qq(
-standby_mode=on
-primary_conninfo='$node_3_connstr application_name=node_1'
-recovery_target_timeline='latest'
+$node_1->append_conf('postgresql.conf', qq(
+primary_conninfo='$node_3_connstr'
 ));
+$node_1->set_standby_mode();
 $node_1->start();
 
 # also reconfigure node_2 to follow node_3
-unlink($node_2->data_dir . '/recovery.conf');
-$node_2->append_conf('recovery.conf', qq(
-standby_mode=on
-primary_conninfo='$node_3_connstr application_name=node_2'
-recovery_target_timeline='latest'
+$node_2->append_conf('postgresql.conf', qq(
+primary_conninfo='$node_3_connstr'
 ));
 $node_2->restart();
 

@@ -3,7 +3,7 @@
  * policy.c
  *	  Commands for manipulating policies.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/policy.c
@@ -13,9 +13,10 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup.h"
 #include "access/htup_details.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/sysattr.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
@@ -48,7 +49,7 @@
 #include "utils/syscache.h"
 
 static void RangeVarCallbackForPolicy(const RangeVar *rv,
-						  Oid relid, Oid oldrelid, void *arg);
+									  Oid relid, Oid oldrelid, void *arg);
 static char parse_policy_command(const char *cmd_name);
 static Datum *policy_role_list_to_array(List *roles, int *num_roles);
 
@@ -223,7 +224,7 @@ RelationBuildRowSecurity(Relation relation)
 	 * visit the rel's policies in name order, at least when system indexes
 	 * aren't disabled.  This simplifies equalRSDesc().
 	 */
-	catalog = heap_open(PolicyRelationId, AccessShareLock);
+	catalog = table_open(PolicyRelationId, AccessShareLock);
 
 	ScanKeyInit(&skey,
 				Anum_pg_policy_polrelid,
@@ -311,7 +312,7 @@ RelationBuildRowSecurity(Relation relation)
 	}
 
 	systable_endscan(sscan);
-	heap_close(catalog, AccessShareLock);
+	table_close(catalog, AccessShareLock);
 
 	/*
 	 * Success.  Reparent the descriptor's memory context under
@@ -340,13 +341,13 @@ RemovePolicyById(Oid policy_id)
 	Oid			relid;
 	Relation	rel;
 
-	pg_policy_rel = heap_open(PolicyRelationId, RowExclusiveLock);
+	pg_policy_rel = table_open(PolicyRelationId, RowExclusiveLock);
 
 	/*
 	 * Find the policy to delete.
 	 */
 	ScanKeyInit(&skey[0],
-				ObjectIdAttributeNumber,
+				Anum_pg_policy_oid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(policy_id));
 
@@ -367,7 +368,7 @@ RemovePolicyById(Oid policy_id)
 	 */
 	relid = ((Form_pg_policy) GETSTRUCT(tuple))->polrelid;
 
-	rel = heap_open(relid, AccessExclusiveLock);
+	rel = table_open(relid, AccessExclusiveLock);
 	if (rel->rd_rel->relkind != RELKIND_RELATION &&
 		rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
@@ -395,10 +396,10 @@ RemovePolicyById(Oid policy_id)
 	 */
 	CacheInvalidateRelcache(rel);
 
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 	/* Clean up */
-	heap_close(pg_policy_rel, RowExclusiveLock);
+	table_close(pg_policy_rel, RowExclusiveLock);
 }
 
 /*
@@ -434,13 +435,13 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 	Assert(classid == PolicyRelationId);
 
-	pg_policy_rel = heap_open(PolicyRelationId, RowExclusiveLock);
+	pg_policy_rel = table_open(PolicyRelationId, RowExclusiveLock);
 
 	/*
 	 * Find the policy to update.
 	 */
 	ScanKeyInit(&skey[0],
-				ObjectIdAttributeNumber,
+				Anum_pg_policy_oid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(policy_id));
 
@@ -557,7 +558,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 	/* Clean up. */
 	systable_endscan(sscan);
 
-	heap_close(pg_policy_rel, RowExclusiveLock);
+	table_close(pg_policy_rel, RowExclusiveLock);
 
 	return keep_policy;
 }
@@ -638,11 +639,13 @@ CreatePolicy(CreatePolicyStmt *stmt)
 
 	/* Add for the regular security quals */
 	rte = addRangeTableEntryForRelation(qual_pstate, target_table,
+										AccessShareLock,
 										NULL, false, false);
 	addRTEtoQuery(qual_pstate, rte, false, true, true);
 
 	/* Add for the with-check quals */
 	rte = addRangeTableEntryForRelation(with_check_pstate, target_table,
+										AccessShareLock,
 										NULL, false, false);
 	addRTEtoQuery(with_check_pstate, rte, false, true, true);
 
@@ -661,7 +664,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	assign_expr_collations(with_check_pstate, with_check_qual);
 
 	/* Open pg_policy catalog */
-	pg_policy_rel = heap_open(PolicyRelationId, RowExclusiveLock);
+	pg_policy_rel = table_open(PolicyRelationId, RowExclusiveLock);
 
 	/* Set key - policy's relation id. */
 	ScanKeyInit(&skey[0],
@@ -688,6 +691,9 @@ CreatePolicy(CreatePolicyStmt *stmt)
 				 errmsg("policy \"%s\" for table \"%s\" already exists",
 						stmt->policy_name, RelationGetRelationName(target_table))));
 
+	policy_id = GetNewOidWithIndex(pg_policy_rel, PolicyOidIndexId,
+								   Anum_pg_policy_oid);
+	values[Anum_pg_policy_oid - 1] = ObjectIdGetDatum(policy_id);
 	values[Anum_pg_policy_polrelid - 1] = ObjectIdGetDatum(table_id);
 	values[Anum_pg_policy_polname - 1] = DirectFunctionCall1(namein,
 															 CStringGetDatum(stmt->policy_name));
@@ -710,7 +716,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	policy_tuple = heap_form_tuple(RelationGetDescr(pg_policy_rel), values,
 								   isnull);
 
-	policy_id = CatalogTupleInsert(pg_policy_rel, policy_tuple);
+	CatalogTupleInsert(pg_policy_rel, policy_tuple);
 
 	/* Record Dependencies */
 	target.classId = RelationRelationId;
@@ -752,7 +758,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	free_parsestate(with_check_pstate);
 	systable_endscan(sscan);
 	relation_close(target_table, NoLock);
-	heap_close(pg_policy_rel, RowExclusiveLock);
+	table_close(pg_policy_rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -814,6 +820,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 		ParseState *qual_pstate = make_parsestate(NULL);
 
 		rte = addRangeTableEntryForRelation(qual_pstate, target_table,
+											AccessShareLock,
 											NULL, false, false);
 
 		addRTEtoQuery(qual_pstate, rte, false, true, true);
@@ -836,6 +843,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 		ParseState *with_check_pstate = make_parsestate(NULL);
 
 		rte = addRangeTableEntryForRelation(with_check_pstate, target_table,
+											AccessShareLock,
 											NULL, false, false);
 
 		addRTEtoQuery(with_check_pstate, rte, false, true, true);
@@ -858,7 +866,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	memset(isnull, 0, sizeof(isnull));
 
 	/* Find policy to update. */
-	pg_policy_rel = heap_open(PolicyRelationId, RowExclusiveLock);
+	pg_policy_rel = table_open(PolicyRelationId, RowExclusiveLock);
 
 	/* Set key - policy's relation id. */
 	ScanKeyInit(&skey[0],
@@ -912,7 +920,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 				(errcode(ERRCODE_SYNTAX_ERROR),
 				 errmsg("only WITH CHECK expression allowed for INSERT")));
 
-	policy_id = HeapTupleGetOid(policy_tuple);
+	policy_id = ((Form_pg_policy) GETSTRUCT(policy_tuple))->oid;
 
 	if (role_ids != NULL)
 	{
@@ -982,8 +990,9 @@ AlterPolicy(AlterPolicyStmt *stmt)
 			qual = stringToNode(qual_value);
 
 			/* Add this rel to the parsestate's rangetable, for dependencies */
-			addRangeTableEntryForRelation(qual_pstate, target_table, NULL,
-										  false, false);
+			addRangeTableEntryForRelation(qual_pstate, target_table,
+										  AccessShareLock,
+										  NULL, false, false);
 
 			qual_parse_rtable = qual_pstate->p_rtable;
 			free_parsestate(qual_pstate);
@@ -1023,8 +1032,9 @@ AlterPolicy(AlterPolicyStmt *stmt)
 			with_check_qual = stringToNode(with_check_value);
 
 			/* Add this rel to the parsestate's rangetable, for dependencies */
-			addRangeTableEntryForRelation(with_check_pstate, target_table, NULL,
-										  false, false);
+			addRangeTableEntryForRelation(with_check_pstate, target_table,
+										  AccessShareLock,
+										  NULL, false, false);
 
 			with_check_parse_rtable = with_check_pstate->p_rtable;
 			free_parsestate(with_check_pstate);
@@ -1078,7 +1088,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	/* Clean up. */
 	systable_endscan(sscan);
 	relation_close(target_table, NoLock);
-	heap_close(pg_policy_rel, RowExclusiveLock);
+	table_close(pg_policy_rel, RowExclusiveLock);
 
 	return myself;
 }
@@ -1107,7 +1117,7 @@ rename_policy(RenameStmt *stmt)
 
 	target_table = relation_open(table_id, NoLock);
 
-	pg_policy_rel = heap_open(PolicyRelationId, RowExclusiveLock);
+	pg_policy_rel = table_open(PolicyRelationId, RowExclusiveLock);
 
 	/* First pass -- check for conflict */
 
@@ -1161,7 +1171,7 @@ rename_policy(RenameStmt *stmt)
 				 errmsg("policy \"%s\" for table \"%s\" does not exist",
 						stmt->subname, RelationGetRelationName(target_table))));
 
-	opoloid = HeapTupleGetOid(policy_tuple);
+	opoloid = ((Form_pg_policy) GETSTRUCT(policy_tuple))->oid;
 
 	policy_tuple = heap_copytuple(policy_tuple);
 
@@ -1170,8 +1180,7 @@ rename_policy(RenameStmt *stmt)
 
 	CatalogTupleUpdate(pg_policy_rel, &policy_tuple->t_self, policy_tuple);
 
-	InvokeObjectPostAlterHook(PolicyRelationId,
-							  HeapTupleGetOid(policy_tuple), 0);
+	InvokeObjectPostAlterHook(PolicyRelationId, opoloid, 0);
 
 	ObjectAddressSet(address, PolicyRelationId, opoloid);
 
@@ -1184,7 +1193,7 @@ rename_policy(RenameStmt *stmt)
 
 	/* Clean up. */
 	systable_endscan(sscan);
-	heap_close(pg_policy_rel, RowExclusiveLock);
+	table_close(pg_policy_rel, RowExclusiveLock);
 	relation_close(target_table, NoLock);
 
 	return address;
@@ -1205,7 +1214,7 @@ get_relation_policy_oid(Oid relid, const char *policy_name, bool missing_ok)
 	HeapTuple	policy_tuple;
 	Oid			policy_oid;
 
-	pg_policy_rel = heap_open(PolicyRelationId, AccessShareLock);
+	pg_policy_rel = table_open(PolicyRelationId, AccessShareLock);
 
 	/* Add key - policy's relation id. */
 	ScanKeyInit(&skey[0],
@@ -1236,11 +1245,11 @@ get_relation_policy_oid(Oid relid, const char *policy_name, bool missing_ok)
 		policy_oid = InvalidOid;
 	}
 	else
-		policy_oid = HeapTupleGetOid(policy_tuple);
+		policy_oid = ((Form_pg_policy) GETSTRUCT(policy_tuple))->oid;
 
 	/* Clean up. */
 	systable_endscan(sscan);
-	heap_close(pg_policy_rel, AccessShareLock);
+	table_close(pg_policy_rel, AccessShareLock);
 
 	return policy_oid;
 }
@@ -1257,7 +1266,7 @@ relation_has_policies(Relation rel)
 	HeapTuple	policy_tuple;
 	bool		ret = false;
 
-	catalog = heap_open(PolicyRelationId, AccessShareLock);
+	catalog = table_open(PolicyRelationId, AccessShareLock);
 	ScanKeyInit(&skey,
 				Anum_pg_policy_polrelid,
 				BTEqualStrategyNumber, F_OIDEQ,
@@ -1269,7 +1278,7 @@ relation_has_policies(Relation rel)
 		ret = true;
 
 	systable_endscan(sscan);
-	heap_close(catalog, AccessShareLock);
+	table_close(catalog, AccessShareLock);
 
 	return ret;
 }

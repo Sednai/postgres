@@ -31,13 +31,12 @@ my $publisher_connstr = $node_publisher->connstr . ' dbname=postgres';
 $node_publisher->safe_psql('postgres',
 	"CREATE PUBLICATION tap_pub FOR ALL TABLES");
 
-my $appname = 'tap_sub';
 $node_subscriber->safe_psql('postgres',
-	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr application_name=$appname' PUBLICATION tap_pub"
+	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr' PUBLICATION tap_pub"
 );
 
 # Wait for initial table sync to finish
-$node_subscriber->wait_for_subscription_sync($node_publisher, $appname);
+$node_subscriber->wait_for_subscription_sync($node_publisher, 'tap_sub');
 
 my $result =
   $node_subscriber->safe_psql('postgres',
@@ -48,7 +47,7 @@ is($result, qq(2|2|2), 'check initial data was copied to subscriber');
 # subscriber didn't change
 $node_publisher->safe_psql('postgres', "UPDATE test_tab SET b = md5(b)");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result =
   $node_subscriber->safe_psql('postgres',
@@ -65,7 +64,7 @@ $node_subscriber->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"UPDATE test_tab SET b = md5(a::text)");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), count(extract(epoch from c) = 987654321), count(d = 999) FROM test_tab"
@@ -76,7 +75,7 @@ is($result, qq(2|2|2), 'check extra columns contain locally changed data');
 $node_publisher->safe_psql('postgres',
 	"INSERT INTO test_tab VALUES (3, 'baz')");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result =
   $node_subscriber->safe_psql('postgres',

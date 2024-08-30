@@ -3,7 +3,7 @@
  * tsquery.c
  *	  I/O functions for tsquery
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -433,7 +433,7 @@ gettoken_query_websearch(TSQueryParserState state, int8 *operator,
 				}
 				else if (ISOPERATOR(state->buf))
 				{
-					/* or else gettoken_tsvector() will raise an error */
+					/* ignore, else gettoken_tsvector() will raise an error */
 					state->buf++;
 					state->state = WAITOPERAND;
 					continue;
@@ -491,6 +491,12 @@ gettoken_query_websearch(TSQueryParserState state, int8 *operator,
 					state->state = WAITOPERAND;
 					*operator = OP_OR;
 					return PT_OPR;
+				}
+				else if (ISOPERATOR(state->buf))
+				{
+					/* ignore other operators in this state too */
+					state->buf++;
+					continue;
 				}
 				else if (*state->buf == '\0')
 				{

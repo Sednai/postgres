@@ -775,10 +775,13 @@ drop table cchild;
 -- temporarily disable fancy output, so view changes create less diff noise
 \a\t
 
-SELECT viewname, definition FROM pg_views WHERE schemaname <> 'information_schema' ORDER BY viewname;
+SELECT viewname, definition FROM pg_views
+WHERE schemaname IN ('pg_catalog', 'public')
+ORDER BY viewname;
 
 SELECT tablename, rulename, definition FROM pg_rules
-	ORDER BY tablename, rulename;
+WHERE schemaname IN ('pg_catalog', 'public')
+ORDER BY tablename, rulename;
 
 -- restore normal output mode
 \a\t
@@ -948,9 +951,7 @@ update id_ordered set name = 'update 4' where id = 4;
 update id_ordered set name = 'update 5' where id = 5;
 select * from id_ordered;
 
-\set VERBOSITY terse \\ -- suppress cascade details
 drop table id cascade;
-\set VERBOSITY default
 
 --
 -- check corner case where an entirely-dummy subplan is created by
@@ -1191,7 +1192,7 @@ SELECT tablename, rulename, definition FROM pg_rules
 explain (costs off) INSERT INTO hats VALUES ('h8', 'forbidden') RETURNING *;
 
 -- ensure upserting into a rule, with a CTE (different offsets!) works
-WITH data(hat_name, hat_color) AS (
+WITH data(hat_name, hat_color) AS MATERIALIZED (
     VALUES ('h8', 'green'),
         ('h9', 'blue'),
         ('h7', 'forbidden')
@@ -1199,7 +1200,8 @@ WITH data(hat_name, hat_color) AS (
 INSERT INTO hats
     SELECT * FROM data
 RETURNING *;
-EXPLAIN (costs off) WITH data(hat_name, hat_color) AS (
+EXPLAIN (costs off)
+WITH data(hat_name, hat_color) AS MATERIALIZED (
     VALUES ('h8', 'green'),
         ('h9', 'blue'),
         ('h7', 'forbidden')

@@ -12,7 +12,7 @@
  * identifying statement boundaries in multi-statement source strings.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
  * 
@@ -173,9 +173,8 @@ typedef struct Query
 	List	   *constraintDeps; /* a list of pg_constraint OIDs that the query
 								 * depends on to be semantically valid */
 
-	List	   *withCheckOptions;	/* a list of WithCheckOption's, which are
-									 * only added during rewrite and therefore
-									 * are not written out as part of Query. */
+	List	   *withCheckOptions;	/* a list of WithCheckOption's (added
+									 * during rewrite) */
 
 	/*
 	 * The following two fields identify the portion of the source text string
@@ -241,7 +240,7 @@ typedef struct TypeName
  * Currently, A_Star must appear only as the last list element --- the grammar
  * is responsible for enforcing this!
  *
- * Note: any array subscripting or selection of fields from composite columns
+ * Note: any container subscripting or selection of fields from composite columns
  * is represented by an A_Indirection node above the ColumnRef.  However,
  * for simplicity in the normal case, initial field selection from a table
  * name is represented within ColumnRef and not by adding A_Indirection.
@@ -666,13 +665,13 @@ typedef struct ColumnDef
 	bool		is_local;		/* column has local (non-inherited) def'n */
 	bool		is_not_null;	/* NOT NULL constraint specified? */
 	bool		is_from_type;	/* column definition came from table type */
-	bool		is_from_parent; /* XXX unused */
 	char		storage;		/* attstorage setting, or 0 for default */
 	Node	   *raw_default;	/* default value (untransformed parse tree) */
 	Node	   *cooked_default; /* default value (transformed expr tree) */
 	char		identity;		/* attidentity setting */
 	RangeVar   *identitySequence;	/* to store identity sequence name for
 									 * ALTER TABLE ... ADD COLUMN */
+	char		generated;		/* attgenerated setting */
 	CollateClause *collClause;	/* untransformed COLLATE spec, if any */
 	Oid			collOid;		/* collation OID (InvalidOid if not set) */
 	List	   *constraints;	/* other constraints on column */
@@ -696,10 +695,11 @@ typedef enum TableLikeOption
 	CREATE_TABLE_LIKE_COMMENTS = 1 << 0,
 	CREATE_TABLE_LIKE_CONSTRAINTS = 1 << 1,
 	CREATE_TABLE_LIKE_DEFAULTS = 1 << 2,
-	CREATE_TABLE_LIKE_IDENTITY = 1 << 3,
-	CREATE_TABLE_LIKE_INDEXES = 1 << 4,
-	CREATE_TABLE_LIKE_STATISTICS = 1 << 5,
-	CREATE_TABLE_LIKE_STORAGE = 1 << 6,
+	CREATE_TABLE_LIKE_GENERATED = 1 << 3,
+	CREATE_TABLE_LIKE_IDENTITY = 1 << 4,
+	CREATE_TABLE_LIKE_INDEXES = 1 << 5,
+	CREATE_TABLE_LIKE_STATISTICS = 1 << 6,
+	CREATE_TABLE_LIKE_STORAGE = 1 << 7,
 	CREATE_TABLE_LIKE_ALL = PG_INT32_MAX
 } TableLikeOption;
 
@@ -952,6 +952,19 @@ typedef struct PartitionCmd
  *	  them in these fields.  A whole-row Var reference is represented by
  *	  setting the bit for InvalidAttrNumber.
  *
+ *	  updatedCols is also used in some other places, for example, to determine
+ *	  which triggers to fire and in FDWs to know which changed columns they
+ *	  need to ship off.
+ *
+ *	  Generated columns that are caused to be updated by an update to a base
+ *	  column are listed in extraUpdatedCols.  This is not considered for
+ *	  permission checking, but it is useful in those places that want to know
+ *	  the full set of columns being updated as opposed to only the ones the
+ *	  user explicitly mentioned in the query.  (There is currently no need for
+ *	  an extraInsertedCols, but it could exist.)  Note that extraUpdatedCols
+ *	  is populated during query rewrite, NOT in the parser, since generated
+ *	  columns could be added after a rule has been parsed and stored.
+ *
  *	  securityQuals is a list of security barrier quals (boolean expressions),
  *	  to be tested in the listed order before returning a row from the
  *	  relation.  It is always NIL in parser output.  Entries are added by the
@@ -969,10 +982,13 @@ typedef enum RTEKind
 	RTE_TABLEFUNC,				/* TableFunc(.., column list) */
 	RTE_VALUES,					/* VALUES (<exprlist>), (<exprlist>), ... */
 	RTE_CTE,					/* common table expr (WITH list element) */
-	RTE_NAMEDTUPLESTORE			/* tuplestore, e.g. for AFTER triggers */
+	RTE_NAMEDTUPLESTORE,		/* tuplestore, e.g. for AFTER triggers */
 #ifdef PGXC
 	,RTE_REMOTE_DUMMY			/* RTEs created by remote plan reduction */
 #endif /* PGXC */
+	RTE_RESULT					/* RTE represents an empty FROM clause; such
+								 * RTEs are added by the planner, they're not
+								 * present during parsing or rewriting */
 } RTEKind;
 
 typedef struct RangeTblEntry
@@ -998,9 +1014,21 @@ typedef struct RangeTblEntry
 	 * that the tuple format of the tuplestore is the same as the referenced
 	 * relation.  This allows plans referencing AFTER trigger transition
 	 * tables to be invalidated if the underlying table is altered.
+	 *
+	 * rellockmode is really LOCKMODE, but it's declared int to avoid having
+	 * to include lock-related headers here.  It must be RowExclusiveLock if
+	 * the RTE is an INSERT/UPDATE/DELETE target, else RowShareLock if the RTE
+	 * is a SELECT FOR UPDATE/FOR SHARE target, else AccessShareLock.
+	 *
+	 * Note: in some cases, rule expansion may result in RTEs that are marked
+	 * with RowExclusiveLock even though they are not the target of the
+	 * current query; this happens if a DO ALSO rule simply scans the original
+	 * target table.  We leave such RTEs with their original lockmode so as to
+	 * avoid getting an additional, lesser lock.
 	 */
 	Oid			relid;			/* OID of the relation */
 	char		relkind;		/* relation kind (see pg_class.relkind) */
+	int			rellockmode;	/* lock level that query requires on the rel */
 	struct TableSampleClause *tablesample;	/* sampling info, or NULL */
 
 	/*
@@ -1098,6 +1126,7 @@ typedef struct RangeTblEntry
 	Bitmapset  *selectedCols;	/* columns needing SELECT permission */
 	Bitmapset  *insertedCols;	/* columns needing INSERT permission */
 	Bitmapset  *updatedCols;	/* columns needing UPDATE permission */
+	Bitmapset  *extraUpdatedCols;	/* generated columns being updated */
 	List	   *securityQuals;	/* security barrier quals to apply, if any */
 } RangeTblEntry;
 
@@ -1413,11 +1442,19 @@ typedef struct OnConflictClause
  *
  * We don't currently support the SEARCH or CYCLE clause.
  */
+typedef enum CTEMaterialize
+{
+	CTEMaterializeDefault,		/* no option specified */
+	CTEMaterializeAlways,		/* MATERIALIZED */
+	CTEMaterializeNever			/* NOT MATERIALIZED */
+} CTEMaterialize;
+
 typedef struct CommonTableExpr
 {
 	NodeTag		type;
 	char	   *ctename;		/* query name (never qualified) */
 	List	   *aliascolnames;	/* optional list of column names */
+	CTEMaterialize ctematerialized; /* is this an optimization fence? */
 	/* SelectStmt/InsertStmt/etc before parse analysis, Query afterwards: */
 	Node	   *ctequery;		/* the CTE's subquery */
 	int			location;		/* token location, or -1 if unknown */
@@ -1755,6 +1792,7 @@ typedef enum AlterTableType
 	AT_ColumnDefault,			/* alter column default */
 	AT_DropNotNull,				/* alter column drop not null */
 	AT_SetNotNull,				/* alter column set not null */
+	AT_CheckNotNull,			/* check column is already marked not null */
 	AT_SetStatistics,			/* alter column set statistics */
 	AT_SetOptions,				/* alter column set ( options ) */
 	AT_ResetOptions,			/* alter column reset ( options ) */
@@ -1783,8 +1821,6 @@ typedef enum AlterTableType
 	AT_DropCluster,				/* SET WITHOUT CLUSTER */
 	AT_SetLogged,				/* SET LOGGED */
 	AT_SetUnLogged,				/* SET UNLOGGED */
-	AT_AddOids,					/* SET WITH OIDS */
-	AT_AddOidsRecurse,			/* internal to commands/tablecmds.c */
 	AT_DropOids,				/* SET WITHOUT OIDS */
 	AT_SetTableSpace,			/* SET TABLESPACE */
 	AT_SetRelOptions,			/* SET (...) -- AM specific parameters */
@@ -1822,7 +1858,8 @@ typedef enum AlterTableType
 	AT_DetachPartition,			/* DETACH PARTITION */
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
-	AT_DropIdentity				/* DROP IDENTITY */
+	AT_DropIdentity,			/* DROP IDENTITY */
+	AT_CookedColumnDefault		/* add a pre-cooked column default */
 } AlterTableType;
 
 typedef struct ReplicaIdentityStmt
@@ -1992,6 +2029,7 @@ typedef struct CopyStmt
 	bool		is_program;		/* is 'filename' a program to popen? */
 	char	   *filename;		/* filename, or NULL for STDIN/STDOUT */
 	List	   *options;		/* List of DefElem nodes */
+	Node	   *whereClause;	/* WHERE condition (or NULL) */
 } CopyStmt;
 
 /* ----------------------
@@ -2055,6 +2093,7 @@ typedef struct CreateStmt
 	List	   *options;		/* options from WITH clause */
 	OnCommitAction oncommit;	/* what do we do at COMMIT? */
 	char	   *tablespacename; /* table space to use, or NULL */
+	char	   *accessMethod;	/* table access method */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
 #ifdef PGXC
 	DistributeBy *distributeby; 	/* distribution to use, or NULL */
@@ -2100,6 +2139,7 @@ typedef enum ConstrType			/* types of constraints */
 	CONSTR_NOTNULL,
 	CONSTR_DEFAULT,
 	CONSTR_IDENTITY,
+	CONSTR_GENERATED,
 	CONSTR_CHECK,
 	CONSTR_PRIMARY,
 	CONSTR_UNIQUE,
@@ -2138,7 +2178,7 @@ typedef struct Constraint
 	bool		is_no_inherit;	/* is constraint non-inheritable? */
 	Node	   *raw_expr;		/* expr, as untransformed parse tree */
 	char	   *cooked_expr;	/* expr, as nodeToString representation */
-	char		generated_when;
+	char		generated_when; /* ALWAYS or BY DEFAULT */
 
 	/* Fields used for unique constraints (UNIQUE and PRIMARY KEY): */
 	List	   *keys;			/* String nodes naming referenced key
@@ -2153,6 +2193,8 @@ typedef struct Constraint
 	List	   *options;		/* options from WITH clause */
 	char	   *indexname;		/* existing index to use; otherwise NULL */
 	char	   *indexspace;		/* index tablespace; NULL for default */
+	bool		reset_default_tblspc;	/* reset default_tablespace prior to
+										 * creating the index */
 	/* These could be, but currently are not, used for UNIQUE/PKEY: */
 	char	   *access_method;	/* index access method; NULL for default */
 	Node	   *where_clause;	/* partial index predicate */
@@ -2448,8 +2490,7 @@ typedef struct AlterEventTrigStmt
 } AlterEventTrigStmt;
 
 /* ----------------------
- *		Create/Drop PROCEDURAL LANGUAGE Statements
- *		Create PROCEDURAL LANGUAGE Statements
+ *		Create LANGUAGE Statements
  * ----------------------
  */
 typedef struct CreatePLangStmt
@@ -2553,6 +2594,7 @@ typedef struct DefineStmt
 	List	   *args;			/* a list of TypeName (if needed) */
 	List	   *definition;		/* a list of DefElem */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
+	bool		replace;		/* replace if already exists? */
 } DefineStmt;
 
 /* ----------------------
@@ -2748,10 +2790,6 @@ typedef struct FetchStmt
  * index, just a UNIQUE/PKEY constraint using an existing index.  isconstraint
  * must always be true in this case, and the fields describing the index
  * properties are empty.
- *
- * The relation to build the index on can be represented either by name
- * (in which case the RangeVar indicates whether to recurse or not) or by OID
- * (in which case the command is always recursive).
  * ----------------------
  */
 typedef struct IndexStmt
@@ -2759,7 +2797,6 @@ typedef struct IndexStmt
 	NodeTag		type;
 	char	   *idxname;		/* name of new index, or NULL for default */
 	RangeVar   *relation;		/* relation to build index on */
-	Oid			relationId;		/* OID of relation to build index on */
 	char	   *accessMethod;	/* name of access method (eg. btree) */
 	char	   *tableSpace;		/* tablespace, or NULL for default */
 	List	   *indexParams;	/* columns to index: a list of IndexElem */
@@ -2779,6 +2816,8 @@ typedef struct IndexStmt
 	bool		transformed;	/* true when transformIndexStmt is finished */
 	bool		concurrent;		/* should this be a concurrent index build? */
 	bool		if_not_exists;	/* just do nothing if index already exists? */
+	bool		reset_default_tblspc;	/* reset default_tablespace prior to
+										 * executing */
 } IndexStmt;
 
 /* ----------------------
@@ -3019,6 +3058,7 @@ typedef struct TransactionStmt
 	List	   *options;		/* for BEGIN/START commands */
 	char	   *savepoint_name; /* for savepoint commands */
 	char	   *gid;			/* for two-phase-commit related commands */
+	bool		chain;			/* AND CHAIN option */
 } TransactionStmt;
 
 /* ----------------------
@@ -3155,33 +3195,34 @@ typedef struct AlterSystemStmt
  *		Cluster Statement (support pbrown's cluster index implementation)
  * ----------------------
  */
+typedef enum ClusterOption
+{
+	CLUOPT_RECHECK = 1 << 0,	/* recheck relation state */
+	CLUOPT_VERBOSE = 1 << 1		/* print progress info */
+} ClusterOption;
+
 typedef struct ClusterStmt
 {
 	NodeTag		type;
 	RangeVar   *relation;		/* relation being indexed, or NULL if all */
 	char	   *indexname;		/* original index defined */
-	bool		verbose;		/* print progress info */
+	int			options;		/* OR of ClusterOption flags */
 } ClusterStmt;
 
 /* ----------------------
  *		Vacuum and Analyze Statements
  *
  * Even though these are nominally two statements, it's convenient to use
- * just one node type for both.  Note that at least one of VACOPT_VACUUM
- * and VACOPT_ANALYZE must be set in options.
+ * just one node type for both.
  * ----------------------
  */
-typedef enum VacuumOption
+typedef struct VacuumStmt
 {
-	VACOPT_VACUUM = 1 << 0,		/* do VACUUM */
-	VACOPT_ANALYZE = 1 << 1,	/* do ANALYZE */
-	VACOPT_VERBOSE = 1 << 2,	/* print progress info */
-	VACOPT_FREEZE = 1 << 3,		/* FREEZE option */
-	VACOPT_FULL = 1 << 4,		/* FULL (non-concurrent) vacuum */
-	VACOPT_NOWAIT = 1 << 5,		/* don't wait to get lock (autovacuum only) */
-	VACOPT_SKIPTOAST = 1 << 6,	/* don't process the TOAST table, if any */
-	VACOPT_DISABLE_PAGE_SKIPPING = 1 << 7	/* don't skip any pages */
-} VacuumOption;
+	NodeTag		type;
+	List	   *options;		/* list of DefElem nodes */
+	List	   *rels;			/* list of VacuumRelation, or NIL for all */
+	bool		is_vacuumcmd;	/* true for VACUUM, false for ANALYZE */
+} VacuumStmt;
 
 /*
  * Info about a single target table of VACUUM/ANALYZE.
@@ -3197,13 +3238,6 @@ typedef struct VacuumRelation
 	Oid			oid;			/* table's OID; InvalidOid if not looked up */
 	List	   *va_cols;		/* list of column names, or NIL for all */
 } VacuumRelation;
-
-typedef struct VacuumStmt
-{
-	NodeTag		type;
-	int			options;		/* OR of VacuumOption flags */
-	List	   *rels;			/* list of VacuumRelation, or NIL for all */
-} VacuumStmt;
 
 #ifdef PGXC
 /*
@@ -3378,6 +3412,7 @@ typedef struct ConstraintsSetStmt
 
 /* Reindex options */
 #define REINDEXOPT_VERBOSE (1 << 0)	/* print progress info */
+#define REINDEXOPT_REPORT_PROGRESS (1 << 1)	/* report pgstat progress */
 
 typedef enum ReindexObjectType
 {
@@ -3396,6 +3431,7 @@ typedef struct ReindexStmt
 	RangeVar   *relation;		/* Table or index to reindex */
 	const char *name;			/* name of database to reindex */
 	int			options;		/* Reindex options flags */
+	bool		concurrent;		/* reindex concurrently? */
 } ReindexStmt;
 
 /* ----------------------

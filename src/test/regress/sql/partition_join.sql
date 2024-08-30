@@ -91,6 +91,48 @@ SELECT t1.a, ss.t2a, ss.t2c FROM prt1 t1 LEFT JOIN LATERAL
 			  (SELECT t2.a AS t2a, t3.a AS t3a, t2.b t2b, t2.c t2c, least(t1.a,t2.a,t3.a) FROM prt1 t2 JOIN prt2 t3 ON (t2.a = t3.b)) ss
 			  ON t1.c = ss.t2c WHERE (t1.b + coalesce(ss.t2b, 0)) = 0 ORDER BY t1.a;
 
+SET max_parallel_workers_per_gather = 0;
+-- If there are lateral references to the other relation in sample scan,
+-- we cannot generate a partitionwise join.
+EXPLAIN (COSTS OFF)
+SELECT * FROM prt1 t1 JOIN LATERAL
+			  (SELECT * FROM prt1 t2 TABLESAMPLE SYSTEM (t1.a) REPEATABLE(t1.b)) s
+			  ON t1.a = s.a;
+
+-- If there are lateral references to the other relation in scan's restriction
+-- clauses, we cannot generate a partitionwise join.
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM prt1 t1 LEFT JOIN LATERAL
+			  (SELECT t1.b AS t1b, t2.* FROM prt2 t2) s
+			  ON t1.a = s.b WHERE s.t1b = s.a;
+SELECT count(*) FROM prt1 t1 LEFT JOIN LATERAL
+			  (SELECT t1.b AS t1b, t2.* FROM prt2 t2) s
+			  ON t1.a = s.b WHERE s.t1b = s.a;
+
+EXPLAIN (COSTS OFF)
+SELECT count(*) FROM prt1 t1 LEFT JOIN LATERAL
+			  (SELECT t1.b AS t1b, t2.* FROM prt2 t2) s
+			  ON t1.a = s.b WHERE s.t1b = s.b;
+SELECT count(*) FROM prt1 t1 LEFT JOIN LATERAL
+			  (SELECT t1.b AS t1b, t2.* FROM prt2 t2) s
+			  ON t1.a = s.b WHERE s.t1b = s.b;
+RESET max_parallel_workers_per_gather;
+
+-- bug with inadequate sort key representation
+SET enable_partitionwise_aggregate TO true;
+SET enable_hashjoin TO false;
+
+EXPLAIN (COSTS OFF)
+SELECT a, b FROM prt1 FULL JOIN prt2 p2(b,a,c) USING(a,b)
+  WHERE a BETWEEN 490 AND 510
+  GROUP BY 1, 2 ORDER BY 1, 2;
+SELECT a, b FROM prt1 FULL JOIN prt2 p2(b,a,c) USING(a,b)
+  WHERE a BETWEEN 490 AND 510
+  GROUP BY 1, 2 ORDER BY 1, 2;
+
+RESET enable_partitionwise_aggregate;
+RESET enable_hashjoin;
+
 --
 -- partitioned by expression
 --
@@ -270,6 +312,27 @@ EXPLAIN (COSTS OFF)
 SELECT avg(t1.a), avg(t2.b), avg(t3.a + t3.b), t1.c, t2.c, t3.c FROM pht1 t1, pht2 t2, pht1_e t3 WHERE t1.b = t2.b AND t1.c = t2.c AND ltrim(t3.c, 'A') = t1.c GROUP BY t1.c, t2.c, t3.c ORDER BY t1.c, t2.c, t3.c;
 SELECT avg(t1.a), avg(t2.b), avg(t3.a + t3.b), t1.c, t2.c, t3.c FROM pht1 t1, pht2 t2, pht1_e t3 WHERE t1.b = t2.b AND t1.c = t2.c AND ltrim(t3.c, 'A') = t1.c GROUP BY t1.c, t2.c, t3.c ORDER BY t1.c, t2.c, t3.c;
 
+-- test default partition behavior for range
+ALTER TABLE prt1 DETACH PARTITION prt1_p3;
+ALTER TABLE prt1 ATTACH PARTITION prt1_p3 DEFAULT;
+ANALYZE prt1;
+ALTER TABLE prt2 DETACH PARTITION prt2_p3;
+ALTER TABLE prt2 ATTACH PARTITION prt2_p3 DEFAULT;
+ANALYZE prt2;
+
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
+
+-- test default partition behavior for list
+ALTER TABLE plt1 DETACH PARTITION plt1_p3;
+ALTER TABLE plt1 ATTACH PARTITION plt1_p3 DEFAULT;
+ANALYZE plt1;
+ALTER TABLE plt2 DETACH PARTITION plt2_p3;
+ALTER TABLE plt2 ATTACH PARTITION plt2_p3 DEFAULT;
+ANALYZE plt2;
+
+EXPLAIN (COSTS OFF)
+SELECT avg(t1.a), avg(t2.b), t1.c, t2.c FROM plt1 t1 RIGHT JOIN plt2 t2 ON t1.c = t2.c WHERE t1.a % 25 = 0 GROUP BY t1.c, t2.c ORDER BY t1.c, t2.c;
 --
 -- multiple levels of partitioning
 --
@@ -323,6 +386,27 @@ SELECT * FROM prt1_l t1 LEFT JOIN LATERAL
 SELECT * FROM prt1_l t1 LEFT JOIN LATERAL
 			  (SELECT t2.a AS t2a, t2.c AS t2c, t2.b AS t2b, t3.b AS t3b, least(t1.a,t2.a,t3.b) FROM prt1_l t2 JOIN prt2_l t3 ON (t2.a = t3.b AND t2.c = t3.c)) ss
 			  ON t1.a = ss.t2a AND t1.c = ss.t2c WHERE t1.b = 0 ORDER BY t1.a;
+
+SET max_parallel_workers_per_gather = 0;
+-- If there are lateral references to the other relation in sample scan,
+-- we cannot generate a partitionwise join.
+EXPLAIN (COSTS OFF)
+SELECT * FROM prt1_l t1 JOIN LATERAL
+			  (SELECT * FROM prt1_l t2 TABLESAMPLE SYSTEM (t1.a) REPEATABLE(t1.b)) s
+			  ON t1.a = s.a AND t1.b = s.b AND t1.c = s.c;
+
+-- If there are lateral references to the other relation in scan's restriction
+-- clauses, we cannot generate a partitionwise join.
+EXPLAIN (COSTS OFF)
+SELECT COUNT(*) FROM prt1_l t1 LEFT JOIN LATERAL
+			  (SELECT t1.b AS t1b, t2.* FROM prt2_l t2) s
+			  ON t1.a = s.b AND t1.b = s.a AND t1.c = s.c
+			  WHERE s.t1b = s.a;
+SELECT COUNT(*) FROM prt1_l t1 LEFT JOIN LATERAL
+			  (SELECT t1.b AS t1b, t2.* FROM prt2_l t2) s
+			  ON t1.a = s.b AND t1.b = s.a AND t1.c = s.c
+			  WHERE s.t1b = s.a;
+RESET max_parallel_workers_per_gather;
 
 -- join with one side empty
 EXPLAIN (COSTS OFF)
@@ -409,6 +493,15 @@ SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_n t1 JOIN prt2_n t2 ON (t1.c = t2.c) JOI
 EXPLAIN (COSTS OFF)
 SELECT t1.a, t1.c, t2.b, t2.c FROM prt1_n t1 FULL JOIN prt1 t2 ON (t1.c = t2.c);
 
+-- partitionwise join can not be applied if only one of joining tables has
+-- default partition
+ALTER TABLE prt2 DETACH PARTITION prt2_p3;
+ALTER TABLE prt2 ATTACH PARTITION prt2_p3 FOR VALUES FROM (500) TO (600);
+ANALYZE prt2;
+
+EXPLAIN (COSTS OFF)
+SELECT t1.a, t1.c, t2.b, t2.c FROM prt1 t1, prt2 t2 WHERE t1.a = t2.b AND t1.b = 0 ORDER BY t1.a, t2.b;
+
 --
 -- Test some other plan types in a partitionwise join (unfortunately,
 -- we need larger tables to get the planner to choose these plan types)
@@ -432,8 +525,6 @@ create index on prtx2 (c);
 analyze prtx1;
 analyze prtx2;
 
-set enable_indexscan = off;
-
 explain (costs off)
 select * from prtx1
 where not exists (select 1 from prtx2
@@ -455,5 +546,3 @@ select * from prtx1
 where not exists (select 1 from prtx2
                   where prtx2.a=prtx1.a and (prtx2.b=prtx1.b+1 or prtx2.c=99))
   and a<20 and c=91;
-
-reset enable_indexscan;

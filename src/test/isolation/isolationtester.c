@@ -50,7 +50,6 @@ static bool any_new_notice = false;
 static int64 max_step_wait = 300 * USECS_PER_SEC;
 
 
-static void exit_nicely(void) pg_attribute_noreturn();
 static void check_testspec(TestSpec *testspec);
 static void run_testspec(TestSpec *testspec);
 static void run_all_permutations(TestSpec *testspec);
@@ -77,16 +76,14 @@ static void printResultSet(PGresult *res);
 static void isotesterNoticeProcessor(void *arg, const char *message);
 static void blackholeNoticeProcessor(void *arg, const char *message);
 
-/* close all connections and exit */
 static void
-exit_nicely(void)
+disconnect_atexit(void)
 {
 	int			i;
 
 	for (i = 0; i < nconns; i++)
 		if (conns[i].conn)
 			PQfinish(conns[i].conn);
-	exit(1);
 }
 
 int
@@ -154,6 +151,7 @@ main(int argc, char **argv)
 	 */
 	nconns = 1 + testspec->nsessions;
 	conns = (IsoConnInfo *) pg_malloc0(nconns * sizeof(IsoConnInfo));
+	atexit(disconnect_atexit);
 
 	for (i = 0; i < nconns; i++)
 	{
@@ -171,7 +169,7 @@ main(int argc, char **argv)
 		{
 			fprintf(stderr, "Connection %d failed: %s",
 					i, PQerrorMessage(conns[i].conn));
-			exit_nicely();
+			exit(1);
 		}
 
 		/*
@@ -236,7 +234,7 @@ main(int argc, char **argv)
 	{
 		fprintf(stderr, "prepare of lock wait query failed: %s",
 				PQerrorMessage(conns[0].conn));
-		exit_nicely();
+		exit(1);
 	}
 	PQclear(res);
 	termPQExpBuffer(&wait_query);
@@ -247,9 +245,6 @@ main(int argc, char **argv)
 	 */
 	run_testspec(testspec);
 
-	/* Clean up and exit */
-	for (i = 0; i < nconns; i++)
-		PQfinish(conns[i].conn);
 	return 0;
 }
 
@@ -289,7 +284,7 @@ check_testspec(TestSpec *testspec)
 		{
 			fprintf(stderr, "duplicate step name: %s\n",
 					allsteps[i]->name);
-			exit_nicely();
+			exit(1);
 		}
 	}
 
@@ -323,7 +318,7 @@ check_testspec(TestSpec *testspec)
 			{
 				fprintf(stderr, "undefined step \"%s\" specified in permutation\n",
 						pstep->name);
-				exit_nicely();
+				exit(1);
 			}
 			pstep->step = *this;
 
@@ -364,14 +359,14 @@ check_testspec(TestSpec *testspec)
 				{
 					fprintf(stderr, "undefined blocking step \"%s\" referenced in permutation step \"%s\"\n",
 							blocker->stepname, pstep->name);
-					exit_nicely();
+					exit(1);
 				}
 				/* can't block on completion of step of own session */
 				if (blocker->step->session == pstep->step->session)
 				{
 					fprintf(stderr, "permutation step \"%s\" cannot block on its own session\n",
 							pstep->name);
-					exit_nicely();
+					exit(1);
 				}
 			}
 		}
@@ -550,7 +545,7 @@ run_permutation(TestSpec *testspec, int nsteps, PermutationStep **steps)
 		else if (PQresultStatus(res) != PGRES_COMMAND_OK)
 		{
 			fprintf(stderr, "setup failed: %s", PQerrorMessage(conns[0].conn));
-			exit_nicely();
+			exit(1);
 		}
 		PQclear(res);
 	}
@@ -570,7 +565,7 @@ run_permutation(TestSpec *testspec, int nsteps, PermutationStep **steps)
 				fprintf(stderr, "setup of session %s failed: %s",
 						conns[i + 1].sessionname,
 						PQerrorMessage(conns[i + 1].conn));
-				exit_nicely();
+				exit(1);
 			}
 			PQclear(res);
 		}
@@ -665,7 +660,7 @@ run_permutation(TestSpec *testspec, int nsteps, PermutationStep **steps)
 										oconn->active_step->name);
 						}
 						fprintf(stderr, "\n");
-						exit_nicely();
+						exit(1);
 					}
 				}
 			}
@@ -676,7 +671,7 @@ run_permutation(TestSpec *testspec, int nsteps, PermutationStep **steps)
 		{
 			fprintf(stdout, "failed to send query for step %s: %s\n",
 					step->name, PQerrorMessage(conn));
-			exit_nicely();
+			exit(1);
 		}
 
 		/* Remember we launched a step. */
@@ -709,7 +704,7 @@ run_permutation(TestSpec *testspec, int nsteps, PermutationStep **steps)
 	if (nwaiting != 0)
 	{
 		fprintf(stderr, "failed to complete permutation due to mutually-blocking steps\n");
-		exit_nicely();
+		exit(1);
 	}
 
 	/* Perform per-session teardown */
@@ -862,7 +857,7 @@ try_complete_step(TestSpec *testspec, PermutationStep *pstep, int flags)
 	if (sock < 0)
 	{
 		fprintf(stderr, "invalid socket: %s", PQerrorMessage(conn));
-		exit_nicely();
+		exit(1);
 	}
 
 	gettimeofday(&start_time, NULL);
@@ -880,7 +875,7 @@ try_complete_step(TestSpec *testspec, PermutationStep *pstep, int flags)
 			if (errno == EINTR)
 				continue;
 			fprintf(stderr, "select failed: %s\n", strerror(errno));
-			exit_nicely();
+			exit(1);
 		}
 		else if (ret == 0)		/* select() timeout: check for lock wait */
 		{
@@ -900,7 +895,7 @@ try_complete_step(TestSpec *testspec, PermutationStep *pstep, int flags)
 				{
 					fprintf(stderr, "lock wait query failed: %s",
 							PQerrorMessage(conns[0].conn));
-					exit_nicely();
+					exit(1);
 				}
 				waiting = ((PQgetvalue(res, 0, 0))[0] == 't');
 				PQclear(res);
@@ -920,7 +915,7 @@ try_complete_step(TestSpec *testspec, PermutationStep *pstep, int flags)
 					{
 						fprintf(stderr, "PQconsumeInput failed: %s\n",
 								PQerrorMessage(conn));
-						exit_nicely();
+						exit(1);
 					}
 					if (!PQisBusy(conn))
 						break;
@@ -987,14 +982,14 @@ try_complete_step(TestSpec *testspec, PermutationStep *pstep, int flags)
 			{
 				fprintf(stderr, "step %s timed out after %d seconds\n",
 						step->name, (int) (td / USECS_PER_SEC));
-				exit_nicely();
+				exit(1);
 			}
 		}
 		else if (!PQconsumeInput(conn)) /* select(): data available */
 		{
 			fprintf(stderr, "PQconsumeInput failed: %s\n",
 					PQerrorMessage(conn));
-			exit_nicely();
+			exit(1);
 		}
 	}
 

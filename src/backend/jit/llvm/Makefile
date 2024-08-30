@@ -28,7 +28,7 @@ ifeq ($(GCC), yes)
 LLVM_CFLAGS += -Wno-deprecated-declarations
 endif
 
-# All files in this directy use LLVM.
+# All files in this directory use LLVM.
 CFLAGS += $(LLVM_CFLAGS)
 CXXFLAGS += $(LLVM_CXXFLAGS)
 override CPPFLAGS := $(LLVM_CPPFLAGS) $(CPPFLAGS)

@@ -2644,7 +2644,7 @@ step s2_upd_a_data:
  <waiting ...>
 step s1_c: COMMIT;
 step s2_upd_a_data: <... completed>
-ERROR:  could not serialize access due to concurrent update
+ERROR:  could not serialize access due to concurrent delete
 step s2_c: COMMIT;
 step s0_rep: SELECT * FROM trigtest ORDER BY key, data
 key  |data    

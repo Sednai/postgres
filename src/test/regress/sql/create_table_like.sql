@@ -38,30 +38,64 @@ SELECT * FROM inhg; /* Two records with three columns in order x=x, xx=text, y=y
 DROP TABLE inhg;
 
 CREATE TABLE test_like_id_1 (a bigint GENERATED ALWAYS AS IDENTITY, b text);
--- \d test_like_id_1
--- INSERT INTO test_like_id_1 (b) VALUES ('b1');
--- SELECT * FROM test_like_id_1;
--- CREATE TABLE test_like_id_2 (LIKE test_like_id_1);
--- \d test_like_id_2
--- INSERT INTO test_like_id_2 (b) VALUES ('b2');
--- SELECT * FROM test_like_id_2;  -- identity was not copied
--- CREATE TABLE test_like_id_3 (LIKE test_like_id_1 INCLUDING IDENTITY);
--- \d test_like_id_3
--- INSERT INTO test_like_id_3 (b) VALUES ('b3');
--- SELECT * FROM test_like_id_3;  -- identity was copied and applied
--- DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
+\d test_like_id_1
+INSERT INTO test_like_id_1 (b) VALUES ('b1');
+SELECT * FROM test_like_id_1;
+CREATE TABLE test_like_id_2 (LIKE test_like_id_1);
+\d test_like_id_2
+INSERT INTO test_like_id_2 (b) VALUES ('b2');
+SELECT * FROM test_like_id_2;  -- identity was not copied
+CREATE TABLE test_like_id_3 (LIKE test_like_id_1 INCLUDING IDENTITY);
+\d test_like_id_3
+INSERT INTO test_like_id_3 (b) VALUES ('b3');
+SELECT * FROM test_like_id_3;  -- identity was copied and applied
+DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
+
+CREATE TABLE test_like_gen_1 (a int, b int GENERATED ALWAYS AS (a * 2) STORED);
+\d test_like_gen_1
+INSERT INTO test_like_gen_1 (a) VALUES (1);
+SELECT * FROM test_like_gen_1;
+CREATE TABLE test_like_gen_2 (LIKE test_like_gen_1);
+\d test_like_gen_2
+INSERT INTO test_like_gen_2 (a) VALUES (1);
+SELECT * FROM test_like_gen_2;
+CREATE TABLE test_like_gen_3 (LIKE test_like_gen_1 INCLUDING GENERATED);
+\d test_like_gen_3
+INSERT INTO test_like_gen_3 (a) VALUES (1);
+SELECT * FROM test_like_gen_3;
+DROP TABLE test_like_gen_1, test_like_gen_2, test_like_gen_3;
+
+-- also test generated column with a "forward" reference (bug #16342)
+CREATE TABLE test_like_4 (b int DEFAULT 42,
+  c int GENERATED ALWAYS AS (a * 2) STORED,
+  a int CHECK (a > 0));
+\d test_like_4
+CREATE TABLE test_like_4a (LIKE test_like_4);
+CREATE TABLE test_like_4b (LIKE test_like_4 INCLUDING DEFAULTS);
+CREATE TABLE test_like_4c (LIKE test_like_4 INCLUDING GENERATED);
+CREATE TABLE test_like_4d (LIKE test_like_4 INCLUDING DEFAULTS INCLUDING GENERATED);
+\d test_like_4a
+INSERT INTO test_like_4a (a) VALUES(11);
+SELECT a, b, c FROM test_like_4a;
+\d test_like_4b
+INSERT INTO test_like_4b (a) VALUES(11);
+SELECT a, b, c FROM test_like_4b;
+\d test_like_4c
+INSERT INTO test_like_4c (a) VALUES(11);
+SELECT a, b, c FROM test_like_4c;
+\d test_like_4d
+INSERT INTO test_like_4d (a) VALUES(11);
+SELECT a, b, c FROM test_like_4d;
 
 -- Test renumbering of Vars when combining LIKE with inheritance
-CREATE TABLE test_like_4 (b int DEFAULT 42,
-  c int NOT NULL,
-  a int CHECK (a > 0));
 CREATE TABLE test_like_5 (x point, y point, z point);
 CREATE TABLE test_like_5x (p int CHECK (p > 0),
-   q int DEFAULT 99);
+   q int GENERATED ALWAYS AS (p * 2) STORED);
 CREATE TABLE test_like_5c (LIKE test_like_4 INCLUDING ALL)
   INHERITS (test_like_5, test_like_5x);
 \d test_like_5c
-DROP TABLE test_like_4;
+
+DROP TABLE test_like_4, test_like_4a, test_like_4b, test_like_4c, test_like_4d;
 DROP TABLE test_like_5, test_like_5x, test_like_5c;
 
 CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text) DISTRIBUTE BY REPLICATION; /* copies indexes */
@@ -168,19 +202,3 @@ DROP SEQUENCE ctlseq1;
 DROP TYPE ctlty1;
 DROP VIEW ctlv1;
 DROP TABLE IF EXISTS ctlt4, ctlt10, ctlt11, ctlt11a, ctlt12;
-
-/* LIKE WITH OIDS */
-CREATE TABLE has_oid (x INTEGER) WITH OIDS;
-CREATE TABLE no_oid (y INTEGER);
-CREATE TABLE like_test (z INTEGER, LIKE has_oid);
-SELECT oid FROM like_test;
-CREATE TABLE like_test2 (z INTEGER, LIKE no_oid);
-SELECT oid FROM like_test2; -- fail
-CREATE TABLE like_test3 (z INTEGER, LIKE has_oid, LIKE no_oid);
-SELECT oid FROM like_test3;
-CREATE TABLE like_test4 (z INTEGER, PRIMARY KEY(oid), LIKE has_oid) DISTRIBUTE BY HASH(z);
-SELECT oid FROM like_test4;
-CREATE TABLE like_test5 (z INTEGER, LIKE no_oid) WITH OIDS;
-SELECT oid FROM like_test5;
-DROP TABLE has_oid, no_oid, like_test, like_test2, like_test3,
-  like_test4, like_test5;

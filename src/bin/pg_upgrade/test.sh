@@ -6,7 +6,7 @@
 # runs the regression tests (to put in some data), runs pg_dumpall,
 # runs pg_upgrade, runs pg_dumpall again, compares the dumps.
 #
-# Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 
 set -e
@@ -23,7 +23,8 @@ standard_initdb() {
 	# To increase coverage of non-standard segment size and group access
 	# without increasing test runtime, run these tests with a custom setting.
 	# Also, specify "-A trust" explicitly to suppress initdb's warning.
-	"$1" -N --wal-segsize 1 -g -A trust
+	# --allow-group-access and --wal-segsize have been added in v11.
+	"$1" -N --wal-segsize 1 --allow-group-access -A trust
 	if [ -n "$TEMP_CONFIG" -a -r "$TEMP_CONFIG" ]
 	then
 		cat "$TEMP_CONFIG" >> "$PGDATA/postgresql.conf"
@@ -74,25 +75,6 @@ temp_root=`pwd`/tmp_check
 rm -rf "$temp_root"
 mkdir "$temp_root"
 
-if [ "$1" = '--install' ]; then
-	temp_install=$temp_root/install
-	bindir=$temp_install/$bindir
-	libdir=$temp_install/$libdir
-
-	"$MAKE" -s -C ../.. install DESTDIR="$temp_install"
-
-	# platform-specific magic to find the shared libraries; see pg_regress.c
-	LD_LIBRARY_PATH=$libdir:$LD_LIBRARY_PATH
-	export LD_LIBRARY_PATH
-	DYLD_LIBRARY_PATH=$libdir:$DYLD_LIBRARY_PATH
-	export DYLD_LIBRARY_PATH
-	LIBPATH=$libdir:$LIBPATH
-	export LIBPATH
-	SHLIB_PATH=$libdir:$SHLIB_PATH
-	export SHLIB_PATH
-	PATH=$libdir:$PATH
-fi
-
 : ${oldbindir=$bindir}
 
 : ${oldsrc=../../..}
@@ -107,6 +89,9 @@ newsrc=`cd ../../.. && pwd`
 EXTRA_REGRESS_OPTS="$EXTRA_REGRESS_OPTS --bindir='$oldbindir'"
 export EXTRA_REGRESS_OPTS
 
+# While in normal cases this will already be set up, adding bindir to
+# path allows test.sh to be invoked with different versions as
+# described in ./TESTING
 PATH=$bindir:$PATH
 export PATH
 
@@ -177,23 +162,35 @@ dbname1=`awk 'BEGIN { for (i= 1; i < 46; i++)
 dbname1='\"\'$dbname1'\\"\\\'
 dbname2=`awk 'BEGIN { for (i = 46; i <  91; i++) printf "%c", i }' </dev/null`
 dbname3=`awk 'BEGIN { for (i = 91; i < 128; i++) printf "%c", i }' </dev/null`
-createdb "$dbname1" || createdb_status=$?
-createdb "$dbname2" || createdb_status=$?
-createdb "$dbname3" || createdb_status=$?
+createdb "regression$dbname1" || createdb_status=$?
+createdb "regression$dbname2" || createdb_status=$?
+createdb "regression$dbname3" || createdb_status=$?
 
-if "$MAKE" -C "$oldsrc" installcheck; then
+# Extra options to apply to the dump.  This may be changed later.
+extra_dump_options=""
+
+if "$MAKE" -C "$oldsrc" installcheck-parallel; then
 	oldpgversion=`psql -X -A -t -d regression -c "SHOW server_version_num"`
 
-	# before dumping, get rid of objects not feasible in later versions
+	# before dumping, get rid of objects not existing in later versions
+	# on its version.
 	if [ "$newsrc" != "$oldsrc" ]; then
 		# This SQL script has its own idea of the cleanup that needs to be
 		# done on the cluster to-be-upgraded, and includes version checks.
 		# Note that this uses the script stored on the new branch.
 		psql -X -d regression -f "$newsrc/src/bin/pg_upgrade/upgrade_adapt.sql" \
 			|| psql_fix_sql_status=$?
+
+		# Handling of --extra-float-digits gets messy after v12.
+		# Note that this changes the dumps from the old and new
+		# instances if involving an old cluster of v11 or older.
+		if [ $oldpgversion -lt 120000 ]; then
+			extra_dump_options="--extra-float-digits=0"
+		fi
 	fi
 
-	pg_dumpall --no-sync -f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
+	pg_dumpall $extra_dump_options --no-sync \
+		-f "$temp_root"/dump1.sql || pg_dumpall1_status=$?
 
 	if [ "$newsrc" != "$oldsrc" ]; then
 		# update references to old source tree's regress.so etc
@@ -263,7 +260,8 @@ case $testhost in
 	*)		sh ./analyze_new_cluster.sh ;;
 esac
 
-pg_dumpall --no-sync -f "$temp_root"/dump2.sql || pg_dumpall2_status=$?
+pg_dumpall $extra_dump_options --no-sync \
+	-f "$temp_root"/dump2.sql || pg_dumpall2_status=$?
 pg_ctl -m fast stop
 
 if [ -n "$pg_dumpall2_status" ]; then

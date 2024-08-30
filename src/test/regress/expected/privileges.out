@@ -250,6 +250,67 @@ EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y
                    QUERY PLAN                    
 -------------------------------------------------
  Nested Loop
+   ->  Seq Scan on atest12 y
+         Filter: (abs(a) <<< 5)
+   ->  Index Scan using atest12_a_idx on atest12 x
+         Index Cond: (a = y.b)
+(5 rows)
+
+-- This should also be a nestloop, but the security barrier forces the inner
+-- scan to be materialized
+EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
+                QUERY PLAN                 
+-------------------------------------------
+ Nested Loop
+   Join Filter: (atest12.a = atest12_1.b)
+   ->  Seq Scan on atest12
+         Filter: (b <<< 5)
+   ->  Materialize
+         ->  Seq Scan on atest12 atest12_1
+               Filter: (b <<< 5)
+(7 rows)
+
+-- Check if regress_priv_user2 can break security.
+SET SESSION AUTHORIZATION regress_priv_user2;
+CREATE FUNCTION leak2(integer,integer) RETURNS boolean
+  AS $$begin raise notice 'leak % %', $1, $2; return $1 > $2; end$$
+  LANGUAGE plpgsql immutable;
+CREATE OPERATOR >>> (procedure = leak2, leftarg = integer, rightarg = integer,
+                     restrict = scalargtsel);
+-- This should not show any "leak" notices before failing.
+EXPLAIN (COSTS OFF) SELECT * FROM atest12 WHERE a >>> 0;
+ERROR:  permission denied for table atest12
+-- These plans should continue to use a nestloop, since they execute with the
+-- privileges of the view owner.
+EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y WHERE x.a = y.b;
+                   QUERY PLAN                    
+-------------------------------------------------
+ Nested Loop
+   ->  Seq Scan on atest12 atest12_1
+         Filter: (b <<< 5)
+   ->  Index Scan using atest12_a_idx on atest12
+         Index Cond: (a = atest12_1.b)
+         Filter: (b <<< 5)
+(6 rows)
+
+EXPLAIN (COSTS OFF) SELECT * FROM atest12sbv x, atest12sbv y WHERE x.a = y.b;
+                QUERY PLAN                 
+-------------------------------------------
+ Nested Loop
+   Join Filter: (atest12.a = atest12_1.b)
+   ->  Seq Scan on atest12
+         Filter: (b <<< 5)
+   ->  Materialize
+         ->  Seq Scan on atest12 atest12_1
+               Filter: (b <<< 5)
+(7 rows)
+
+-- A non-security barrier view does not guard against information leakage.
+EXPLAIN (COSTS OFF) SELECT * FROM atest12v x, atest12v y
+  WHERE x.a = y.b and abs(y.a) <<< 5;
+                   QUERY PLAN                    
+-------------------------------------------------
+ Nested Loop
    ->  Seq Scan on atest12 atest12_1
          Filter: ((b <<< 5) AND (abs(a) <<< 5))
    ->  Index Scan using atest12_a_idx on atest12
@@ -660,7 +721,7 @@ SET SESSION AUTHORIZATION regress_priv_user1;
 CREATE TABLE atestp1 (f1 int, f2 int) WITH OIDS DISTRIBUTE BY ROUNDROBIN;
 CREATE TABLE atestp2 (fx int, fy int) WITH OIDS DISTRIBUTE BY ROUNDROBIN;
 CREATE TABLE atestc (fz int) INHERITS (atestp1, atestp2);
-GRANT SELECT(fx,fy,oid) ON atestp2 TO regress_priv_user2;
+GRANT SELECT(fx,fy,tableoid) ON atestp2 TO regress_priv_user2;
 GRANT SELECT(fx) ON atestc TO regress_priv_user2;
 SET SESSION AUTHORIZATION regress_priv_user2;
 SELECT fx FROM atestp2; -- ok
@@ -678,15 +739,15 @@ SELECT atestp2 FROM atestp2; -- ok
 ---------
 (0 rows)
 
-SELECT oid FROM atestp2; -- ok
- oid 
------
+SELECT tableoid FROM atestp2; -- ok
+ tableoid 
+----------
 (0 rows)
 
 SELECT fy FROM atestc; -- fail
 ERROR:  permission denied for table atestc
 SET SESSION AUTHORIZATION regress_priv_user1;
-GRANT SELECT(fy,oid) ON atestc TO regress_priv_user2;
+GRANT SELECT(fy,tableoid) ON atestc TO regress_priv_user2;
 SET SESSION AUTHORIZATION regress_priv_user2;
 SELECT fx FROM atestp2; -- still ok
  fx 
@@ -703,9 +764,9 @@ SELECT atestp2 FROM atestp2; -- ok
 ---------
 (0 rows)
 
-SELECT oid FROM atestp2; -- ok
- oid 
------
+SELECT tableoid FROM atestp2; -- ok
+ tableoid 
+----------
 (0 rows)
 
 -- privileges on functions, languages
@@ -808,7 +869,7 @@ SELECT '{1}'::int4[]::int8[];
 (1 row)
 
 REVOKE ALL ON FUNCTION int8(integer) FROM PUBLIC;
-SELECT '{1}'::int4[]::int8[]; --superuser, suceed
+SELECT '{1}'::int4[]::int8[]; --superuser, succeed
  int8 
 ------
  {1}
@@ -1327,10 +1388,7 @@ CREATE INDEX CONCURRENTLY sro_idx ON sro_tab ((sro_ifun(a) + sro_ifun(0)))
 -- REINDEX
 REINDEX TABLE sro_tab;
 REINDEX INDEX sro_idx;
-REINDEX TABLE CONCURRENTLY sro_tab;  -- v12+ feature
-ERROR:  syntax error at or near "CONCURRENTLY"
-LINE 1: REINDEX TABLE CONCURRENTLY sro_tab;
-                      ^
+REINDEX TABLE CONCURRENTLY sro_tab;
 DROP INDEX sro_idx;
 -- CLUSTER
 CREATE INDEX sro_cluster_idx ON sro_tab ((sro_ifun(a) + sro_ifun(0)));
@@ -1361,11 +1419,9 @@ CREATE INDEX sro_pidx ON sro_ptab ((sro_ifun(a) + sro_ifun(0)))
 	WHERE sro_ifun(a + 10) > sro_ifun(10);
 REINDEX TABLE sro_ptab;
 WARNING:  REINDEX of partitioned tables is not yet implemented, skipping "sro_ptab"
-NOTICE:  table "sro_ptab" has no indexes
-REINDEX INDEX CONCURRENTLY sro_pidx;  -- v12+ feature
-ERROR:  syntax error at or near "CONCURRENTLY"
-LINE 1: REINDEX INDEX CONCURRENTLY sro_pidx;
-                      ^
+NOTICE:  table "sro_ptab" has no indexes to reindex
+REINDEX INDEX CONCURRENTLY sro_pidx;
+ERROR:  REINDEX is not yet implemented for partitioned indexes
 SET SESSION AUTHORIZATION regress_sro_user;
 CREATE FUNCTION unwanted_grant() RETURNS void LANGUAGE sql AS
 	'GRANT regress_priv_group2 TO regress_sro_user';
@@ -1930,8 +1986,8 @@ DROP SCHEMA testns5 CASCADE;
 SELECT d.*     -- check that entries went away
   FROM pg_default_acl d LEFT JOIN pg_namespace n ON defaclnamespace = n.oid
   WHERE nspname IS NULL AND defaclnamespace != 0;
- defaclrole | defaclnamespace | defaclobjtype | defaclacl 
-------------+-----------------+---------------+-----------
+ oid | defaclrole | defaclnamespace | defaclobjtype | defaclacl 
+-----+------------+-----------------+---------------+-----------
 (0 rows)
 
 -- Grant on all objects of given type in a schema
@@ -2037,10 +2093,13 @@ SELECT has_function_privilege('regress_priv_user1', 'testns.priv_testproc(int)',
  t
 (1 row)
 
-\set VERBOSITY terse \\ -- suppress cascade details
 DROP SCHEMA testns CASCADE;
 NOTICE:  drop cascades to 5 other objects
-\set VERBOSITY default
+DETAIL:  drop cascades to table testns.t1
+drop cascades to table testns.t2
+drop cascades to function testns.priv_testfunc(integer)
+drop cascades to function testns.priv_testagg(integer)
+drop cascades to function testns.priv_testproc(integer)
 -- Change owner of the schema & and rename of new schema owner
 \c -
 CREATE ROLE regress_schemauser1 superuser login;
@@ -2062,9 +2121,7 @@ SELECT nspname, rolname FROM pg_namespace, pg_roles WHERE pg_namespace.nspname =
 (1 row)
 
 set session role regress_schemauser_renamed;
-\set VERBOSITY terse \\ -- suppress cascade details
 DROP SCHEMA testns CASCADE;
-\set VERBOSITY default
 -- clean up
 \c -
 DROP ROLE regress_schemauser1;

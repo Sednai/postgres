@@ -507,12 +507,12 @@ DECLARE c1 SCROLL CURSOR FOR SELECT * FROM current_check;
 -- This tests the fetch-backwards code path
 FETCH ABSOLUTE 12 FROM c1;
 FETCH ABSOLUTE 8 FROM c1;
--- DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
+DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
 
 -- This tests the ExecutorRewind code path
 FETCH ABSOLUTE 13 FROM c1;
 FETCH ABSOLUTE 1 FROM c1;
--- DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
+DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
 
 SELECT * FROM current_check;
 ROLLBACK;

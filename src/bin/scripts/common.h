@@ -2,7 +2,7 @@
  *	common.h
  *		Common support routines for bin/scripts/
  *
- *	Copyright (c) 2003-2018, PostgreSQL Global Development Group
+ *	Copyright (c) 2003-2019, PostgreSQL Global Development Group
  *
  *	src/bin/scripts/common.h
  */
@@ -40,8 +40,8 @@ typedef struct _connParams
 typedef void (*help_handler) (const char *progname);
 
 extern void handle_help_version_opts(int argc, char *argv[],
-						 const char *fixed_progname,
-						 help_handler hlp);
+									 const char *fixed_progname,
+									 help_handler hlp);
 
 extern PGconn *connectDatabase(const ConnParams *cparams,
 							   const char *progname,
@@ -49,19 +49,22 @@ extern PGconn *connectDatabase(const ConnParams *cparams,
 							   bool allow_password_reuse);
 
 extern PGconn *connectMaintenanceDatabase(ConnParams *cparams,
-						   const char *progname, bool echo);
+										  const char *progname, bool echo);
 
 extern PGresult *executeQuery(PGconn *conn, const char *query,
-			 const char *progname, bool echo);
+							  const char *progname, bool echo);
 
 extern void executeCommand(PGconn *conn, const char *query,
-			   const char *progname, bool echo);
+						   const char *progname, bool echo);
 
 extern bool executeMaintenanceCommand(PGconn *conn, const char *query,
-						  bool echo);
+									  bool echo);
+
+extern void splitTableColumnsSpec(const char *spec, int encoding,
+								  char **table, const char **columns);
 
 extern void appendQualifiedRelation(PQExpBuffer buf, const char *name,
-						PGconn *conn, const char *progname, bool echo);
+									PGconn *conn, const char *progname, bool echo);
 
 extern bool yesno_prompt(const char *question);
 

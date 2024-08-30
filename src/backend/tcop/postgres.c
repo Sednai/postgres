@@ -3,7 +3,7 @@
  * postgres.c
  *	  POSTGRES C Backend Interface
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -51,7 +51,7 @@
 #include "libpq/pqsignal.h"
 #include "miscadmin.h"
 #include "nodes/print.h"
-#include "optimizer/planner.h"
+#include "optimizer/optimizer.h"
 #include "pgstat.h"
 #include "pg_trace.h"
 #include "parser/analyze.h"
@@ -84,6 +84,7 @@
 #include "utils/timeout.h"
 #include "utils/timestamp.h"
 #include "mb/pg_wchar.h"
+#include "utils/varlena.h"
 #ifdef PGXC
 #include "storage/procarray.h"
 #include "pgxc/pgxc.h"
@@ -99,6 +100,7 @@
 /* PGXC_DATANODE */
 #include "access/transam.h"
 #endif
+
 
 /* ----------------
  *		global variables
@@ -121,6 +123,8 @@ int			max_stack_depth = 100;
 int			PostAuthDelay = 0;
 
 
+/* flags for non-system relation kinds to restrict use */
+int			restrict_nonsystem_relation_kind;
 
 /* ----------------
  *		private variables
@@ -700,6 +704,12 @@ pg_parse_query(const char *query_string)
 	}
 #endif
 
+	/*
+	 * Currently, outfuncs/readfuncs support is missing for many raw parse
+	 * tree nodes, so we don't try to implement WRITE_READ_PARSE_PLAN_TREES
+	 * here.
+	 */
+
 	TRACE_POSTGRESQL_QUERY_PARSE_DONE(query_string);
 
 	return raw_parsetree_list;
@@ -860,7 +870,7 @@ pg_rewrite_query(Query *query)
 		ShowUsage("REWRITER STATISTICS");
 
 #ifdef COPY_PARSE_PLAN_TREES
-	/* Optional debugging check: pass querytree output through copyObject() */
+	/* Optional debugging check: pass querytree through copyObject() */
 	{
 		List	   *new_list;
 
@@ -868,6 +878,46 @@ pg_rewrite_query(Query *query)
 		/* This checks both copyObject() and the equal() routines... */
 		if (!equal(new_list, querytree_list))
 			elog(WARNING, "copyObject() failed to produce equal parse tree");
+		else
+			querytree_list = new_list;
+	}
+#endif
+
+#ifdef WRITE_READ_PARSE_PLAN_TREES
+	/* Optional debugging check: pass querytree through outfuncs/readfuncs */
+	{
+		List	   *new_list = NIL;
+		ListCell   *lc;
+
+		/*
+		 * We currently lack outfuncs/readfuncs support for most utility
+		 * statement types, so only attempt to write/read non-utility queries.
+		 */
+		foreach(lc, querytree_list)
+		{
+			Query	   *query = castNode(Query, lfirst(lc));
+
+			if (query->commandType != CMD_UTILITY)
+			{
+				char	   *str = nodeToString(query);
+				Query	   *new_query = stringToNodeWithLocations(str);
+
+				/*
+				 * queryId is not saved in stored rules, but we must preserve
+				 * it here to avoid breaking pg_stat_statements.
+				 */
+				new_query->queryId = query->queryId;
+
+				new_list = lappend(new_list, new_query);
+				pfree(str);
+			}
+			else
+				new_list = lappend(new_list, query);
+		}
+
+		/* This checks both outfuncs/readfuncs and the equal() routines... */
+		if (!equal(new_list, querytree_list))
+			elog(WARNING, "outfuncs/readfuncs failed to produce equal parse tree");
 		else
 			querytree_list = new_list;
 	}
@@ -909,7 +959,7 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 		ShowUsage("PLANNER STATISTICS");
 
 #ifdef COPY_PARSE_PLAN_TREES
-	/* Optional debugging check: pass plan output through copyObject() */
+	/* Optional debugging check: pass plan tree through copyObject() */
 	{
 		PlannedStmt *new_plan = copyObject(plan);
 
@@ -921,6 +971,30 @@ pg_plan_query(Query *querytree, int cursorOptions, ParamListInfo boundParams)
 		/* This checks both copyObject() and the equal() routines... */
 		if (!equal(new_plan, plan))
 			elog(WARNING, "copyObject() failed to produce an equal plan tree");
+		else
+#endif
+			plan = new_plan;
+	}
+#endif
+
+#ifdef WRITE_READ_PARSE_PLAN_TREES
+	/* Optional debugging check: pass plan tree through outfuncs/readfuncs */
+	{
+		char	   *str;
+		PlannedStmt *new_plan;
+
+		str = nodeToString(plan);
+		new_plan = stringToNodeWithLocations(str);
+		pfree(str);
+
+		/*
+		 * equal() currently does not have routines to compare Plan nodes, so
+		 * don't try to test equality here.  Perhaps fix someday?
+		 */
+#ifdef NOT_USED
+		/* This checks both outfuncs/readfuncs and the equal() routines... */
+		if (!equal(new_plan, plan))
+			elog(WARNING, "outfuncs/readfuncs failed to produce an equal plan tree");
 		else
 #endif
 			plan = new_plan;
@@ -1459,7 +1533,6 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	{
 		Query	   *query;
 		bool		snapshot_set = false;
-		int			i;
 
 		raw_parse_tree = linitial_node(RawStmt, parsetree_list);
 
@@ -1519,7 +1592,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 		/*
 		 * Check all parameter types got determined.
 		 */
-		for (i = 0; i < numParams; i++)
+		for (int i = 0; i < numParams; i++)
 		{
 			Oid			ptype = paramTypes[i];
 
@@ -1726,10 +1799,8 @@ exec_bind_message(StringInfo input_message)
 	numPFormats = pq_getmsgint(input_message, 2);
 	if (numPFormats > 0)
 	{
-		int			i;
-
 		pformats = (int16 *) palloc(numPFormats * sizeof(int16));
-		for (i = 0; i < numPFormats; i++)
+		for (int i = 0; i < numPFormats; i++)
 			pformats[i] = pq_getmsgint(input_message, 2);
 	}
 
@@ -1812,20 +1883,9 @@ exec_bind_message(StringInfo input_message)
 	 */
 	if (numParams > 0)
 	{
-		int			paramno;
+		params = makeParamList(numParams);
 
-		params = (ParamListInfo) palloc(offsetof(ParamListInfoData, params) +
-										numParams * sizeof(ParamExternData));
-		/* we have static list of params, so no hooks needed */
-		params->paramFetch = NULL;
-		params->paramFetchArg = NULL;
-		params->paramCompile = NULL;
-		params->paramCompileArg = NULL;
-		params->parserSetup = NULL;
-		params->parserSetupArg = NULL;
-		params->numParams = numParams;
-
-		for (paramno = 0; paramno < numParams; paramno++)
+		for (int paramno = 0; paramno < numParams; paramno++)
 		{
 			Oid			ptype = psrc->param_types[paramno];
 			int32		plength;
@@ -1850,7 +1910,7 @@ exec_bind_message(StringInfo input_message)
 				 * trailing null.  This is grotty but is a big win when
 				 * dealing with very large parameter strings.
 				 */
-				pbuf.data = (char *) pvalue;
+				pbuf.data = unconstify(char *, pvalue);
 				pbuf.maxlen = plength + 1;
 				pbuf.len = plength;
 				pbuf.cursor = 0;
@@ -1953,10 +2013,8 @@ exec_bind_message(StringInfo input_message)
 	numRFormats = pq_getmsgint(input_message, 2);
 	if (numRFormats > 0)
 	{
-		int			i;
-
 		rformats = (int16 *) palloc(numRFormats * sizeof(int16));
-		for (i = 0; i < numRFormats; i++)
+		for (int i = 0; i < numRFormats; i++)
 			rformats[i] = pq_getmsgint(input_message, 2);
 	}
 
@@ -2294,6 +2352,8 @@ check_log_statement(List *stmt_list)
 /*
  * check_log_duration
  *		Determine whether current command's duration should be logged
+ *		We also check if this statement in this transaction must be logged
+ *		(regardless of its duration).
  *
  * Returns:
  *		0 if no logging is needed
@@ -2309,7 +2369,7 @@ check_log_statement(List *stmt_list)
 int
 check_log_duration(char *msec_str, bool was_logged)
 {
-	if (log_duration || log_min_duration_statement >= 0)
+	if (log_duration || log_min_duration_statement >= 0 || xact_is_sampled)
 	{
 		long		secs;
 		int			usecs;
@@ -2331,11 +2391,11 @@ check_log_duration(char *msec_str, bool was_logged)
 					 (secs > log_min_duration_statement / 1000 ||
 					  secs * 1000 + msecs >= log_min_duration_statement)));
 
-		if (exceeded || log_duration)
+		if (exceeded || log_duration || xact_is_sampled)
 		{
 			snprintf(msec_str, 32, "%ld.%03d",
 					 secs * 1000 + msecs, usecs % 1000);
-			if (exceeded && !was_logged)
+			if ((exceeded || xact_is_sampled) && !was_logged)
 				return 2;
 			else
 				return 1;
@@ -2390,7 +2450,6 @@ errdetail_params(ParamListInfo params)
 	{
 		StringInfoData param_str;
 		MemoryContext oldcontext;
-		int			paramno;
 
 		/* This code doesn't support dynamic param lists */
 		Assert(params->paramFetch == NULL);
@@ -2400,7 +2459,7 @@ errdetail_params(ParamListInfo params)
 
 		initStringInfo(&param_str);
 
-		for (paramno = 0; paramno < params->numParams; paramno++)
+		for (int paramno = 0; paramno < params->numParams; paramno++)
 		{
 			ParamExternData *prm = &params->params[paramno];
 			Oid			typoutput;
@@ -2503,7 +2562,6 @@ static void
 exec_describe_statement_message(const char *stmt_name)
 {
 	CachedPlanSource *psrc;
-	int			i;
 
 	/*
 	 * Start up a transaction command. (Note that this will normally change
@@ -2562,7 +2620,7 @@ exec_describe_statement_message(const char *stmt_name)
 														 * message type */
 	pq_sendint16(&row_description_buf, psrc->num_params);
 
-	for (i = 0; i < psrc->num_params; i++)
+	for (int i = 0; i < psrc->num_params; i++)
 	{
 		Oid			ptype = psrc->param_types[i];
 
@@ -3311,7 +3369,9 @@ ia64_get_bsp(void)
 pg_stack_base_t
 set_stack_base(void)
 {
+#ifndef HAVE__BUILTIN_FRAME_ADDRESS
 	char		stack_base;
+#endif
 	pg_stack_base_t old;
 
 #if defined(__ia64__) || defined(__ia64)
@@ -3321,8 +3381,16 @@ set_stack_base(void)
 	old = stack_base_ptr;
 #endif
 
-	/* Set up reference point for stack depth checking */
+	/*
+	 * Set up reference point for stack depth checking.  On recent gcc we use
+	 * __builtin_frame_address() to avoid a warning about storing a local
+	 * variable's address in a long-lived variable.
+	 */
+#ifdef HAVE__BUILTIN_FRAME_ADDRESS
+	stack_base_ptr = __builtin_frame_address(0);
+#else
 	stack_base_ptr = &stack_base;
+#endif
 #if defined(__ia64__) || defined(__ia64)
 	register_stack_base_ptr = ia64_get_bsp();
 #endif
@@ -3449,6 +3517,66 @@ assign_max_stack_depth(int newval, void *extra)
 	max_stack_depth_bytes = newval_bytes;
 }
 
+/*
+ * GUC check_hook for restrict_nonsystem_relation_kind
+ */
+bool
+check_restrict_nonsystem_relation_kind(char **newval, void **extra, GucSource source)
+{
+	char	   *rawstring;
+	List	   *elemlist;
+	ListCell   *l;
+	int			flags = 0;
+
+	/* Need a modifiable copy of string */
+	rawstring = pstrdup(*newval);
+
+	if (!SplitIdentifierString(rawstring, ',', &elemlist))
+	{
+		/* syntax error in list */
+		GUC_check_errdetail("List syntax is invalid.");
+		pfree(rawstring);
+		list_free(elemlist);
+		return false;
+	}
+
+	foreach(l, elemlist)
+	{
+		char	   *tok = (char *) lfirst(l);
+
+		if (pg_strcasecmp(tok, "view") == 0)
+			flags |= RESTRICT_RELKIND_VIEW;
+		else if (pg_strcasecmp(tok, "foreign-table") == 0)
+			flags |= RESTRICT_RELKIND_FOREIGN_TABLE;
+		else
+		{
+			GUC_check_errdetail("Unrecognized key word: \"%s\".", tok);
+			pfree(rawstring);
+			list_free(elemlist);
+			return false;
+		}
+	}
+
+	pfree(rawstring);
+	list_free(elemlist);
+
+	/* Save the flags in *extra, for use by the assign function */
+	*extra = malloc(sizeof(int));
+	*((int *) *extra) = flags;
+
+	return true;
+}
+
+/*
+ * GUC assign_hook for restrict_nonsystem_relation_kind
+ */
+void
+assign_restrict_nonsystem_relation_kind(const char *newval, void *extra)
+{
+	int		   *flags = (int *) extra;
+
+	restrict_nonsystem_relation_kind = *flags;
+}
 
 /*
  * set_debug_options --- apply "-d N" command line option
@@ -3841,15 +3969,15 @@ process_postgres_switches(int argc, char *argv[], GucContext ctx,
 		/* spell the error message a bit differently depending on context */
 		if (IsUnderPostmaster)
 			ereport(FATAL,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("invalid command-line argument for server process: %s", argv[optind]),
-					 errhint("Try \"%s --help\" for more information.", progname)));
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("invalid command-line argument for server process: %s", argv[optind]),
+					errhint("Try \"%s --help\" for more information.", progname));
 		else
 			ereport(FATAL,
-					(errcode(ERRCODE_SYNTAX_ERROR),
-					 errmsg("%s: invalid command-line argument: %s",
-							progname, argv[optind]),
-					 errhint("Try \"%s --help\" for more information.", progname)));
+					errcode(ERRCODE_SYNTAX_ERROR),
+					errmsg("%s: invalid command-line argument: %s",
+						   progname, argv[optind]),
+					errhint("Try \"%s --help\" for more information.", progname));
 	}
 
 	/*
@@ -5012,7 +5140,7 @@ log_disconnections(int code, Datum arg)
 				minutes,
 				seconds;
 
-	TimestampDifference(port->SessionStartTime,
+	TimestampDifference(MyStartTimestamp,
 						GetCurrentTimestamp(),
 						&secs, &usecs);
 	msecs = usecs / 1000;

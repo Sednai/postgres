@@ -39,25 +39,25 @@ static PyObject *PLyString_FromScalar(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyObject_FromTransform(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyList_FromArray(PLyDatumToOb *arg, Datum d);
 static PyObject *PLyList_FromArray_recurse(PLyDatumToOb *elm, int *dims, int ndim, int dim,
-						  char **dataptr_p, bits8 **bitmap_p, int *bitmask_p);
+										   char **dataptr_p, bits8 **bitmap_p, int *bitmask_p);
 static PyObject *PLyDict_FromComposite(PLyDatumToOb *arg, Datum d);
-static PyObject *PLyDict_FromTuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc);
+static PyObject *PLyDict_FromTuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc, bool include_generated);
 
 /* conversion from Python objects to Datums */
 static Datum PLyObject_ToBool(PLyObToDatum *arg, PyObject *plrv,
-				 bool *isnull, bool inarray);
+							  bool *isnull, bool inarray);
 static Datum PLyObject_ToBytea(PLyObToDatum *arg, PyObject *plrv,
-				  bool *isnull, bool inarray);
+							   bool *isnull, bool inarray);
 static Datum PLyObject_ToComposite(PLyObToDatum *arg, PyObject *plrv,
-					  bool *isnull, bool inarray);
+								   bool *isnull, bool inarray);
 static Datum PLyObject_ToScalar(PLyObToDatum *arg, PyObject *plrv,
-				   bool *isnull, bool inarray);
+								bool *isnull, bool inarray);
 static Datum PLyObject_ToDomain(PLyObToDatum *arg, PyObject *plrv,
-				   bool *isnull, bool inarray);
+								bool *isnull, bool inarray);
 static Datum PLyObject_ToTransform(PLyObToDatum *arg, PyObject *plrv,
-					  bool *isnull, bool inarray);
+								   bool *isnull, bool inarray);
 static Datum PLySequence_ToArray(PLyObToDatum *arg, PyObject *plrv,
-					bool *isnull, bool inarray);
+								 bool *isnull, bool inarray);
 static void PLySequence_ToArray_recurse(PyObject *obj,
 										ArrayBuildState **astatep,
 										int *ndims, int *dims, int cur_depth,
@@ -135,7 +135,7 @@ PLy_output_convert(PLyObToDatum *arg, PyObject *val, bool *isnull)
  * but in practice all callers have the right tupdesc available.
  */
 PyObject *
-PLy_input_from_tuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc)
+PLy_input_from_tuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc, bool include_generated)
 {
 	PyObject   *dict;
 	PLyExecutionContext *exec_ctx = PLy_current_execution_context();
@@ -149,7 +149,7 @@ PLy_input_from_tuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc)
 
 	oldcontext = MemoryContextSwitchTo(scratch_context);
 
-	dict = PLyDict_FromTuple(arg, tuple, desc);
+	dict = PLyDict_FromTuple(arg, tuple, desc, include_generated);
 
 	MemoryContextSwitchTo(oldcontext);
 
@@ -805,7 +805,7 @@ PLyDict_FromComposite(PLyDatumToOb *arg, Datum d)
 	tmptup.t_len = HeapTupleHeaderGetDatumLength(td);
 	tmptup.t_data = td;
 
-	dict = PLyDict_FromTuple(arg, &tmptup, tupdesc);
+	dict = PLyDict_FromTuple(arg, &tmptup, tupdesc, true);
 
 	ReleaseTupleDesc(tupdesc);
 
@@ -816,7 +816,7 @@ PLyDict_FromComposite(PLyDatumToOb *arg, Datum d)
  * Transform a tuple into a Python dict object.
  */
 static PyObject *
-PLyDict_FromTuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc)
+PLyDict_FromTuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc, bool include_generated)
 {
 	PyObject   *volatile dict;
 
@@ -842,6 +842,13 @@ PLyDict_FromTuple(PLyDatumToOb *arg, HeapTuple tuple, TupleDesc desc)
 
 			if (attr->attisdropped)
 				continue;
+
+			if (attr->attgenerated)
+			{
+				/* don't include unless requested */
+				if (!include_generated)
+					continue;
+			}
 
 			key = NameStr(attr->attname);
 			vattr = heap_getattr(tuple, (i + 1), desc, &is_null);
@@ -1145,7 +1152,6 @@ PLySequence_ToArray(PLyObToDatum *arg, PyObject *plrv,
 	int			ndims = 1;
 	int			dims[MAXDIM];
 	int			lbs[MAXDIM];
-	int			i;
 
 	if (plrv == Py_None)
 	{
@@ -1182,7 +1188,7 @@ PLySequence_ToArray(PLyObToDatum *arg, PyObject *plrv,
 	if (astate == NULL)
 		return PointerGetDatum(construct_empty_array(arg->u.array.elmbasetype));
 
-	for (i = 0; i < ndims; i++)
+	for (int i = 0; i < ndims; i++)
 		lbs[i] = 1;
 
 	return makeMdArrayResult(astate, ndims, dims, lbs,

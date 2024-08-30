@@ -3,7 +3,7 @@
  *
  *	Postgres-version-specific routines
  *
- *	Copyright (c) 2010-2018, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/version.c
  */
 
@@ -433,6 +433,38 @@ old_9_6_invalidate_hash_indexes(ClusterInfo *cluster, bool check_mode)
 				   "when executed by psql by the database superuser will recreate all invalid\n"
 				   "indexes; until then, none of these indexes will be used.\n\n",
 				   output_path);
+	}
+	else
+		check_ok();
+}
+
+/*
+ * old_11_check_for_sql_identifier_data_type_usage()
+ *	11 -> 12
+ *	In 12, the sql_identifier data type was switched from name to varchar,
+ *	which does affect the storage (name is by-ref, but not varlena). This
+ *	means user tables using sql_identifier for columns are broken because
+ *	the on-disk format is different.
+ */
+void
+old_11_check_for_sql_identifier_data_type_usage(ClusterInfo *cluster)
+{
+	char		output_path[MAXPGPATH];
+
+	prep_status("Checking for invalid \"sql_identifier\" user columns");
+
+	snprintf(output_path, sizeof(output_path), "tables_using_sql_identifier.txt");
+
+	if (check_for_data_type_usage(cluster, "information_schema.sql_identifier",
+								  output_path))
+	{
+		pg_log(PG_REPORT, "fatal\n");
+		pg_fatal("Your installation contains the \"sql_identifier\" data type in user tables\n"
+				 "and/or indexes.  The on-disk format for this data type has changed, so this\n"
+				 "cluster cannot currently be upgraded.  You can remove the problem tables or\n"
+				 "change the data type to \"name\" and restart the upgrade.\n"
+				 "A list of the problem columns is in the file:\n"
+				 "    %s\n\n", output_path);
 	}
 	else
 		check_ok();

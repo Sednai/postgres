@@ -4,7 +4,7 @@
  *	   Replication slot management.
  *
  *
- * Copyright (c) 2012-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -628,8 +628,7 @@ ReplicationSlotDropPtr(ReplicationSlot *slot)
 	 */
 	if (!rmtree(tmppath, true))
 		ereport(WARNING,
-				(errcode_for_file_access(),
-				 errmsg("could not remove directory \"%s\"", tmppath)));
+				(errmsg("could not remove directory \"%s\"", tmppath)));
 
 	/*
 	 * We release this at the very end, so that nobody starts trying to create
@@ -1137,8 +1136,8 @@ StartupReplicationSlots(void)
 			if (!rmtree(path, true))
 			{
 				ereport(WARNING,
-						(errcode_for_file_access(),
-						 errmsg("could not remove directory \"%s\"", path)));
+						(errmsg("could not remove directory \"%s\"",
+								path)));
 				continue;
 			}
 			fsync_fname("pg_replslot", true);
@@ -1328,7 +1327,18 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 	}
 	pgstat_report_wait_end();
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+	{
+		int			save_errno = errno;
+
+		LWLockRelease(&slot->io_in_progress_lock);
+		errno = save_errno;
+		ereport(elevel,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m",
+						tmppath)));
+		return;
+	}
 
 	/* rename to permanent file, fsync file and directory */
 	if (rename(tmppath, path) != 0)
@@ -1344,7 +1354,9 @@ SaveSlotToPath(ReplicationSlot *slot, const char *dir, int elevel)
 		return;
 	}
 
-	/* Check CreateSlot() for the reasoning of using a crit. section. */
+	/*
+	 * Check CreateSlotOnDisk() for the reasoning of using a critical section.
+	 */
 	START_CRIT_SECTION();
 
 	fsync_fname(path, false);
@@ -1394,6 +1406,7 @@ RestoreSlotFromDisk(const char *name)
 
 	elog(DEBUG1, "restoring replication slot from \"%s\"", path);
 
+	/* on some operating systems fsyncing a file requires O_RDWR */
 	fd = OpenTransientFile(path, O_RDWR | PG_BINARY);
 
 	/*
@@ -1411,16 +1424,10 @@ RestoreSlotFromDisk(const char *name)
 	 */
 	pgstat_report_wait_start(WAIT_EVENT_REPLICATION_SLOT_RESTORE_SYNC);
 	if (pg_fsync(fd) != 0)
-	{
-		int			save_errno = errno;
-
-		CloseTransientFile(fd);
-		errno = save_errno;
 		ereport(PANIC,
 				(errcode_for_file_access(),
 				 errmsg("could not fsync file \"%s\": %m",
 						path)));
-	}
 	pgstat_report_wait_end();
 
 	/* Also sync the parent directory */
@@ -1434,35 +1441,36 @@ RestoreSlotFromDisk(const char *name)
 	pgstat_report_wait_end();
 	if (readBytes != ReplicationSlotOnDiskConstantSize)
 	{
-		int			saved_errno = errno;
-
-		CloseTransientFile(fd);
-		errno = saved_errno;
-		ereport(PANIC,
-				(errcode_for_file_access(),
-				 errmsg("could not read file \"%s\", read %d of %u: %m",
-						path, readBytes,
-						(uint32) ReplicationSlotOnDiskConstantSize)));
+		if (readBytes < 0)
+			ereport(PANIC,
+					(errcode_for_file_access(),
+					 errmsg("could not read file \"%s\": %m", path)));
+		else
+			ereport(PANIC,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": read %d of %zu",
+							path, readBytes,
+							(Size) ReplicationSlotOnDiskConstantSize)));
 	}
 
 	/* verify magic */
 	if (cp.magic != SLOT_MAGIC)
 		ereport(PANIC,
-				(errcode_for_file_access(),
+				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg("replication slot file \"%s\" has wrong magic number: %u instead of %u",
 						path, cp.magic, SLOT_MAGIC)));
 
 	/* verify version */
 	if (cp.version != SLOT_VERSION)
 		ereport(PANIC,
-				(errcode_for_file_access(),
+				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg("replication slot file \"%s\" has unsupported version %u",
 						path, cp.version)));
 
 	/* boundary check on length */
 	if (cp.length != ReplicationSlotOnDiskV2Size)
 		ereport(PANIC,
-				(errcode_for_file_access(),
+				(errcode(ERRCODE_DATA_CORRUPTED),
 				 errmsg("replication slot file \"%s\" has corrupted length %u",
 						path, cp.length)));
 
@@ -1474,17 +1482,21 @@ RestoreSlotFromDisk(const char *name)
 	pgstat_report_wait_end();
 	if (readBytes != cp.length)
 	{
-		int			saved_errno = errno;
-
-		CloseTransientFile(fd);
-		errno = saved_errno;
-		ereport(PANIC,
-				(errcode_for_file_access(),
-				 errmsg("could not read file \"%s\", read %d of %u: %m",
-						path, readBytes, cp.length)));
+		if (readBytes < 0)
+			ereport(PANIC,
+					(errcode_for_file_access(),
+					 errmsg("could not read file \"%s\": %m", path)));
+		else
+			ereport(PANIC,
+					(errcode(ERRCODE_DATA_CORRUPTED),
+					 errmsg("could not read file \"%s\": read %d of %zu",
+							path, readBytes, (Size) cp.length)));
 	}
 
-	CloseTransientFile(fd);
+	if (CloseTransientFile(fd))
+		ereport(PANIC,
+				(errcode_for_file_access(),
+				 errmsg("could not close file \"%s\": %m", path)));
 
 	/* now verify the CRC */
 	INIT_CRC32C(checksum);
@@ -1507,8 +1519,8 @@ RestoreSlotFromDisk(const char *name)
 		if (!rmtree(slotdir, true))
 		{
 			ereport(WARNING,
-					(errcode_for_file_access(),
-					 errmsg("could not remove directory \"%s\"", slotdir)));
+					(errmsg("could not remove directory \"%s\"",
+							slotdir)));
 		}
 		fsync_fname("pg_replslot", true);
 		return;
@@ -1570,7 +1582,7 @@ RestoreSlotFromDisk(const char *name)
 	}
 
 	if (!restored)
-		ereport(PANIC,
+		ereport(FATAL,
 				(errmsg("too many replication slots active before shutdown"),
 				 errhint("Increase max_replication_slots and try again.")));
 }

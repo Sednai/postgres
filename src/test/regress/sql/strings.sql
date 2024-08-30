@@ -122,12 +122,28 @@ SELECT SUBSTRING('abcdefg' FROM 'a#"(b_d)#"%' FOR '#') AS "bcd";
 SELECT SUBSTRING('abcdefg' FROM '#"(b_d)#"%' FOR '#') IS NULL AS "True";
 
 -- Null inputs should return NULL
-SELECT SUBSTRING('abcdefg' FROM '(b|c)' FOR NULL) IS NULL AS "True";
-SELECT SUBSTRING(NULL FROM '(b|c)' FOR '#') IS NULL AS "True";
+SELECT SUBSTRING('abcdefg' FROM '%' FOR NULL) IS NULL AS "True";
+SELECT SUBSTRING(NULL FROM '%' FOR '#') IS NULL AS "True";
 SELECT SUBSTRING('abcdefg' FROM NULL FOR '#') IS NULL AS "True";
 
--- PostgreSQL extension to allow omitting the escape character;
--- here the regexp is taken as Posix syntax
+-- The first and last parts should act non-greedy
+SELECT SUBSTRING('abcdefg' FROM 'a#"%#"g' FOR '#') AS "bcdef";
+SELECT SUBSTRING('abcdefg' FROM 'a*#"%#"g*' FOR '#') AS "abcdefg";
+
+-- Vertical bar in any part affects only that part
+SELECT SUBSTRING('abcdefg' FROM 'a|b#"%#"g' FOR '#') AS "bcdef";
+SELECT SUBSTRING('abcdefg' FROM 'a#"%#"x|g' FOR '#') AS "bcdef";
+SELECT SUBSTRING('abcdefg' FROM 'a#"%|ab#"g' FOR '#') AS "bcdef";
+
+-- Can't have more than two part separators
+SELECT SUBSTRING('abcdefg' FROM 'a*#"%#"g*#"x' FOR '#') AS "error";
+
+-- Postgres extension: with 0 or 1 separator, assume parts 1 and 3 are empty
+SELECT SUBSTRING('abcdefg' FROM 'a#"%g' FOR '#') AS "bcdefg";
+SELECT SUBSTRING('abcdefg' FROM 'a%g' FOR '#') AS "abcdefg";
+
+-- substring() with just two arguments is not allowed by SQL spec;
+-- we accept it, but we interpret the pattern as a POSIX regexp not SQL
 SELECT SUBSTRING('abcdefg' FROM 'c.e') AS "cde";
 
 -- With a parenthesized subexpression, return only what matches the subexpr
@@ -329,6 +345,19 @@ SELECT 'jack' LIKE '%____%' AS t;
 
 
 --
+-- basic tests of LIKE with indexes
+--
+
+CREATE TABLE texttest (a text PRIMARY KEY, b int);
+SELECT * FROM texttest WHERE a LIKE '%1%';
+
+CREATE TABLE byteatest (a bytea PRIMARY KEY, b int);
+SELECT * FROM byteatest WHERE a LIKE '%1%';
+
+DROP TABLE texttest, byteatest;
+
+
+--
 -- test implicit type conversion
 --
 
@@ -381,7 +410,7 @@ SELECT substr(f1, 99995, 10) from toasttest;
 --INSERT INTO toasttest values (repeat('1234567890',300));
 --INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect >0 blocks
---select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
+-- select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
 
 --TRUNCATE TABLE toasttest;
 --ALTER TABLE toasttest set (toast_tuple_target = 4080);
@@ -390,7 +419,8 @@ SELECT substr(f1, 99995, 10) from toasttest;
 --INSERT INTO toasttest values (repeat('1234567890',300));
 --INSERT INTO toasttest values (repeat('1234567890',300));
 -- expect 0 blocks
---select 0 = pg_relation_size('pg_toast.pg_toast_'||(select oid from pg_class where relname = 'toasttest'))/current_setting('block_size')::integer as blocks;
+-- SELECT pg_relation_size(reltoastrelid) = 0 AS is_empty
+--  FROM pg_class where relname = 'toasttest';
 
 DROP TABLE toasttest;
 
@@ -453,6 +483,12 @@ SELECT length('abcdef') AS "length_6";
 SELECT strpos('abcdef', 'cd') AS "pos_3";
 
 SELECT strpos('abcdef', 'xy') AS "pos_0";
+
+SELECT strpos('abcdef', '') AS "pos_1";
+
+SELECT strpos('', 'xy') AS "pos_0";
+
+SELECT strpos('', '') AS "pos_1";
 
 --
 -- test replace

@@ -3,7 +3,7 @@
  * fe-print.c
  *	  functions for pretty-printing query results
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * These functions were formerly part of fe-exec.c, but they
@@ -39,17 +39,17 @@
 #define PQmblenBounded(s, e)  strnlen(s, PQmblen(s, e))
 
 static bool do_field(const PQprintOpt *po, const PGresult *res,
-		 const int i, const int j, const int fs_len,
-		 char **fields,
-		 const int nFields, const char **fieldNames,
-		 unsigned char *fieldNotNum, int *fieldMax,
-		 const int fieldMaxLen, FILE *fout);
+					 const int i, const int j, const int fs_len,
+					 char **fields,
+					 const int nFields, const char **fieldNames,
+					 unsigned char *fieldNotNum, int *fieldMax,
+					 const int fieldMaxLen, FILE *fout);
 static char *do_header(FILE *fout, const PQprintOpt *po, const int nFields,
-		  int *fieldMax, const char **fieldNames, unsigned char *fieldNotNum,
-		  const int fs_len, const PGresult *res);
+					   int *fieldMax, const char **fieldNames, unsigned char *fieldNotNum,
+					   const int fs_len, const PGresult *res);
 static void output_row(FILE *fout, const PQprintOpt *po, const int nFields, char **fields,
-		   unsigned char *fieldNotNum, int *fieldMax, char *border,
-		   const int row_index);
+					   unsigned char *fieldNotNum, int *fieldMax, char *border,
+					   const int row_index);
 static void fill(int length, int max, char filler, FILE *fp);
 
 /*

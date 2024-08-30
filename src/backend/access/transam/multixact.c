@@ -59,7 +59,7 @@
  * counter does not fall within the wraparound horizon considering the global
  * minimum value.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/multixact.c
@@ -340,7 +340,7 @@ static MemoryContext MXactContext = NULL;
 /* internal MultiXactId management */
 static void MultiXactIdSetOldestVisible(void);
 static void RecordNewMultiXact(MultiXactId multi, MultiXactOffset offset,
-				   int nmembers, MultiXactMember *members);
+							   int nmembers, MultiXactMember *members);
 static MultiXactId GetNewMultiXactId(int nmembers, MultiXactOffset *offset);
 
 /* MultiXact cache management */
@@ -348,7 +348,7 @@ static int	mxactMemberComparator(const void *arg1, const void *arg2);
 static MultiXactId mXactCacheGetBySet(int nmembers, MultiXactMember *members);
 static int	mXactCacheGetById(MultiXactId multi, MultiXactMember **members);
 static void mXactCachePut(MultiXactId multi, int nmembers,
-			  MultiXactMember *members);
+						  MultiXactMember *members);
 
 static char *mxstatus_to_string(MultiXactStatus status);
 
@@ -358,17 +358,17 @@ static int	ZeroMultiXactMemberPage(int pageno, bool writeXlog);
 static bool MultiXactOffsetPagePrecedes(int page1, int page2);
 static bool MultiXactMemberPagePrecedes(int page1, int page2);
 static bool MultiXactOffsetPrecedes(MultiXactOffset offset1,
-						MultiXactOffset offset2);
+									MultiXactOffset offset2);
 static void ExtendMultiXactOffset(MultiXactId multi);
 static void ExtendMultiXactMember(MultiXactOffset offset, int nmembers);
 static bool MultiXactOffsetWouldWrap(MultiXactOffset boundary,
-						 MultiXactOffset start, uint32 distance);
+									 MultiXactOffset start, uint32 distance);
 static bool SetOffsetVacuumLimit(bool is_startup);
 static bool find_multixact_start(MultiXactId multi, MultiXactOffset *result);
 static void WriteMZeroPageXlogRec(int pageno, uint8 info);
 static void WriteMTruncateXlogRec(Oid oldestMultiDB,
-					  MultiXactId startOff, MultiXactId endOff,
-					  MultiXactOffset startMemb, MultiXactOffset endMemb);
+								  MultiXactId startOff, MultiXactId endOff,
+								  MultiXactOffset startMemb, MultiXactOffset endMemb);
 
 
 /*
@@ -1717,7 +1717,7 @@ PostPrepare_MultiXact(TransactionId xid)
 	myOldestMember = OldestMemberMXactId[MyBackendId];
 	if (MultiXactIdIsValid(myOldestMember))
 	{
-		BackendId	dummyBackendId = TwoPhaseGetDummyBackendId(xid);
+		BackendId	dummyBackendId = TwoPhaseGetDummyBackendId(xid, false);
 
 		/*
 		 * Even though storing MultiXactId is atomic, acquire lock to make
@@ -1759,7 +1759,7 @@ void
 multixact_twophase_recover(TransactionId xid, uint16 info,
 						   void *recdata, uint32 len)
 {
-	BackendId	dummyBackendId = TwoPhaseGetDummyBackendId(xid);
+	BackendId	dummyBackendId = TwoPhaseGetDummyBackendId(xid, false);
 	MultiXactId oldestMember;
 
 	/*
@@ -1780,7 +1780,7 @@ void
 multixact_twophase_postcommit(TransactionId xid, uint16 info,
 							  void *recdata, uint32 len)
 {
-	BackendId	dummyBackendId = TwoPhaseGetDummyBackendId(xid);
+	BackendId	dummyBackendId = TwoPhaseGetDummyBackendId(xid, true);
 
 	Assert(len == sizeof(MultiXactId));
 
@@ -2214,7 +2214,7 @@ SetMultiXactIdLimit(MultiXactId oldest_datminmxid, Oid oldest_datoid,
 	 * space, but that's not really true, because multixacts wrap differently
 	 * from transaction IDs.  Note that, separately from any concern about
 	 * multixact IDs wrapping, we must ensure that multixact members do not
-	 * wrap.  Limits for that are set in DetermineSafeOldestOffset, not here.
+	 * wrap.  Limits for that are set in SetOffsetVacuumLimit, not here.
 	 */
 	multiWrapLimit = oldest_datminmxid + (MaxMultiXactId >> 1);
 	if (multiWrapLimit < FirstMultiXactId)
@@ -2826,6 +2826,7 @@ MultiXactMemberFreezeThreshold(void)
 	uint32		multixacts;
 	uint32		victim_multixacts;
 	double		fraction;
+	int			result;
 
 	/* If we can't determine member space utilization, assume the worst. */
 	if (!ReadMultiXactCounts(&multixacts, &members))
@@ -2847,7 +2848,13 @@ MultiXactMemberFreezeThreshold(void)
 	/* fraction could be > 1.0, but lowest possible freeze age is zero */
 	if (victim_multixacts > multixacts)
 		return 0;
-	return multixacts - victim_multixacts;
+	result = multixacts - victim_multixacts;
+
+	/*
+	 * Clamp to autovacuum_multixact_freeze_max_age, so that we never make
+	 * autovacuum less aggressive than it would otherwise be.
+	 */
+	return Min(result, autovacuum_multixact_freeze_max_age);
 }
 
 typedef struct mxtruncinfo
@@ -3281,9 +3288,9 @@ multixact_redo(XLogReaderState *record)
 								  xlrec->moff + xlrec->nmembers);
 
 		/*
-		 * Make sure nextXid is beyond any XID mentioned in the record. This
-		 * should be unnecessary, since any XID found here ought to have other
-		 * evidence in the XLOG, but let's be safe.
+		 * Make sure nextFullXid is beyond any XID mentioned in the record.
+		 * This should be unnecessary, since any XID found here ought to have
+		 * other evidence in the XLOG, but let's be safe.
 		 */
 		max_xid = XLogRecGetXid(record);
 		for (i = 0; i < xlrec->nmembers; i++)
@@ -3292,19 +3299,7 @@ multixact_redo(XLogReaderState *record)
 				max_xid = xlrec->members[i].xid;
 		}
 
-		/*
-		 * We don't expect anyone else to modify nextXid, hence startup
-		 * process doesn't need to hold a lock while checking this. We still
-		 * acquire the lock to modify it, though.
-		 */
-		if (TransactionIdFollowsOrEquals(max_xid,
-										 ShmemVariableCache->nextXid))
-		{
-			LWLockAcquire(XidGenLock, LW_EXCLUSIVE);
-			ShmemVariableCache->nextXid = max_xid;
-			TransactionIdAdvance(ShmemVariableCache->nextXid);
-			LWLockRelease(XidGenLock);
-		}
+		AdvanceNextFullTransactionIdPastXid(max_xid);
 	}
 	else if (info == XLOG_MULTIXACT_TRUNCATE_ID)
 	{
@@ -3382,7 +3377,7 @@ pg_get_multixact_members(PG_FUNCTION_ARGS)
 												false);
 		multi->iter = 0;
 
-		tupdesc = CreateTemplateTupleDesc(2, false);
+		tupdesc = CreateTemplateTupleDesc(2);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 1, "xid",
 						   XIDOID, -1, 0);
 		TupleDescInitEntry(tupdesc, (AttrNumber) 2, "mode",

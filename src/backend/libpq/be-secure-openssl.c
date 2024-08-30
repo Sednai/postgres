@@ -4,7 +4,7 @@
  *	  functions for OpenSSL support in the backend.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -66,6 +66,13 @@ static SSL_CTX *SSL_context = NULL;
 static bool SSL_initialized = false;
 static bool dummy_ssl_passwd_cb_called = false;
 static bool ssl_is_server_start;
+
+static int	ssl_protocol_version_to_openssl(int v, const char *guc_name,
+											int loglevel);
+#ifndef SSL_CTX_set_min_proto_version
+static int	SSL_CTX_set_min_proto_version(SSL_CTX *ctx, int version);
+static int	SSL_CTX_set_max_proto_version(SSL_CTX *ctx, int version);
+#endif
 
 
 /* ------------------------------------------------------------ */
@@ -186,11 +193,51 @@ be_tls_init(bool isServerStart)
 		goto error;
 	}
 
-	/* disallow SSL v2/v3 */
-	SSL_CTX_set_options(context, SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3);
+	if (ssl_min_protocol_version)
+	{
+		int			ssl_ver = ssl_protocol_version_to_openssl(ssl_min_protocol_version,
+															  "ssl_min_protocol_version",
+															  isServerStart ? FATAL : LOG);
 
-	/* disallow SSL session tickets */
-#ifdef SSL_OP_NO_TICKET			/* added in OpenSSL 0.9.8f */
+		if (ssl_ver == -1)
+			goto error;
+		if (!SSL_CTX_set_min_proto_version(context, ssl_ver))
+		{
+			ereport(isServerStart ? FATAL : LOG,
+					(errmsg("could not set minimum SSL protocol version")));
+			goto error;
+		}
+	}
+
+	if (ssl_max_protocol_version)
+	{
+		int			ssl_ver = ssl_protocol_version_to_openssl(ssl_max_protocol_version,
+															  "ssl_max_protocol_version",
+															  isServerStart ? FATAL : LOG);
+
+		if (ssl_ver == -1)
+			goto error;
+		if (!SSL_CTX_set_max_proto_version(context, ssl_ver))
+		{
+			ereport(isServerStart ? FATAL : LOG,
+					(errmsg("could not set maximum SSL protocol version")));
+			goto error;
+		}
+	}
+
+	/*
+	 * Disallow SSL session tickets. OpenSSL use both stateful and stateless
+	 * tickets for TLSv1.3, and stateless ticket for TLSv1.2. SSL_OP_NO_TICKET
+	 * is available since 0.9.8f but only turns off stateless tickets. In
+	 * order to turn off stateful tickets we need SSL_CTX_set_num_tickets,
+	 * which is available since OpenSSL 1.1.1. LibreSSL 3.5.4 (from OpenBSD
+	 * 7.1) introduced this API for compatibility, but doesn't support session
+	 * tickets at all so it's a no-op there.
+	 */
+#ifdef HAVE_SSL_CTX_SET_NUM_TICKETS
+	SSL_CTX_set_num_tickets(context, 0);
+#endif
+#ifdef SSL_OP_NO_TICKET                        /* added in OpenSSL 0.9.8f */
 	SSL_CTX_set_options(context, SSL_OP_NO_TICKET);
 #endif
 
@@ -381,6 +428,7 @@ aloop:
 	 * per-thread error queue following another call to an OpenSSL I/O
 	 * routine.
 	 */
+	errno = 0;
 	ERR_clear_error();
 	r = SSL_accept(port->ssl);
 	if (r <= 0)
@@ -409,15 +457,15 @@ aloop:
 				 * StartupPacketTimeoutHandler() which directly exits.
 				 */
 				if (err == SSL_ERROR_WANT_READ)
-					waitfor = WL_SOCKET_READABLE;
+					waitfor = WL_SOCKET_READABLE | WL_EXIT_ON_PM_DEATH;
 				else
-					waitfor = WL_SOCKET_WRITEABLE;
+					waitfor = WL_SOCKET_WRITEABLE | WL_EXIT_ON_PM_DEATH;
 
-				WaitLatchOrSocket(MyLatch, waitfor, port->sock, 0,
-								  WAIT_EVENT_SSL_OPEN_SERVER);
+				(void) WaitLatchOrSocket(MyLatch, waitfor, port->sock, 0,
+										 WAIT_EVENT_SSL_OPEN_SERVER);
 				goto aloop;
 			case SSL_ERROR_SYSCALL:
-				if (r < 0)
+				if (r < 0 && errno != 0)
 					ereport(COMMERROR,
 							(errcode_for_socket_access(),
 							 errmsg("could not accept SSL connection: %m")));
@@ -551,7 +599,7 @@ be_tls_read(Port *port, void *ptr, size_t len, int *waitfor)
 			break;
 		case SSL_ERROR_SYSCALL:
 			/* leave it to caller to ereport the value of errno */
-			if (n != -1)
+			if (n != -1 || errno == 0)
 			{
 				errno = ECONNRESET;
 				n = -1;
@@ -609,8 +657,14 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
 			n = -1;
 			break;
 		case SSL_ERROR_SYSCALL:
-			/* leave it to caller to ereport the value of errno */
-			if (n != -1)
+
+			/*
+			 * Leave it to caller to ereport the value of errno.  However, if
+			 * errno is still zero then assume it's a read EOF situation, and
+			 * report ECONNRESET.  (This seems possible because SSL_write can
+			 * also do reads.)
+			 */
+			if (n != -1 || errno == 0)
 			{
 				errno = ECONNRESET;
 				n = -1;
@@ -663,11 +717,6 @@ be_tls_write(Port *port, void *ptr, size_t len, int *waitfor)
  * to retry; do we need to adopt their logic for that?
  */
 
-#ifndef HAVE_BIO_GET_DATA
-#define BIO_get_data(bio) (bio->ptr)
-#define BIO_set_data(bio, data) (bio->ptr = data)
-#endif
-
 static BIO_METHOD *my_bio_methods = NULL;
 
 static int
@@ -677,7 +726,7 @@ my_sock_read(BIO *h, char *buf, int size)
 
 	if (buf != NULL)
 	{
-		res = secure_raw_read(((Port *) BIO_get_data(h)), buf, size);
+		res = secure_raw_read(((Port *) BIO_get_app_data(h)), buf, size);
 		BIO_clear_retry_flags(h);
 		if (res <= 0)
 		{
@@ -697,7 +746,7 @@ my_sock_write(BIO *h, const char *buf, int size)
 {
 	int			res = 0;
 
-	res = secure_raw_write(((Port *) BIO_get_data(h)), buf, size);
+	res = secure_raw_write(((Port *) BIO_get_app_data(h)), buf, size);
 	BIO_clear_retry_flags(h);
 	if (res <= 0)
 	{
@@ -773,7 +822,7 @@ my_SSL_set_fd(Port *port, int fd)
 		SSLerr(SSL_F_SSL_SET_FD, ERR_R_BUF_LIB);
 		goto err;
 	}
-	BIO_set_data(bio, port);
+	BIO_set_app_data(bio, port);
 
 	BIO_set_fd(bio, fd, BIO_NOCLOSE);
 	SSL_set_bio(port->ssl, bio, bio);
@@ -861,7 +910,7 @@ load_dh_buffer(const char *buffer, size_t len)
 	BIO		   *bio;
 	DH		   *dh = NULL;
 
-	bio = BIO_new_mem_buf((char *) buffer, len);
+	bio = BIO_new_mem_buf(unconstify(char *, buffer), len);
 	if (bio == NULL)
 		return NULL;
 	dh = PEM_read_bio_DHparams(bio, NULL, NULL, NULL);
@@ -975,8 +1024,8 @@ info_cb(const SSL *ssl, int type, int args)
  * precomputed.
  *
  * Since few sites will bother to create a parameter file, we also
- * also provide a fallback to the parameters provided by the
- * OpenSSL project.
+ * provide a fallback to the parameters provided by the OpenSSL
+ * project.
  *
  * These values can be static (once loaded or computed) since the
  * OpenSSL library can efficiently generate random keys from the
@@ -1058,9 +1107,9 @@ initialize_ecdh(SSL_CTX *context, bool isServerStart)
  *
  * ERR_get_error() is used by caller to get errcode to pass here.
  *
- * Some caution is needed here since ERR_reason_error_string will
- * return NULL if it doesn't recognize the error code.  We don't
- * want to return NULL ever.
+ * Some caution is needed here since ERR_reason_error_string will return NULL
+ * if it doesn't recognize the error code, or (in OpenSSL >= 3) if the code
+ * represents a system errno value.  We don't want to return NULL ever.
  */
 static const char *
 SSLerrmessage(unsigned long ecode)
@@ -1073,6 +1122,20 @@ SSLerrmessage(unsigned long ecode)
 	errreason = ERR_reason_error_string(ecode);
 	if (errreason != NULL)
 		return errreason;
+
+	/*
+	 * In OpenSSL 3.0.0 and later, ERR_reason_error_string does not map system
+	 * errno values anymore.  (See OpenSSL source code for the explanation.)
+	 * We can cover that shortcoming with this bit of code.  Older OpenSSL
+	 * versions don't have the ERR_SYSTEM_ERROR macro, but that's okay because
+	 * they don't have the shortcoming either.
+	 */
+#ifdef ERR_SYSTEM_ERROR
+	if (ERR_SYSTEM_ERROR(ecode))
+		return strerror(ERR_GET_REASON(ecode));
+#endif
+
+	/* No choice but to report the numeric ecode */
 	snprintf(errbuf, sizeof(errbuf), _("SSL error code %lu"), ecode);
 	return errbuf;
 }
@@ -1119,10 +1182,40 @@ be_tls_get_cipher(Port *port)
 }
 
 void
-be_tls_get_peerdn_name(Port *port, char *ptr, size_t len)
+be_tls_get_peer_subject_name(Port *port, char *ptr, size_t len)
 {
 	if (port->peer)
 		strlcpy(ptr, X509_NAME_to_cstring(X509_get_subject_name(port->peer)), len);
+	else
+		ptr[0] = '\0';
+}
+
+void
+be_tls_get_peer_issuer_name(Port *port, char *ptr, size_t len)
+{
+	if (port->peer)
+		strlcpy(ptr, X509_NAME_to_cstring(X509_get_issuer_name(port->peer)), len);
+	else
+		ptr[0] = '\0';
+}
+
+void
+be_tls_get_peer_serial(Port *port, char *ptr, size_t len)
+{
+	if (port->peer)
+	{
+		ASN1_INTEGER *serial;
+		BIGNUM	   *b;
+		char	   *decimal;
+
+		serial = X509_get_serialNumber(port->peer);
+		b = ASN1_INTEGER_to_BN(serial, NULL);
+		decimal = BN_bn2dec(b);
+
+		BN_free(b);
+		strlcpy(ptr, decimal, len);
+		OPENSSL_free(decimal);
+	}
 	else
 		ptr[0] = '\0';
 }
@@ -1236,3 +1329,143 @@ X509_NAME_to_cstring(X509_NAME *name)
 
 	return result;
 }
+
+/*
+ * Convert TLS protocol version GUC enum to OpenSSL values
+ *
+ * This is a straightforward one-to-one mapping, but doing it this way makes
+ * guc.c independent of OpenSSL availability and version.
+ *
+ * If a version is passed that is not supported by the current OpenSSL
+ * version, then we log with the given loglevel and return (if we return) -1.
+ * If a nonnegative value is returned, subsequent code can assume it's working
+ * with a supported version.
+ */
+static int
+ssl_protocol_version_to_openssl(int v, const char *guc_name, int loglevel)
+{
+	switch (v)
+	{
+		case PG_TLS_ANY:
+			return 0;
+		case PG_TLS1_VERSION:
+			return TLS1_VERSION;
+		case PG_TLS1_1_VERSION:
+#ifdef TLS1_1_VERSION
+			return TLS1_1_VERSION;
+#else
+			break;
+#endif
+		case PG_TLS1_2_VERSION:
+#ifdef TLS1_2_VERSION
+			return TLS1_2_VERSION;
+#else
+			break;
+#endif
+		case PG_TLS1_3_VERSION:
+#ifdef TLS1_3_VERSION
+			return TLS1_3_VERSION;
+#else
+			break;
+#endif
+	}
+
+	ereport(loglevel,
+			(errmsg("%s setting %s not supported by this build",
+					guc_name,
+					GetConfigOption(guc_name, false, false))));
+	return -1;
+}
+
+/*
+ * Replacements for APIs present in newer versions of OpenSSL
+ */
+#ifndef SSL_CTX_set_min_proto_version
+
+/*
+ * OpenSSL versions that support TLS 1.3 shouldn't get here because they
+ * already have these functions.  So we don't have to keep updating the below
+ * code for every new TLS version, and eventually it can go away.  But let's
+ * just check this to make sure ...
+ */
+#ifdef TLS1_3_VERSION
+#error OpenSSL version mismatch
+#endif
+
+static int
+SSL_CTX_set_min_proto_version(SSL_CTX *ctx, int version)
+{
+	int			ssl_options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+
+	if (version > TLS1_VERSION)
+		ssl_options |= SSL_OP_NO_TLSv1;
+	/*
+	 * Some OpenSSL versions define TLS*_VERSION macros but not the
+	 * corresponding SSL_OP_NO_* macro, so in those cases we have to return
+	 * unsuccessfully here.
+	 */
+#ifdef TLS1_1_VERSION
+	if (version > TLS1_1_VERSION)
+	{
+#ifdef SSL_OP_NO_TLSv1_1
+		ssl_options |= SSL_OP_NO_TLSv1_1;
+#else
+		return 0;
+#endif
+	}
+#endif
+#ifdef TLS1_2_VERSION
+	if (version > TLS1_2_VERSION)
+	{
+#ifdef SSL_OP_NO_TLSv1_2
+		ssl_options |= SSL_OP_NO_TLSv1_2;
+#else
+		return 0;
+#endif
+	}
+#endif
+
+	SSL_CTX_set_options(ctx, ssl_options);
+
+	return 1;					/* success */
+}
+
+static int
+SSL_CTX_set_max_proto_version(SSL_CTX *ctx, int version)
+{
+	int			ssl_options = 0;
+
+	AssertArg(version != 0);
+
+	/*
+	 * Some OpenSSL versions define TLS*_VERSION macros but not the
+	 * corresponding SSL_OP_NO_* macro, so in those cases we have to return
+	 * unsuccessfully here.
+	 */
+#ifdef TLS1_1_VERSION
+	if (version < TLS1_1_VERSION)
+	{
+#ifdef SSL_OP_NO_TLSv1_1
+		ssl_options |= SSL_OP_NO_TLSv1_1;
+#else
+		return 0;
+#endif
+	}
+#endif
+#ifdef TLS1_2_VERSION
+	if (version < TLS1_2_VERSION)
+	{
+#ifdef SSL_OP_NO_TLSv1_2
+		ssl_options |= SSL_OP_NO_TLSv1_2;
+#else
+		return 0;
+#endif
+	}
+#endif
+
+	SSL_CTX_set_options(ctx, ssl_options);
+
+	return 1;					/* success */
+}
+
+#endif							/* !SSL_CTX_set_min_proto_version */

@@ -101,6 +101,7 @@ use RecursiveCopy;
 use Socket;
 use Test::More;
 use TestLib ();
+use PostgreSQL::Test::BackgroundPsql ();
 use Time::HiRes qw(usleep);
 use Scalar::Util qw(blessed);
 
@@ -115,13 +116,13 @@ our ($use_tcp, $test_localhost, $test_pghost, $last_host_assigned,
 # list of file reservations made by get_free_port
 my @port_reservation_files;
 
-# For backward compatibility only.
-our $vfs_path = '';
-if ($Config{osname} eq 'msys')
-{
-	$vfs_path = `cd / && pwd -W`;
-	chomp $vfs_path;
-}
+# We want to choose a server port above the range that servers typically use
+# on Unix systems and below the range those systems typically use for ephemeral
+# client ports.
+# That way we minimize the risk of getting a port collision. These two values
+# are chosen to reflect that. We will always choose a port in this range.
+my $port_lower_bound = 10200;
+my $port_upper_bound = 32767;
 
 INIT
 {
@@ -136,7 +137,8 @@ INIT
 	$ENV{PGDATABASE}    = 'postgres';
 
 	# Tracking of last port value assigned to accelerate free port lookup.
-	$last_port_assigned = int(rand() * 16384) + 49152;
+	my $num_ports = $port_upper_bound - $port_lower_bound;
+	$last_port_assigned = int(rand() * $num_ports) + $port_lower_bound;
 
 	# Set the port lock directory
 
@@ -512,7 +514,7 @@ sub init
 		print $conf "hot_standby = on\n";
 		# conservative settings to ensure we can run multiple postmasters:
 		print $conf "shared_buffers = 1MB\n";
-		print $conf "max_connections = 20\n";
+		print $conf "max_connections = 10\n";
 		# limit disk space consumption, too:
 		print $conf "max_wal_size = 128MB\n";
 	}
@@ -691,8 +693,6 @@ of a backup previously created on that node with $node->backup.
 
 Does not start the node after initializing it.
 
-A recovery.conf is not created.
-
 Streaming replication can be enabled on this node by passing the keyword
 parameter has_streaming => 1. This is disabled by default.
 
@@ -794,10 +794,24 @@ sub start
 	my $port   = $self->port;
 	my $pgdata = $self->data_dir;
 	my $name   = $self->name;
+	my $ret;
+
 	BAIL_OUT("node \"$name\" is already running") if defined $self->{_pid};
+
 	print("### Starting node \"$name\"\n");
-	my $ret = TestLib::system_log('pg_ctl', '-D', $self->data_dir, '-l',
-		$self->logfile, 'start');
+
+	{
+		# Temporarily unset PGAPPNAME so that the server doesn't
+		# inherit it.  Otherwise this could affect libpqwalreceiver
+		# connections in confusing ways.
+		local %ENV = %ENV;
+		delete $ENV{PGAPPNAME};
+
+		# Note: We set the cluster_name here, not in postgresql.conf (in
+		# sub init) so that it does not get copied to standbys.
+		$ret = TestLib::system_log('pg_ctl', '-D', $self->data_dir, '-l',
+			$self->logfile, '-o', "--cluster-name=$name", 'start');
+	}
 
 	if ($ret != 0)
 	{
@@ -916,9 +930,17 @@ sub restart
 	my $pgdata  = $self->data_dir;
 	my $logfile = $self->logfile;
 	my $name    = $self->name;
+
 	print "### Restarting node \"$name\"\n";
-	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-l', $logfile,
-		'restart');
+
+	{
+		local %ENV = %ENV;
+		delete $ENV{PGAPPNAME};
+
+		TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-l', $logfile,
+			'restart');
+	}
+
 	$self->_update_pid(1);
 	return;
 }
@@ -944,6 +966,27 @@ sub promote
 	return;
 }
 
+=pod
+
+=item $node->logrotate()
+
+Wrapper for pg_ctl logrotate
+
+=cut
+
+sub logrotate
+{
+	my ($self)  = @_;
+	my $port    = $self->port;
+	my $pgdata  = $self->data_dir;
+	my $logfile = $self->logfile;
+	my $name    = $self->name;
+	print "### Rotating log in node \"$name\"\n";
+	TestLib::system_or_bail('pg_ctl', '-D', $pgdata, '-l', $logfile,
+		'logrotate');
+	return;
+}
+
 # Internal routine to enable streaming replication on a standby node.
 sub enable_streaming
 {
@@ -953,10 +996,10 @@ sub enable_streaming
 
 	print "### Enabling streaming replication for node \"$name\"\n";
 	$self->append_conf(
-		'recovery.conf', qq(
-primary_conninfo='$root_connstr application_name=$name'
-standby_mode=on
+		'postgresql.conf', qq(
+primary_conninfo='$root_connstr'
 ));
+	$self->set_standby_mode();
 	return;
 }
 
@@ -982,10 +1025,26 @@ sub enable_restoring
 	  : qq{cp "$path/%f" "%p"};
 
 	$self->append_conf(
-		'recovery.conf', qq(
+		'postgresql.conf', qq(
 restore_command = '$copy_command'
-standby_mode = on
 ));
+	$self->set_standby_mode();
+	return;
+}
+
+=pod
+
+=item $node->set_standby_mode()
+
+Place standby.signal file.
+
+=cut
+
+sub set_standby_mode
+{
+	my ($self) = @_;
+
+	$self->append_conf('standby.signal', '');
 	return;
 }
 
@@ -1164,7 +1223,7 @@ sub get_free_port
 	{
 
 		# advance $port, wrapping correctly around range end
-		$port = 49152 if ++$port >= 65536;
+		$port = $port_lower_bound if ++$port > $port_upper_bound;
 		print "# Checking port $port\n";
 
 		# Check first that candidate port number is not included in
@@ -1578,18 +1637,9 @@ sub psql
 
 =pod
 
-=item $node->background_psql($dbname, \$stdin, \$stdout, $timer, %params) => harness
+=item $node->background_psql($dbname, %params) => PostgreSQL::Test::BackgroundPsql instance
 
-Invoke B<psql> on B<$dbname> and return an IPC::Run harness object, which the
-caller may use to send input to B<psql>.  The process's stdin is sourced from
-the $stdin scalar reference, and its stdout and stderr go to the $stdout
-scalar reference.  This allows the caller to act on other parts of the system
-while idling this backend.
-
-The specified timer object is attached to the harness, as well.  It's caller's
-responsibility to set the timeout length (usually
-$TestLib::timeout_default), and to restart the timer after
-each command if the timeout is per-command.
+Invoke B<psql> on B<$dbname> and return a BackgroundPsql object.
 
 psql is invoked in tuples-only unaligned mode with reading of B<.psqlrc>
 disabled.  That may be overridden by passing extra psql parameters.
@@ -1598,7 +1648,7 @@ Dies on failure to invoke psql, or if psql fails to connect.  Errors occurring
 later are the caller's problem.  psql runs with on_error_stop by default so
 that it will stop running sql and return 3 if passed SQL results in an error.
 
-Be sure to "finish" the harness when done with it.
+Be sure to "quit" the returned object when done with it.
 
 =over
 
@@ -1607,6 +1657,11 @@ Be sure to "finish" the harness when done with it.
 By default, the B<psql> method invokes the B<psql> program with ON_ERROR_STOP=1
 set, so SQL execution is stopped at the first error and exit code 3 is
 returned.  Set B<on_error_stop> to 0 to ignore errors instead.
+
+=item timeout => 'interval'
+
+Set a timeout for a background psql session. By default, timeout of
+$PostgreSQL::Test::Utils::timeout_default is set up.
 
 =item replication => B<value>
 
@@ -1624,12 +1679,13 @@ If given, it must be an array reference containing additional parameters to B<ps
 
 sub background_psql
 {
-	my ($self, $dbname, $stdin, $stdout, $timer, %params) = @_;
+	my ($self, $dbname, %params) = @_;
 
 	local $ENV{PGHOST} = $self->host;
 	local $ENV{PGPORT} = $self->port;
 
 	my $replication = $params{replication};
+	my $timeout = undef;
 
 	my @psql_params = (
 		'psql',
@@ -1641,30 +1697,54 @@ sub background_psql
 		'-');
 
 	$params{on_error_stop} = 1 unless defined $params{on_error_stop};
+	$timeout = $params{timeout} if defined $params{timeout};
 
 	push @psql_params, '-v', 'ON_ERROR_STOP=1' if $params{on_error_stop};
 	push @psql_params, @{ $params{extra_params} }
 	  if defined $params{extra_params};
 
-	# Ensure there is no data waiting to be sent:
-	$$stdin = "" if ref($stdin);
-	# IPC::Run would otherwise append to existing contents:
-	$$stdout = "" if ref($stdout);
+	return PostgreSQL::Test::BackgroundPsql->new(0, \@psql_params, $timeout);
+}
 
-	my $harness = IPC::Run::start \@psql_params,
-	  '<', $stdin, '>', $stdout, $timer;
+=pod
 
-	# Request some output, and pump until we see it.  This means that psql
-	# connection failures are caught here, relieving callers of the need to
-	# handle those.  (Right now, we have no particularly good handling for
-	# errors anyway, but that might be added later.)
-	my $banner = "background_psql: ready";
-	$$stdin = "\\echo $banner\n";
-	pump $harness until $$stdout =~ /$banner/ || $timer->is_expired;
+=item $node->interactive_psql($dbname, %params) => BackgroundPsql instance
 
-	die "psql startup timed out" if $timer->is_expired;
+Invoke B<psql> on B<$dbname> and return a BackgroundPsql object, which the
+caller may use to send interactive input to B<psql>.
 
-	return $harness;
+A timeout of $PostgreSQL::Test::Utils::timeout_default is set up.
+
+psql is invoked in tuples-only unaligned mode with reading of B<.psqlrc>
+disabled.  That may be overridden by passing extra psql parameters.
+
+Dies on failure to invoke psql, or if psql fails to connect.
+Errors occurring later are the caller's problem.
+
+Be sure to "quit" the returned object when done with it.
+
+=over
+
+=item extra_params => ['--single-transaction']
+
+If given, it must be an array reference containing additional parameters to B<psql>.
+
+=back
+
+This requires IO::Pty in addition to IPC::Run.
+
+=cut
+
+sub interactive_psql
+{
+	my ($self, $dbname, %params) = @_;
+
+	my @psql_params = ('psql', '-XAt', '-d', $self->connstr($dbname));
+
+	push @psql_params, @{ $params{extra_params} }
+	  if defined $params{extra_params};
+
+	return PostgreSQL::Test::BackgroundPsql->new(1, \@psql_params);
 }
 
 # Common sub of pgbench-invoking interfaces.  Makes any requested script files
@@ -1755,55 +1835,6 @@ sub pgbench
 
 =pod
 
-=item $node->background_pgbench($opts, $files, \$stdout, $timer) => harness
-
-Invoke B<pgbench> and return an IPC::Run harness object.  The process's stdin
-is empty, and its stdout and stderr go to the $stdout scalar reference.  This
-allows the caller to act on other parts of the system while B<pgbench> is
-running.  Errors from B<pgbench> are the caller's problem.
-
-The specified timer object is attached to the harness, as well.  It's caller's
-responsibility to select the timeout length, and to restart the timer after
-each command if the timeout is per-command.
-
-Be sure to "finish" the harness when done with it.
-
-=over
-
-=item $opts
-
-Options as a string to be split on spaces.
-
-=item $files
-
-Reference to filename/contents dictionary.
-
-=back
-
-=cut
-
-sub background_pgbench
-{
-	my ($self, $opts, $files, $stdout, $timer) = @_;
-
-	my @cmd =
-	  ('pgbench', split(/\s+/, $opts), $self->_pgbench_make_files($files));
-
-	local $ENV{PGHOST} = $self->host;
-	local $ENV{PGPORT} = $self->port;
-
-	my $stdin = "";
-	# IPC::Run would otherwise append to existing contents:
-	$$stdout = "" if ref($stdout);
-
-	my $harness = IPC::Run::start \@cmd, '<', \$stdin, '>', $stdout, '2>&1',
-	  $timer;
-
-	return $harness;
-}
-
-=pod
-
 =item $node->poll_query_until($dbname, $query [, $expected ])
 
 Run B<$query> repeatedly, until it returns the B<$expected> result
@@ -1868,6 +1899,8 @@ so that the command will default to connecting to this PostgresNode.
 
 sub command_ok
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGHOST} = $self->host;
@@ -1887,6 +1920,8 @@ TestLib::command_fails with our connection parameters. See command_ok(...)
 
 sub command_fails
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGHOST} = $self->host;
@@ -1906,6 +1941,8 @@ TestLib::command_like with our connection parameters. See command_ok(...)
 
 sub command_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGHOST} = $self->host;
@@ -1926,6 +1963,8 @@ command_ok(...)
 
 sub command_checks_all
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my $self = shift;
 
 	local $ENV{PGHOST} = $self->host;
@@ -1946,6 +1985,8 @@ server log file.
 
 sub issues_sql_like
 {
+	local $Test::Builder::Level = $Test::Builder::Level + 1;
+
 	my ($self, $cmd, $expected_sql, $test_name) = @_;
 
 	local $ENV{PGHOST} = $self->host;

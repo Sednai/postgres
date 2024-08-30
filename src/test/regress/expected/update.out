@@ -229,6 +229,29 @@ INSERT INTO upsert_test VALUES (1, 'Bat'), (3, 'Zot') ON CONFLICT(a)
  3 | Zoo, Correlated, Excluded
 (2 rows)
 
+-- ON CONFLICT using system attributes in RETURNING, testing both the
+-- inserting and updating paths. See bug report at:
+-- https://www.postgresql.org/message-id/73436355-6432-49B1-92ED-1FE4F7E7E100%40finefun.com.au
+CREATE FUNCTION xid_current() RETURNS xid LANGUAGE SQL AS $$SELECT (txid_current() % ((1::int8<<32)))::text::xid;$$;
+INSERT INTO upsert_test VALUES (2, 'Beeble') ON CONFLICT(a)
+  DO UPDATE SET (b, a) = (SELECT b || ', Excluded', a from upsert_test i WHERE i.a = excluded.a)
+  RETURNING tableoid::regclass, xmin = xid_current() AS xmin_correct, xmax = 0 AS xmax_correct;
+  tableoid   | xmin_correct | xmax_correct 
+-------------+--------------+--------------
+ upsert_test | t            | t
+(1 row)
+
+-- currently xmax is set after a conflict - that's probably not good,
+-- but it seems worthwhile to have to be explicit if that changes.
+INSERT INTO upsert_test VALUES (2, 'Brox') ON CONFLICT(a)
+  DO UPDATE SET (b, a) = (SELECT b || ', Excluded', a from upsert_test i WHERE i.a = excluded.a)
+  RETURNING tableoid::regclass, xmin = xid_current() AS xmin_correct, xmax = xid_current() AS xmax_correct;
+  tableoid   | xmin_correct | xmax_correct 
+-------------+--------------+--------------
+ upsert_test | t            | t
+(1 row)
+
+DROP FUNCTION xid_current();
 DROP TABLE update_test;
 DROP TABLE upsert_test;
 -- Test ON CONFLICT DO UPDATE with partitioned table and non-identical children
@@ -844,6 +867,59 @@ DETAIL:  Failing row contains (a, 10).
 -- ok
 UPDATE list_default set a = 'x' WHERE a = 'd';
 DROP TABLE list_parted;
+-- Test retrieval of system columns with non-consistent partition row types.
+-- This is only partially supported, as seen in the results.
+create table utrtest (a int, b text) partition by list (a);
+create table utr1 (a int check (a in (1)), q text, b text);
+create table utr2 (a int check (a in (2)), b text);
+alter table utr1 drop column q;
+alter table utrtest attach partition utr1 for values in (1);
+alter table utrtest attach partition utr2 for values in (2);
+insert into utrtest values (1, 'foo')
+  returning *, tableoid::regclass, cmin;
+ a |  b  | tableoid | cmin 
+---+-----+----------+------
+ 1 | foo | utr1     |    0
+(1 row)
+
+insert into utrtest values (2, 'bar')
+  returning *, tableoid::regclass, cmin;  -- fails
+ERROR:  cannot retrieve a system column in this context
+insert into utrtest values (2, 'bar')
+  returning *, tableoid::regclass;
+ a |  b  | tableoid 
+---+-----+----------
+ 2 | bar | utr2
+(1 row)
+
+update utrtest set b = b || b from (values (1), (2)) s(x) where a = s.x
+  returning *, tableoid::regclass, cmin;
+ a |   b    | x | tableoid | cmin 
+---+--------+---+----------+------
+ 1 | foofoo | 1 | utr1     |    0
+ 2 | barbar | 2 | utr2     |    0
+(2 rows)
+
+update utrtest set a = 3 - a from (values (1), (2)) s(x) where a = s.x
+  returning *, tableoid::regclass, cmin;  -- fails
+ERROR:  cannot retrieve a system column in this context
+update utrtest set a = 3 - a from (values (1), (2)) s(x) where a = s.x
+  returning *, tableoid::regclass;
+ a |   b    | x | tableoid 
+---+--------+---+----------
+ 2 | foofoo | 1 | utr2
+ 1 | barbar | 2 | utr1
+(2 rows)
+
+delete from utrtest
+  returning *, tableoid::regclass, cmin;
+ a |   b    | tableoid | cmin 
+---+--------+----------+------
+ 1 | barbar | utr1     |    0
+ 2 | foofoo | utr2     |    0
+(2 rows)
+
+drop table utrtest;
 --------------
 -- Some more update-partition-key test scenarios below. This time use list
 -- partitions.

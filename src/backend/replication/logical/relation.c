@@ -2,7 +2,7 @@
  * relation.c
  *	   PostgreSQL logical replication
  *
- * Copyright (c) 2016-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/relation.c
@@ -16,8 +16,8 @@
 
 #include "postgres.h"
 
-#include "access/heapam.h"
-#include "access/sysattr.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_subscription_rel.h"
 #include "executor/executor.h"
@@ -241,7 +241,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 		else if (!entry->localrelvalid)
 		{
 			/* Note we release the no-longer-useful lock here. */
-			heap_close(entry->localrel, lockmode);
+			table_close(entry->localrel, lockmode);
 			entry->localrel = NULL;
 		}
 	}
@@ -275,7 +275,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
 					 errmsg("logical replication target relation \"%s.%s\" does not exist",
 							remoterel->nspname, remoterel->relname)));
-		entry->localrel = heap_open(relid, NoLock);
+		entry->localrel = table_open(relid, NoLock);
 		entry->localreloid = relid;
 
 		/* Check for supported relkind. */
@@ -298,7 +298,7 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 			int			attnum;
 			Form_pg_attribute attr = TupleDescAttr(desc, i);
 
-			if (attr->attisdropped)
+			if (attr->attisdropped || attr->attgenerated)
 			{
 				entry->attrmap[i] = -1;
 				continue;
@@ -388,6 +388,6 @@ logicalrep_rel_open(LogicalRepRelId remoteid, LOCKMODE lockmode)
 void
 logicalrep_rel_close(LogicalRepRelMapEntry *rel, LOCKMODE lockmode)
 {
-	heap_close(rel->localrel, lockmode);
+	table_close(rel->localrel, lockmode);
 	rel->localrel = NULL;
 }

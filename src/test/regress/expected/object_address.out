@@ -44,8 +44,9 @@ ALTER DEFAULT PRIVILEGES FOR ROLE regress_addr_user REVOKE DELETE ON TABLES FROM
 CREATE TRANSFORM FOR int LANGUAGE SQL (
 	FROM SQL WITH FUNCTION prsd_lextype(internal),
 	TO SQL WITH FUNCTION int4recv(internal));
--- CREATE PUBLICATION addr_pub FOR TABLE addr_nsp.gentable;
--- CREATE SUBSCRIPTION addr_sub CONNECTION '' PUBLICATION bar WITH (connect = false, slot_name = NONE);
+CREATE PUBLICATION addr_pub FOR TABLE addr_nsp.gentable;
+CREATE SUBSCRIPTION regress_addr_sub CONNECTION '' PUBLICATION bar WITH (connect = false, slot_name = NONE);
+WARNING:  tables were not subscribed, you will have to run ALTER SUBSCRIPTION ... REFRESH PUBLICATION to subscribe the tables
 CREATE STATISTICS addr_nsp.gentable_stat ON a, b FROM addr_nsp.gentable;
 -- test some error cases
 SELECT pg_get_object_address('stone', '{}', '{}');
@@ -491,5 +492,19 @@ SELECT (pg_identify_object(addr1.classid, addr1.objid, addr1.objsubid)).*,
 -- DROP SUBSCRIPTION addr_sub;
 DROP SCHEMA addr_nsp CASCADE;
 NOTICE:  drop cascades to 14 other objects
+DETAIL:  drop cascades to text search dictionary addr_ts_dict
+drop cascades to text search configuration addr_ts_conf
+drop cascades to text search template addr_ts_temp
+drop cascades to text search parser addr_ts_prs
+drop cascades to table gentable
+drop cascades to table parttable
+drop cascades to view genview
+drop cascades to materialized view genmatview
+drop cascades to type gencomptype
+drop cascades to type genenum
+drop cascades to function genaggr(integer)
+drop cascades to type gendomain
+drop cascades to function trig()
+drop cascades to function proc(integer)
 DROP OWNED BY regress_addr_user;
 DROP USER regress_addr_user;

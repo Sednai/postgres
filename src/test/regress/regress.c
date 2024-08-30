@@ -6,7 +6,7 @@
  *
  * This code is released under the terms of the PostgreSQL License.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/test/regress/regress.c
@@ -16,7 +16,6 @@
 
 #include "postgres.h"
 
-#include <float.h>
 #include <math.h>
 #include <signal.h>
 
@@ -24,12 +23,16 @@
 #include "access/transam.h"
 #include "access/tuptoaster.h"
 #include "access/xact.h"
+#include "catalog/pg_operator.h"
 #include "catalog/pg_type.h"
 #include "commands/sequence.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
 #include "executor/spi.h"
 #include "miscadmin.h"
+#include "nodes/supportnodes.h"
+#include "optimizer/optimizer.h"
+#include "optimizer/plancat.h"
 #include "port/atomics.h"
 #include "storage/spin.h"
 #include "utils/builtins.h"
@@ -178,8 +181,8 @@ widget_in(PG_FUNCTION_ARGS)
 	if (i < NARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_TEXT_REPRESENTATION),
-				 errmsg("invalid input syntax for type widget: \"%s\"",
-						str)));
+				 errmsg("invalid input syntax for type %s: \"%s\"",
+						"widget", str)));
 
 	result = (WIDGET *) palloc(sizeof(WIDGET));
 	result->center.x = atof(coord[0]);
@@ -206,8 +209,13 @@ pt_in_widget(PG_FUNCTION_ARGS)
 {
 	Point	   *point = PG_GETARG_POINT_P(0);
 	WIDGET	   *widget = (WIDGET *) PG_GETARG_POINTER(1);
+	float8		distance;
 
-	PG_RETURN_BOOL(point_dt(point, &widget->center) < widget->radius);
+	distance = DatumGetFloat8(DirectFunctionCall2(point_distance,
+												  PointPGetDatum(point),
+												  PointPGetDatum(&widget->center)));
+
+	PG_RETURN_BOOL(distance < widget->radius);
 }
 
 PG_FUNCTION_INFO_V1(reverse_name);
@@ -863,22 +871,20 @@ test_spinlock(void)
 	 */
 #ifndef HAVE_SPINLOCKS
 	{
-		uint32	i;
-
 		/*
 		 * Initialize enough spinlocks to advance counter close to
 		 * wraparound. It's too expensive to perform acquire/release for each,
 		 * as those may be syscalls when the spinlock emulation is used (and
 		 * even just atomic TAS would be expensive).
 		 */
-		for (i = 0; i < INT32_MAX - 100000; i++)
+		for (uint32 i = 0; i < INT32_MAX - 100000; i++)
 		{
 			slock_t lock;
 
 			SpinLockInit(&lock);
 		}
 
-		for (i = 0; i < 200000; i++)
+		for (uint32 i = 0; i < 200000; i++)
 		{
 			slock_t lock;
 
@@ -914,18 +920,17 @@ test_atomic_spin_nest(void)
 #define NUM_TEST_ATOMICS (NUM_SPINLOCK_SEMAPHORES + NUM_ATOMICS_SEMAPHORES + 27)
 	pg_atomic_uint32 atomics32[NUM_TEST_ATOMICS];
 	pg_atomic_uint64 atomics64[NUM_TEST_ATOMICS];
-	int		i;
 
 	SpinLockInit(&lock);
 
-	for (i = 0; i < NUM_TEST_ATOMICS; i++)
+	for (int i = 0; i < NUM_TEST_ATOMICS; i++)
 	{
 		pg_atomic_init_u32(&atomics32[i], 0);
 		pg_atomic_init_u64(&atomics64[i], 0);
 	}
 
 	/* just so it's not all zeroes */
-	for (i = 0; i < NUM_TEST_ATOMICS; i++)
+	for (int i = 0; i < NUM_TEST_ATOMICS; i++)
 	{
 		EXPECT_EQ_U32(pg_atomic_fetch_add_u32(&atomics32[i], i), 0);
 		EXPECT_EQ_U64(pg_atomic_fetch_add_u64(&atomics64[i], i), 0);
@@ -933,7 +938,7 @@ test_atomic_spin_nest(void)
 
 	/* test whether we can do atomic op with lock held */
 	SpinLockAcquire(&lock);
-	for (i = 0; i < NUM_TEST_ATOMICS; i++)
+	for (int i = 0; i < NUM_TEST_ATOMICS; i++)
 	{
 		EXPECT_EQ_U32(pg_atomic_fetch_sub_u32(&atomics32[i], i), i);
 		EXPECT_EQ_U32(pg_atomic_read_u32(&atomics32[i]), 0);
@@ -971,4 +976,77 @@ test_fdw_handler(PG_FUNCTION_ARGS)
 {
 	elog(ERROR, "test_fdw_handler is not implemented");
 	PG_RETURN_NULL();
+}
+
+PG_FUNCTION_INFO_V1(test_support_func);
+Datum
+test_support_func(PG_FUNCTION_ARGS)
+{
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
+	Node	   *ret = NULL;
+
+	if (IsA(rawreq, SupportRequestSelectivity))
+	{
+		/*
+		 * Assume that the target is int4eq; that's safe as long as we don't
+		 * attach this to any other boolean-returning function.
+		 */
+		SupportRequestSelectivity *req = (SupportRequestSelectivity *) rawreq;
+		Selectivity s1;
+
+		if (req->is_join)
+			s1 = join_selectivity(req->root, Int4EqualOperator,
+								  req->args,
+								  req->inputcollid,
+								  req->jointype,
+								  req->sjinfo);
+		else
+			s1 = restriction_selectivity(req->root, Int4EqualOperator,
+										 req->args,
+										 req->inputcollid,
+										 req->varRelid);
+
+		req->selectivity = s1;
+		ret = (Node *) req;
+	}
+
+	if (IsA(rawreq, SupportRequestCost))
+	{
+		/* Provide some generic estimate */
+		SupportRequestCost *req = (SupportRequestCost *) rawreq;
+
+		req->startup = 0;
+		req->per_tuple = 2 * cpu_operator_cost;
+		ret = (Node *) req;
+	}
+
+	if (IsA(rawreq, SupportRequestRows))
+	{
+		/*
+		 * Assume that the target is generate_series_int4; that's safe as long
+		 * as we don't attach this to any other set-returning function.
+		 */
+		SupportRequestRows *req = (SupportRequestRows *) rawreq;
+
+		if (req->node && IsA(req->node, FuncExpr))	/* be paranoid */
+		{
+			List	   *args = ((FuncExpr *) req->node)->args;
+			Node	   *arg1 = linitial(args);
+			Node	   *arg2 = lsecond(args);
+
+			if (IsA(arg1, Const) &&
+				!((Const *) arg1)->constisnull &&
+				IsA(arg2, Const) &&
+				!((Const *) arg2)->constisnull)
+			{
+				int32		val1 = DatumGetInt32(((Const *) arg1)->constvalue);
+				int32		val2 = DatumGetInt32(((Const *) arg2)->constvalue);
+
+				req->rows = val2 - val1 + 1;
+				ret = (Node *) req;
+			}
+		}
+	}
+
+	PG_RETURN_POINTER(ret);
 }

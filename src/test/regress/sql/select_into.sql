@@ -85,15 +85,16 @@ DROP TABLE ctas_nodata_4;
 CREATE TABLE created_table AS SELECT * FROM int8_tbl;
 SELECT * FROM created_table ORDER BY 1,2;
 
--- Try EXPLAIN ANALYZE SELECT INTO, but hide the output since it won't
--- be stable.
+-- Try EXPLAIN ANALYZE SELECT INTO and EXPLAIN ANALYZE CREATE TABLE AS
+-- WITH NO DATA, but hide the outputs since they won't be stable.
 DO $$
 BEGIN
 	EXECUTE 'EXPLAIN ANALYZE SELECT * INTO TABLE easi FROM int8_tbl';
+	EXECUTE 'EXPLAIN ANALYZE CREATE TABLE easi2 AS SELECT * FROM int8_tbl WITH NO DATA';
 END$$;
 
 DROP TABLE created_table;
-DROP TABLE easi;
+DROP TABLE easi, easi2;
 
 --
 -- Disallowed uses of SELECT ... INTO.  All should fail

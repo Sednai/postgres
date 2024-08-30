@@ -28,6 +28,7 @@ print $conf "fsync = off\n";
 print $conf "port = $node_port\n";
 print $conf TestLib::slurp_file($ENV{TEMP_CONFIG})
   if defined $ENV{TEMP_CONFIG};
+
 if (!$windows_os)
 {
 	print $conf "listen_addresses = ''\n";
@@ -77,7 +78,8 @@ $logFileName = "$tempdir/data/perm-test-640.log";
 
 SKIP:
 {
-	skip "group access not supported on Windows", 3 if ($windows_os);
+	skip "group access not supported on Windows", 3
+	  if ($windows_os || $Config::Config{osname} eq 'cygwin');
 
 	system_or_bail 'pg_ctl', 'stop', '-D', "$tempdir/data";
 

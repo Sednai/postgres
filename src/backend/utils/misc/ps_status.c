@@ -7,7 +7,7 @@
  *
  * src/backend/utils/misc/ps_status.c
  *
- * Copyright (c) 2000-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2019, PostgreSQL Global Development Group
  * various details abducted from various places
  *--------------------------------------------------------------------
  */
@@ -38,6 +38,9 @@ bool		update_process_title = true;
 /*
  * Alternative ways of updating ps display:
  *
+ * PS_USE_SETPROCTITLE_FAST
+ *	   use the function setproctitle_fast(const char *, ...)
+ *	   (newer FreeBSD systems)
  * PS_USE_SETPROCTITLE
  *	   use the function setproctitle(const char *, ...)
  *	   (newer BSD systems)
@@ -59,7 +62,9 @@ bool		update_process_title = true;
  *	   don't update ps display
  *	   (This is the default, as it is safest.)
  */
-#if defined(HAVE_SETPROCTITLE)
+#if defined(HAVE_SETPROCTITLE_FAST)
+#define PS_USE_SETPROCTITLE_FAST
+#elif defined(HAVE_SETPROCTITLE)
 #define PS_USE_SETPROCTITLE
 #elif defined(HAVE_PSTAT) && defined(PSTAT_SETCMD)
 #define PS_USE_PSTAT
@@ -112,7 +117,8 @@ static char **save_argv;
  * (The original argv[] will not be overwritten by this routine, but may be
  * overwritten during init_ps_display.  Also, the physical location of the
  * environment strings may be moved, so this should be called before any code
- * that might try to hang onto a getenv() result.)
+ * that might try to hang onto a getenv() result.  But see hack for musl
+ * within.)
  *
  * Note that in case of failure this cannot call elog() as that is not
  * initialized yet.  We rely on write_stderr() instead.
@@ -127,7 +133,7 @@ save_ps_display_args(int argc, char **argv)
 
 	/*
 	 * If we're going to overwrite the argv area, count the available space.
-	 * Also move the environment to make additional room.
+	 * Also move the environment strings to make additional room.
 	 */
 	{
 		char	   *end_of_area = NULL;
@@ -156,7 +162,33 @@ save_ps_display_args(int argc, char **argv)
 		for (i = 0; environ[i] != NULL; i++)
 		{
 			if (end_of_area + 1 == environ[i])
-				end_of_area = environ[i] + strlen(environ[i]);
+			{
+				/*
+				 * The musl dynamic linker keeps a static pointer to the
+				 * initial value of LD_LIBRARY_PATH, if that is defined in the
+				 * process's environment. Therefore, we must not overwrite the
+				 * value of that setting and thus cannot advance end_of_area
+				 * beyond it.  Musl does not define any identifying compiler
+				 * symbol, so we have to do this unless we see a symbol
+				 * identifying a Linux libc we know is safe.
+				 */
+#if defined(__linux__) && (!defined(__GLIBC__) && !defined(__UCLIBC__))
+				if (strncmp(environ[i], "LD_LIBRARY_PATH=", 16) == 0)
+				{
+					/*
+					 * We can overwrite the name, but stop at the equals sign.
+					 * Future loop iterations will not find any more
+					 * contiguous space, but we don't break early because we
+					 * need to count the total number of environ[] entries.
+					 */
+					end_of_area = environ[i] + 15;
+				}
+				else
+#endif
+				{
+					end_of_area = environ[i] + strlen(environ[i]);
+				}
+			}
 		}
 
 		ps_buffer = argv[0];
@@ -191,7 +223,7 @@ save_ps_display_args(int argc, char **argv)
 	 * If we're going to change the original argv[] then make a copy for
 	 * argument parsing purposes.
 	 *
-	 * (NB: do NOT think to remove the copying of argv[], even though
+	 * NB: do NOT think to remove the copying of argv[], even though
 	 * postmaster.c finishes looking at argv[] long before we ever consider
 	 * changing the ps display.  On some platforms, getopt() keeps pointers
 	 * into the argv array, and will get horribly confused when it is
@@ -286,7 +318,7 @@ init_ps_display(const char *username, const char *dbname,
 	 * Make fixed prefix of ps display.
 	 */
 
-#ifdef PS_USE_SETPROCTITLE
+#if defined(PS_USE_SETPROCTITLE) || defined(PS_USE_SETPROCTITLE_FAST)
 
 	/*
 	 * apparently setproctitle() already adds a `progname:' prefix to the ps
@@ -349,6 +381,8 @@ set_ps_display(const char *activity, bool force)
 
 #ifdef PS_USE_SETPROCTITLE
 	setproctitle("%s", ps_buffer);
+#elif defined(PS_USE_SETPROCTITLE_FAST)
+	setproctitle_fast("%s", ps_buffer);
 #endif
 
 #ifdef PS_USE_PSTAT

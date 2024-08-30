@@ -34,12 +34,11 @@ my $publisher_connstr = $node_publisher->connstr . ' dbname=postgres';
 $node_publisher->safe_psql('postgres',
 	"CREATE PUBLICATION tap_pub FOR ALL TABLES;");
 
-my $appname = 'tap_sub';
 $node_subscriber->safe_psql('postgres',
-	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr application_name=$appname' PUBLICATION tap_pub WITH (copy_data = false)"
+	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr' PUBLICATION tap_pub WITH (copy_data = false)"
 );
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $node_publisher->safe_psql('postgres',
 	"INSERT INTO tab_fk (bid) VALUES (1);");
@@ -48,7 +47,7 @@ $node_publisher->safe_psql('postgres',
 	"INSERT INTO tab_fk_ref (id, bid, junk) VALUES (1, 1, repeat(pi()::text,20000));"
 );
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 # Check data on subscriber
 my $result = $node_subscriber->safe_psql('postgres',
@@ -66,7 +65,7 @@ $node_publisher->safe_psql('postgres', "DROP TABLE tab_fk CASCADE;");
 $node_publisher->safe_psql('postgres',
 	"INSERT INTO tab_fk_ref (id, bid) VALUES (2, 2);");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 # FK is not enforced on subscriber
 $result = $node_subscriber->safe_psql('postgres',
@@ -102,7 +101,7 @@ ALTER TABLE tab_fk_ref ENABLE REPLICA TRIGGER filter_basic_dml_trg;
 $node_publisher->safe_psql('postgres',
 	"INSERT INTO tab_fk_ref (id, bid) VALUES (10, 10);");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 # The trigger should cause the insert to be skipped on subscriber
 $result = $node_subscriber->safe_psql('postgres',
@@ -113,7 +112,7 @@ is($result, qq(2|1|2), 'check replica insert trigger applied on subscriber');
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_fk_ref SET bid = 2 WHERE bid = 1;");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 # The trigger should cause the update to be skipped on subscriber
 $result = $node_subscriber->safe_psql('postgres',
@@ -125,7 +124,7 @@ is($result, qq(2|1|2), 'check replica update column trigger applied on subscribe
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_fk_ref SET id = 6 WHERE id = 1;");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), min(id), max(id) FROM tab_fk_ref;");

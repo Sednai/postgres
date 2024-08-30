@@ -272,12 +272,12 @@ SELECT type, m.totamt AS mtot, v.totamt AS vtot FROM mvtest_tm m LEFT JOIN mvtes
 DROP TABLE mvtest_t;
 ERROR:  cannot drop table mvtest_t because other objects depend on it
 DETAIL:  view mvtest_tv depends on table mvtest_t
+materialized view mvtest_mvschema.mvtest_tvm depends on view mvtest_tv
+materialized view mvtest_tvmm depends on materialized view mvtest_mvschema.mvtest_tvm
 view mvtest_tvv depends on view mvtest_tv
 materialized view mvtest_tvvm depends on view mvtest_tvv
 view mvtest_tvvmv depends on materialized view mvtest_tvvm
 materialized view mvtest_bb depends on view mvtest_tvvmv
-materialized view mvtest_mvschema.mvtest_tvm depends on view mvtest_tv
-materialized view mvtest_tvmm depends on materialized view mvtest_mvschema.mvtest_tvm
 materialized view mvtest_tm depends on table mvtest_t
 materialized view mvtest_tmm depends on materialized view mvtest_tm
 HINT:  Use DROP ... CASCADE to drop the dependent objects too.
@@ -288,12 +288,12 @@ BEGIN;
 DROP TABLE mvtest_t CASCADE;
 NOTICE:  drop cascades to 9 other objects
 DETAIL:  drop cascades to view mvtest_tv
+drop cascades to materialized view mvtest_mvschema.mvtest_tvm
+drop cascades to materialized view mvtest_tvmm
 drop cascades to view mvtest_tvv
 drop cascades to materialized view mvtest_tvvm
 drop cascades to view mvtest_tvvmv
 drop cascades to materialized view mvtest_bb
-drop cascades to materialized view mvtest_mvschema.mvtest_tvm
-drop cascades to materialized view mvtest_tvmm
 drop cascades to materialized view mvtest_tm
 drop cascades to materialized view mvtest_tmm
 ROLLBACK;
@@ -533,6 +533,22 @@ REFRESH MATERIALIZED VIEW mvtest_mv_foo;
 REFRESH MATERIALIZED VIEW CONCURRENTLY mvtest_mv_foo;
 DROP OWNED BY regress_user_mvtest CASCADE;
 DROP ROLE regress_user_mvtest;
+-- Concurrent refresh requires a unique index on the materialized
+-- view. Test what happens if it's dropped during the refresh.
+CREATE OR REPLACE FUNCTION mvtest_drop_the_index()
+  RETURNS bool AS $$
+BEGIN
+  EXECUTE 'DROP INDEX IF EXISTS mvtest_drop_idx';
+  RETURN true;
+END;
+$$ LANGUAGE plpgsql;
+CREATE MATERIALIZED VIEW drop_idx_matview AS
+  SELECT 1 as i WHERE mvtest_drop_the_index();
+NOTICE:  index "mvtest_drop_idx" does not exist, skipping
+CREATE UNIQUE INDEX mvtest_drop_idx ON drop_idx_matview (i);
+REFRESH MATERIALIZED VIEW CONCURRENTLY drop_idx_matview;
+ERROR:  could not find suitable unique index on materialized view
+DROP MATERIALIZED VIEW drop_idx_matview; -- clean up
 -- make sure that create WITH NO DATA works via SPI
 BEGIN;
 CREATE FUNCTION mvtest_func()

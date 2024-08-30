@@ -3,7 +3,7 @@
  * user.c
  *	  Commands for manipulating roles (formerly called users).
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/user.c
@@ -13,8 +13,8 @@
 #include "postgres.h"
 
 #include "access/genam.h"
-#include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
@@ -37,7 +37,6 @@
 #include "utils/fmgroids.h"
 #include "utils/syscache.h"
 #include "utils/timestamp.h"
-#include "utils/tqual.h"
 
 /* Potentially set by pg_upgrade_support functions */
 Oid			binary_upgrade_next_pg_authid_oid = InvalidOid;
@@ -50,11 +49,11 @@ int			Password_encryption = PASSWORD_TYPE_MD5;
 check_password_hook_type check_password_hook = NULL;
 
 static void AddRoleMems(const char *rolename, Oid roleid,
-			List *memberSpecs, List *memberIds,
-			Oid grantorId, bool admin_opt);
+						List *memberSpecs, List *memberIds,
+						Oid grantorId, bool admin_opt);
 static void DelRoleMems(const char *rolename, Oid roleid,
-			List *memberSpecs, List *memberIds,
-			bool admin_opt);
+						List *memberSpecs, List *memberIds,
+						bool admin_opt);
 
 
 /* Check if current user has createrole privileges */
@@ -328,10 +327,19 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 				 errdetail("Role names starting with \"pg_\" are reserved.")));
 
 	/*
+	 * If built with appropriate switch, whine when regression-testing
+	 * conventions for role names are violated.
+	 */
+#ifdef ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS
+	if (strncmp(stmt->role, "regress_", 8) != 0)
+		elog(WARNING, "roles created by regression test cases should have names starting with \"regress_\"");
+#endif
+
+	/*
 	 * Check the pg_authid relation to be certain the role doesn't already
 	 * exist.
 	 */
-	pg_authid_rel = heap_open(AuthIdRelationId, RowExclusiveLock);
+	pg_authid_rel = table_open(AuthIdRelationId, RowExclusiveLock);
 	pg_authid_dsc = RelationGetDescr(pg_authid_rel);
 
 	if (OidIsValid(get_role_oid(stmt->role, true)))
@@ -423,8 +431,6 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 
 	new_record[Anum_pg_authid_rolbypassrls - 1] = BoolGetDatum(bypassrls);
 
-	tuple = heap_form_tuple(pg_authid_dsc, new_record, new_record_nulls);
-
 	/*
 	 * pg_largeobject_metadata contains pg_authid.oid's, so we use the
 	 * binary-upgrade override.
@@ -436,14 +442,23 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
 					 errmsg("pg_authid OID value not set when in binary upgrade mode")));
 
-		HeapTupleSetOid(tuple, binary_upgrade_next_pg_authid_oid);
+		roleid = binary_upgrade_next_pg_authid_oid;
 		binary_upgrade_next_pg_authid_oid = InvalidOid;
 	}
+	else
+	{
+		roleid = GetNewOidWithIndex(pg_authid_rel, AuthIdOidIndexId,
+									Anum_pg_authid_oid);
+	}
+
+	new_record[Anum_pg_authid_oid - 1] = ObjectIdGetDatum(roleid);
+
+	tuple = heap_form_tuple(pg_authid_dsc, new_record, new_record_nulls);
 
 	/*
 	 * Insert new record in the pg_authid table
 	 */
-	roleid = CatalogTupleInsert(pg_authid_rel, tuple);
+	CatalogTupleInsert(pg_authid_rel, tuple);
 
 	/*
 	 * Advance command counter so we can see new record; else tests in
@@ -470,7 +485,7 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 			RoleSpec   *oldrole = lfirst(item);
 			HeapTuple	oldroletup = get_rolespec_tuple(oldrole);
 			Form_pg_authid oldroleform = (Form_pg_authid) GETSTRUCT(oldroletup);
-			Oid			oldroleid = HeapTupleGetOid(oldroletup);
+			Oid			oldroleid = oldroleform->oid;
 			char	   *oldrolename = NameStr(oldroleform->rolname);
 
 			AddRoleMems(oldrolename, oldroleid,
@@ -499,7 +514,7 @@ CreateRole(ParseState *pstate, CreateRoleStmt *stmt)
 	/*
 	 * Close pg_authid, but keep lock till commit.
 	 */
-	heap_close(pg_authid_rel, NoLock);
+	table_close(pg_authid_rel, NoLock);
 
 	return roleid;
 }
@@ -685,13 +700,13 @@ AlterRole(AlterRoleStmt *stmt)
 	/*
 	 * Scan the pg_authid relation to be certain the user exists.
 	 */
-	pg_authid_rel = heap_open(AuthIdRelationId, RowExclusiveLock);
+	pg_authid_rel = table_open(AuthIdRelationId, RowExclusiveLock);
 	pg_authid_dsc = RelationGetDescr(pg_authid_rel);
 
 	tuple = get_rolespec_tuple(stmt->role);
 	authform = (Form_pg_authid) GETSTRUCT(tuple);
 	rolename = pstrdup(NameStr(authform->rolname));
-	roleid = HeapTupleGetOid(tuple);
+	roleid = authform->oid;
 
 	/*
 	 * To mess with a superuser or replication role in any way you gotta be
@@ -887,7 +902,7 @@ AlterRole(AlterRoleStmt *stmt)
 	/*
 	 * Close pg_authid, but keep lock till commit.
 	 */
-	heap_close(pg_authid_rel, NoLock);
+	table_close(pg_authid_rel, NoLock);
 
 	return roleid;
 }
@@ -900,6 +915,7 @@ Oid
 AlterRoleSet(AlterRoleSetStmt *stmt)
 {
 	HeapTuple	roletuple;
+	Form_pg_authid roleform;
 	Oid			databaseid = InvalidOid;
 	Oid			roleid = InvalidOid;
 
@@ -909,19 +925,20 @@ AlterRoleSet(AlterRoleSetStmt *stmt)
 							_("Cannot alter reserved roles."));
 
 		roletuple = get_rolespec_tuple(stmt->role);
-		roleid = HeapTupleGetOid(roletuple);
+		roleform = (Form_pg_authid) GETSTRUCT(roletuple);
+		roleid = roleform->oid;
 
 		/*
 		 * Obtain a lock on the role and make sure it didn't go away in the
 		 * meantime.
 		 */
-		shdepLockAndCheckObject(AuthIdRelationId, HeapTupleGetOid(roletuple));
+		shdepLockAndCheckObject(AuthIdRelationId, roleid);
 
 		/*
 		 * To mess with a superuser you gotta be superuser; else you need
 		 * createrole, or just want to change your own settings
 		 */
-		if (((Form_pg_authid) GETSTRUCT(roletuple))->rolsuper)
+		if (roleform->rolsuper)
 		{
 			if (!superuser())
 				ereport(ERROR,
@@ -930,8 +947,7 @@ AlterRoleSet(AlterRoleSetStmt *stmt)
 		}
 		else
 		{
-			if (!have_createrole_privilege() &&
-				HeapTupleGetOid(roletuple) != GetUserId())
+			if (!have_createrole_privilege() && roleid != GetUserId())
 				ereport(ERROR,
 						(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 						 errmsg("permission denied")));
@@ -992,8 +1008,8 @@ DropRole(DropRoleStmt *stmt)
 	 * Scan the pg_authid relation to find the Oid of the role(s) to be
 	 * deleted.
 	 */
-	pg_authid_rel = heap_open(AuthIdRelationId, RowExclusiveLock);
-	pg_auth_members_rel = heap_open(AuthMemRelationId, RowExclusiveLock);
+	pg_authid_rel = table_open(AuthIdRelationId, RowExclusiveLock);
+	pg_auth_members_rel = table_open(AuthMemRelationId, RowExclusiveLock);
 
 	foreach(item, stmt->roles)
 	{
@@ -1001,6 +1017,7 @@ DropRole(DropRoleStmt *stmt)
 		char	   *role;
 		HeapTuple	tuple,
 					tmp_tuple;
+		Form_pg_authid roleform;
 		ScanKeyData scankey;
 		char	   *detail;
 		char	   *detail_log;
@@ -1032,7 +1049,8 @@ DropRole(DropRoleStmt *stmt)
 			continue;
 		}
 
-		roleid = HeapTupleGetOid(tuple);
+		roleform = (Form_pg_authid) GETSTRUCT(tuple);
+		roleid = roleform->oid;
 
 		if (roleid == GetUserId())
 			ereport(ERROR,
@@ -1052,8 +1070,7 @@ DropRole(DropRoleStmt *stmt)
 		 * roles but not superuser roles.  This is mainly to avoid the
 		 * scenario where you accidentally drop the last superuser.
 		 */
-		if (((Form_pg_authid) GETSTRUCT(tuple))->rolsuper &&
-			!superuser())
+		if (roleform->rolsuper && !superuser())
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 					 errmsg("must be superuser to drop superusers")));
@@ -1146,8 +1163,8 @@ DropRole(DropRoleStmt *stmt)
 	/*
 	 * Now we can clean up; but keep locks until commit.
 	 */
-	heap_close(pg_auth_members_rel, NoLock);
-	heap_close(pg_authid_rel, NoLock);
+	table_close(pg_auth_members_rel, NoLock);
+	table_close(pg_authid_rel, NoLock);
 }
 
 /*
@@ -1170,7 +1187,7 @@ RenameRole(const char *oldname, const char *newname)
 	ObjectAddress address;
 	Form_pg_authid authform;
 
-	rel = heap_open(AuthIdRelationId, RowExclusiveLock);
+	rel = table_open(AuthIdRelationId, RowExclusiveLock);
 	dsc = RelationGetDescr(rel);
 
 	oldtuple = SearchSysCache1(AUTHNAME, CStringGetDatum(oldname));
@@ -1187,8 +1204,8 @@ RenameRole(const char *oldname, const char *newname)
 	 * effective userid, though.
 	 */
 
-	roleid = HeapTupleGetOid(oldtuple);
 	authform = (Form_pg_authid) GETSTRUCT(oldtuple);
+	roleid = authform->oid;
 
 	if (roleid == GetSessionUserId())
 		ereport(ERROR,
@@ -1216,6 +1233,15 @@ RenameRole(const char *oldname, const char *newname)
 				 errmsg("role name \"%s\" is reserved",
 						newname),
 				 errdetail("Role names starting with \"pg_\" are reserved.")));
+
+	/*
+	 * If built with appropriate switch, whine when regression-testing
+	 * conventions for role names are violated.
+	 */
+#ifdef ENFORCE_REGRESSION_TEST_NAME_RESTRICTIONS
+	if (strncmp(newname, "regress_", 8) != 0)
+		elog(WARNING, "roles created by regression test cases should have names starting with \"regress_\"");
+#endif
 
 	/* make sure the new name doesn't exist */
 	if (SearchSysCacheExists1(AUTHNAME, CStringGetDatum(newname)))
@@ -1274,7 +1300,7 @@ RenameRole(const char *oldname, const char *newname)
 	/*
 	 * Close pg_authid, but keep lock till commit.
 	 */
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 	return address;
 }
@@ -1300,7 +1326,7 @@ GrantRole(GrantRoleStmt *stmt)
 	grantee_ids = roleSpecsToIds(stmt->grantee_roles);
 
 	/* AccessShareLock is enough since we aren't modifying pg_authid */
-	pg_authid_rel = heap_open(AuthIdRelationId, AccessShareLock);
+	pg_authid_rel = table_open(AuthIdRelationId, AccessShareLock);
 
 	/*
 	 * Step through all of the granted roles and add/remove entries for the
@@ -1335,7 +1361,7 @@ GrantRole(GrantRoleStmt *stmt)
 	/*
 	 * Close pg_authid, but keep lock till commit.
 	 */
-	heap_close(pg_authid_rel, NoLock);
+	table_close(pg_authid_rel, NoLock);
 }
 
 /*
@@ -1487,7 +1513,7 @@ AddRoleMems(const char *rolename, Oid roleid,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 errmsg("must be superuser to set grantor")));
 
-	pg_authmem_rel = heap_open(AuthMemRelationId, RowExclusiveLock);
+	pg_authmem_rel = table_open(AuthMemRelationId, RowExclusiveLock);
 	pg_authmem_dsc = RelationGetDescr(pg_authmem_rel);
 
 	forboth(specitem, memberSpecs, iditem, memberIds)
@@ -1565,7 +1591,7 @@ AddRoleMems(const char *rolename, Oid roleid,
 	/*
 	 * Close pg_authmem, but keep lock till commit.
 	 */
-	heap_close(pg_authmem_rel, NoLock);
+	table_close(pg_authmem_rel, NoLock);
 }
 
 /*
@@ -1616,7 +1642,7 @@ DelRoleMems(const char *rolename, Oid roleid,
 							rolename)));
 	}
 
-	pg_authmem_rel = heap_open(AuthMemRelationId, RowExclusiveLock);
+	pg_authmem_rel = table_open(AuthMemRelationId, RowExclusiveLock);
 	pg_authmem_dsc = RelationGetDescr(pg_authmem_rel);
 
 	forboth(specitem, memberSpecs, iditem, memberIds)
@@ -1675,5 +1701,5 @@ DelRoleMems(const char *rolename, Oid roleid,
 	/*
 	 * Close pg_authmem, but keep lock till commit.
 	 */
-	heap_close(pg_authmem_rel, NoLock);
+	table_close(pg_authmem_rel, NoLock);
 }

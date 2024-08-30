@@ -3,7 +3,7 @@
  * lmgr.c
  *	  POSTGRES lock manager code
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -19,9 +19,12 @@
 #include "access/transam.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
+#include "commands/progress.h"
 #include "miscadmin.h"
+#include "pgstat.h"
 #include "storage/lmgr.h"
 #include "storage/procarray.h"
+#include "storage/sinvaladt.h"
 #include "utils/inval.h"
 
 
@@ -285,6 +288,45 @@ UnlockRelation(Relation relation, LOCKMODE lockmode)
 						 relation->rd_lockInfo.lockRelId.relId);
 
 	LockRelease(&tag, lockmode, false);
+}
+
+/*
+ *		CheckRelationLockedByMe
+ *
+ * Returns true if current transaction holds a lock on 'relation' of mode
+ * 'lockmode'.  If 'orstronger' is true, a stronger lockmode is also OK.
+ * ("Stronger" is defined as "numerically higher", which is a bit
+ * semantically dubious but is OK for the purposes we use this for.)
+ */
+bool
+CheckRelationLockedByMe(Relation relation, LOCKMODE lockmode, bool orstronger)
+{
+	LOCKTAG		tag;
+
+	SET_LOCKTAG_RELATION(tag,
+						 relation->rd_lockInfo.lockRelId.dbId,
+						 relation->rd_lockInfo.lockRelId.relId);
+
+	return (orstronger ?
+			LockOrStrongerHeldByMe(&tag, lockmode) :
+			LockHeldByMe(&tag, lockmode));
+}
+
+/*
+ *		CheckRelationOidLockedByMe
+ *
+ * Like the above, but takes an OID as argument.
+ */
+bool
+CheckRelationOidLockedByMe(Oid relid, LOCKMODE lockmode, bool orstronger)
+{
+	LOCKTAG		tag;
+
+	SetLocktagRelationOid(&tag, relid);
+
+	return (orstronger ?
+			LockOrStrongerHeldByMe(&tag, lockmode) :
+			LockHeldByMe(&tag, lockmode));
 }
 
 /*
@@ -828,10 +870,12 @@ XactLockTableWaitErrorCb(void *arg)
  * wait for them.
  */
 void
-WaitForLockersMultiple(List *locktags, LOCKMODE lockmode)
+WaitForLockersMultiple(List *locktags, LOCKMODE lockmode, bool progress)
 {
 	List	   *holders = NIL;
 	ListCell   *lc;
+	int			total = 0;
+	int			done = 0;
 
 	/* Done if no locks to wait for */
 	if (list_length(locktags) == 0)
@@ -841,9 +885,17 @@ WaitForLockersMultiple(List *locktags, LOCKMODE lockmode)
 	foreach(lc, locktags)
 	{
 		LOCKTAG    *locktag = lfirst(lc);
+		int			count;
 
-		holders = lappend(holders, GetLockConflicts(locktag, lockmode));
+		holders = lappend(holders,
+						  GetLockConflicts(locktag, lockmode,
+										   progress ? &count : NULL));
+		if (progress)
+			total += count;
 	}
+
+	if (progress)
+		pgstat_progress_update_param(PROGRESS_WAITFOR_TOTAL, total);
 
 	/*
 	 * Note: GetLockConflicts() never reports our own xid, hence we need not
@@ -857,9 +909,34 @@ WaitForLockersMultiple(List *locktags, LOCKMODE lockmode)
 
 		while (VirtualTransactionIdIsValid(*lockholders))
 		{
+			/* If requested, publish who we're going to wait for. */
+			if (progress)
+			{
+				PGPROC	   *holder = BackendIdGetProc(lockholders->backendId);
+
+				if (holder)
+					pgstat_progress_update_param(PROGRESS_WAITFOR_CURRENT_PID,
+												 holder->pid);
+			}
 			VirtualXactLock(*lockholders, true);
 			lockholders++;
+
+			if (progress)
+				pgstat_progress_update_param(PROGRESS_WAITFOR_DONE, ++done);
 		}
+	}
+	if (progress)
+	{
+		const int	index[] = {
+			PROGRESS_WAITFOR_TOTAL,
+			PROGRESS_WAITFOR_DONE,
+			PROGRESS_WAITFOR_CURRENT_PID
+		};
+		const int64 values[] = {
+			0, 0, 0
+		};
+
+		pgstat_progress_update_multi_param(3, index, values);
 	}
 
 	list_free_deep(holders);
@@ -871,12 +948,12 @@ WaitForLockersMultiple(List *locktags, LOCKMODE lockmode)
  * Same as WaitForLockersMultiple, for a single lock tag.
  */
 void
-WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode)
+WaitForLockers(LOCKTAG heaplocktag, LOCKMODE lockmode, bool progress)
 {
 	List	   *l;
 
 	l = list_make1(&heaplocktag);
-	WaitForLockersMultiple(l, lockmode);
+	WaitForLockersMultiple(l, lockmode, progress);
 	list_free(l);
 }
 
@@ -905,6 +982,44 @@ LockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
 
 	/* Make sure syscaches are up-to-date with any changes we waited for */
 	AcceptInvalidationMessages();
+}
+
+/*
+ *		ConditionalLockDatabaseObject
+ *
+ * As above, but only lock if we can get the lock without blocking.
+ * Returns true iff the lock was acquired.
+ */
+bool
+ConditionalLockDatabaseObject(Oid classid, Oid objid, uint16 objsubid,
+							  LOCKMODE lockmode)
+{
+	LOCKTAG		tag;
+	LOCALLOCK  *locallock;
+	LockAcquireResult res;
+
+	SET_LOCKTAG_OBJECT(tag,
+					   MyDatabaseId,
+					   classid,
+					   objid,
+					   objsubid);
+
+	res = LockAcquireExtended(&tag, lockmode, false, true, true, &locallock);
+
+	if (res == LOCKACQUIRE_NOT_AVAIL)
+		return false;
+
+	/*
+	 * Now that we have the lock, check for invalidation messages; see notes
+	 * in LockRelationOid.
+	 */
+	if (res != LOCKACQUIRE_ALREADY_CLEAR)
+	{
+		AcceptInvalidationMessages();
+		MarkLockClear(locallock);
+	}
+
+	return true;
 }
 
 /*

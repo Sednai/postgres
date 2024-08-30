@@ -9,7 +9,7 @@
  * of XLogRecData structs by a call to XLogRecordAssemble(). See
  * access/transam/README for details.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/access/transam/xloginsert.c
@@ -107,10 +107,10 @@ static bool begininsert_called = false;
 static MemoryContext xloginsert_cxt;
 
 static XLogRecData *XLogRecordAssemble(RmgrId rmid, uint8 info,
-				   XLogRecPtr RedoRecPtr, bool doPageWrites,
-				   XLogRecPtr *fpw_lsn);
+									   XLogRecPtr RedoRecPtr, bool doPageWrites,
+									   XLogRecPtr *fpw_lsn);
 static bool XLogCompressBackupBlock(char *page, uint16 hole_offset,
-						uint16 hole_length, char *dest, uint16 *dlen);
+									uint16 hole_length, char *dest, uint16 *dlen);
 
 /*
  * Begin constructing a WAL record. This must be called before the
@@ -605,7 +605,7 @@ XLogRecordAssemble(RmgrId rmid, uint8 info,
 				}
 				else
 				{
-					/* No "hole" to compress out */
+					/* No "hole" to remove */
 					bimg.hole_offset = 0;
 					cbimg.hole_length = 0;
 				}
@@ -1102,7 +1102,7 @@ log_newpage_range(Relation rel, ForkNumber forkNum,
 			MarkBufferDirty(bufpack[i]);
 		}
 
-		recptr = XLogInsert(RM_XLOG_ID, XLOG_FPI_MULTI);
+		recptr = XLogInsert(RM_XLOG_ID, XLOG_FPI);
 
 		for (i = 0; i < nbufs; i++)
 		{

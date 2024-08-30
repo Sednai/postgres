@@ -4,7 +4,7 @@
  *	  node buffer management functions for GiST buffering build algorithm.
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -25,15 +25,15 @@
 
 static GISTNodeBufferPage *gistAllocateNewPageBuffer(GISTBuildBuffers *gfbb);
 static void gistAddLoadedBuffer(GISTBuildBuffers *gfbb,
-					GISTNodeBuffer *nodeBuffer);
+								GISTNodeBuffer *nodeBuffer);
 static void gistLoadNodeBuffer(GISTBuildBuffers *gfbb,
-				   GISTNodeBuffer *nodeBuffer);
+							   GISTNodeBuffer *nodeBuffer);
 static void gistUnloadNodeBuffer(GISTBuildBuffers *gfbb,
-					 GISTNodeBuffer *nodeBuffer);
+								 GISTNodeBuffer *nodeBuffer);
 static void gistPlaceItupToPage(GISTNodeBufferPage *pageBuffer,
-					IndexTuple item);
+								IndexTuple item);
 static void gistGetItupFromPage(GISTNodeBufferPage *pageBuffer,
-					IndexTuple *item);
+								IndexTuple *item);
 static long gistBuffersGetFreeBlock(GISTBuildBuffers *gfbb);
 static void gistBuffersReleaseBlock(GISTBuildBuffers *gfbb, long blocknum);
 
@@ -666,7 +666,7 @@ gistRelocateBuildBuffersOnSplit(GISTBuildBuffers *gfbb, GISTSTATE *giststate,
 			zero_penalty = true;
 
 			/* Loop over index attributes. */
-			for (j = 0; j < r->rd_att->natts; j++)
+			for (j = 0; j < IndexRelationGetNumberOfKeyAttributes(r); j++)
 			{
 				float		usize;
 
@@ -692,7 +692,7 @@ gistRelocateBuildBuffersOnSplit(GISTBuildBuffers *gfbb, GISTSTATE *giststate,
 					which = i;
 					best_penalty[j] = usize;
 
-					if (j < r->rd_att->natts - 1)
+					if (j < IndexRelationGetNumberOfKeyAttributes(r) - 1)
 						best_penalty[j + 1] = -1;
 				}
 				else if (best_penalty[j] == usize)

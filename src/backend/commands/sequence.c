@@ -3,7 +3,7 @@
  * sequence.c
  *	  PostgreSQL sequences support code.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,6 +17,8 @@
 #include "access/bufmask.h"
 #include "access/htup_details.h"
 #include "access/multixact.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "access/transam.h"
 #include "access/xact.h"
 #include "access/xlog.h"
@@ -126,7 +128,7 @@ static Relation lock_and_open_sequence(SeqTable seq);
 static void create_seq_hashtable(void);
 static void init_sequence(Oid relid, SeqTable *p_elm, Relation *p_rel);
 static Form_pg_sequence_data read_seq_tuple(Relation rel,
-			   Buffer *buf, HeapTuple seqdatatuple);
+											Buffer *buf, HeapTuple seqdatatuple);
 
 #ifdef PGXC
 static void init_params(ParseState *pstate, List *options, bool for_identity,
@@ -137,12 +139,11 @@ static void init_params(ParseState *pstate, List *options, bool for_identity,
 			List **owned_by, bool *is_restart);
 #else
 static void init_params(ParseState *pstate, List *options, bool for_identity,
-			bool isInit,
-			Form_pg_sequence seqform,
-			Form_pg_sequence_data seqdataform,
-			bool *need_seq_rewrite,
-			List **owned_by);
-#endif
+						bool isInit,
+						Form_pg_sequence seqform,
+						Form_pg_sequence_data seqdataform,
+						bool *need_seq_rewrite,
+						List **owned_by);
 static void do_setval(Oid relid, int64 next, bool iscalled);
 static void process_owned_by(Relation seqrel, List *owned_by, bool for_identity);
 
@@ -275,7 +276,7 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	seqoid = address.objectId;
 	Assert(seqoid != InvalidOid);
 
-	rel = heap_open(seqoid, AccessExclusiveLock);
+	rel = table_open(seqoid, AccessExclusiveLock);
 	tupDesc = RelationGetDescr(rel);
 
 	/* now initialize the sequence's data */
@@ -286,7 +287,7 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	if (owned_by)
 		process_owned_by(rel, owned_by, seq->for_identity);
 	
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 
 #ifdef PGXC  /* PGXC_COORD */
 	increment = seqform.seqincrement;
@@ -326,7 +327,7 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 #endif
 
 	/* fill in pg_sequence */
-	rel = heap_open(SequenceRelationId, RowExclusiveLock);
+	rel = table_open(SequenceRelationId, RowExclusiveLock);
 	tupDesc = RelationGetDescr(rel);
 
 	memset(pgs_nulls, 0, sizeof(pgs_nulls));
@@ -344,8 +345,8 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	CatalogTupleInsert(rel, tuple);
 
 	heap_freetuple(tuple);
-	heap_close(rel, RowExclusiveLock);
-	
+	table_close(rel, RowExclusiveLock);
+
 	return address;
 }
 
@@ -407,12 +408,17 @@ ResetSequence(Oid seq_relid)
 	seq->log_cnt = 0;
 
 	/*
-	 * Create a new storage file for the sequence.  We want to keep the
-	 * sequence's relfrozenxid at 0, since it won't contain any unfrozen XIDs.
-	 * Same with relminmxid, since a sequence will never contain multixacts.
+	 * Create a new storage file for the sequence.
 	 */
-	RelationSetNewRelfilenode(seq_rel, seq_rel->rd_rel->relpersistence,
-							  InvalidTransactionId, InvalidMultiXactId);
+	RelationSetNewRelfilenode(seq_rel, seq_rel->rd_rel->relpersistence);
+
+	/*
+	 * Ensure sequence's relfrozenxid is at 0, since it won't contain any
+	 * unfrozen XIDs.  Same with relminmxid, since a sequence will never
+	 * contain multixacts.
+	 */
+	Assert(seq_rel->rd_rel->relfrozenxid == InvalidTransactionId);
+	Assert(seq_rel->rd_rel->relminmxid == InvalidMultiXactId);
 
 	/*
 	 * Insert the modified tuple into the new storage file.
@@ -550,7 +556,7 @@ AlterSequence(ParseState *pstate, AlterSeqStmt *stmt)
 
 	init_sequence(relid, &elm, &seqrel);
 
-	rel = heap_open(SequenceRelationId, RowExclusiveLock);
+	rel = table_open(SequenceRelationId, RowExclusiveLock);
 	seqtuple = SearchSysCacheCopy1(SEQRELID,
 								   ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(seqtuple))
@@ -600,12 +606,17 @@ AlterSequence(ParseState *pstate, AlterSeqStmt *stmt)
 
 		/*
 		 * Create a new storage file for the sequence, making the state
-		 * changes transactional.  We want to keep the sequence's relfrozenxid
-		 * at 0, since it won't contain any unfrozen XIDs.  Same with
-		 * relminmxid, since a sequence will never contain multixacts.
+		 * changes transactional.
 		 */
-		RelationSetNewRelfilenode(seqrel, seqrel->rd_rel->relpersistence,
-								  InvalidTransactionId, InvalidMultiXactId);
+		RelationSetNewRelfilenode(seqrel, seqrel->rd_rel->relpersistence);
+
+		/*
+		 * Ensure sequence's relfrozenxid is at 0, since it won't contain any
+		 * unfrozen XIDs.  Same with relminmxid, since a sequence will never
+		 * contain multixacts.
+		 */
+		Assert(seqrel->rd_rel->relfrozenxid == InvalidTransactionId);
+		Assert(seqrel->rd_rel->relminmxid == InvalidMultiXactId);
 
 		/*
 		 * Insert the modified tuple into the new storage file.
@@ -624,7 +635,7 @@ AlterSequence(ParseState *pstate, AlterSeqStmt *stmt)
 
 	ObjectAddressSet(address, RelationRelationId, relid);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 	relation_close(seqrel, NoLock);
 
 #ifdef PGXC
@@ -663,7 +674,7 @@ DeleteSequenceTuple(Oid relid)
 	Relation	rel;
 	HeapTuple	tuple;
 
-	rel = heap_open(SequenceRelationId, RowExclusiveLock);
+	rel = table_open(SequenceRelationId, RowExclusiveLock);
 
 	tuple = SearchSysCache1(SEQRELID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(tuple))
@@ -672,7 +683,7 @@ DeleteSequenceTuple(Oid relid)
 	CatalogTupleDelete(rel, &tuple->t_self);
 
 	ReleaseSysCache(tuple);
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -2117,7 +2128,7 @@ pg_sequence_parameters(PG_FUNCTION_ARGS)
 				 errmsg("permission denied for sequence %s",
 						get_rel_name(relid))));
 
-	tupdesc = CreateTemplateTupleDesc(7, false);
+	tupdesc = CreateTemplateTupleDesc(7);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "start_value",
 					   INT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "minimum_value",
@@ -2166,11 +2177,8 @@ pg_sequence_last_value(PG_FUNCTION_ARGS)
 	Oid			relid = PG_GETARG_OID(0);
 	SeqTable	elm;
 	Relation	seqrel;
-	Buffer		buf;
-	HeapTupleData seqtuple;
-	Form_pg_sequence_data seq;
-	bool		is_called;
-	int64		result;
+	bool		is_called = false;
+	int64		result = 0;
 
 	/* open and lock sequence */
 	init_sequence(relid, &elm, &seqrel);
@@ -2181,12 +2189,24 @@ pg_sequence_last_value(PG_FUNCTION_ARGS)
 				 errmsg("permission denied for sequence %s",
 						RelationGetRelationName(seqrel))));
 
-	seq = read_seq_tuple(seqrel, &buf, &seqtuple);
+	/*
+	 * We return NULL for other sessions' temporary sequences.  The
+	 * pg_sequences system view already filters those out, but this offers a
+	 * defense against ERRORs in case someone invokes this function directly.
+	 */
+	if (!RELATION_IS_OTHER_TEMP(seqrel))
+	{
+		Buffer		buf;
+		HeapTupleData seqtuple;
+		Form_pg_sequence_data seq;
 
-	is_called = seq->is_called;
-	result = seq->last_value;
+		seq = read_seq_tuple(seqrel, &buf, &seqtuple);
 
-	UnlockReleaseBuffer(buf);
+		is_called = seq->is_called;
+		result = seq->last_value;
+
+		UnlockReleaseBuffer(buf);
+	}
 	relation_close(seqrel, NoLock);
 
 	if (is_called)

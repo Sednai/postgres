@@ -25,17 +25,17 @@ sub run_test
 	# replicated to the standby.
 	master_psql('CREATE DATABASE beforepromotion');
 	master_psql('CREATE TABLE beforepromotion_tab (a int)',
-		    'beforepromotion');
+		'beforepromotion');
 
 	RewindTest::promote_standby();
 
 	# Create databases in the old master and the new promoted standby.
 	master_psql('CREATE DATABASE master_afterpromotion');
 	master_psql('CREATE TABLE master_promotion_tab (a int)',
-		    'master_afterpromotion');
+		'master_afterpromotion');
 	standby_psql('CREATE DATABASE standby_afterpromotion');
 	standby_psql('CREATE TABLE standby_promotion_tab (a int)',
-		    'standby_afterpromotion');
+		'standby_afterpromotion');
 
 	# The clusters are now diverged.
 
@@ -57,7 +57,7 @@ template1
   SKIP:
 	{
 		skip "unix-style permissions not supported on Windows", 1
-		  if ($windows_os);
+		  if ($windows_os || $Config::Config{osname} eq 'cygwin');
 
 		ok(check_mode_recursive($node_master->data_dir(), 0750, 0640),
 			'check PGDATA permissions');

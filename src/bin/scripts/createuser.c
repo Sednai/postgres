@@ -2,7 +2,7 @@
  *
  * createuser
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/createuser.c
@@ -12,6 +12,7 @@
 
 #include "postgres_fe.h"
 #include "common.h"
+#include "common/logging.h"
 #include "fe_utils/simple_list.h"
 #include "fe_utils/string_utils.h"
 
@@ -82,6 +83,7 @@ main(int argc, char *argv[])
 	PGconn	   *conn;
 	PGresult   *result;
 
+	pg_logging_init(argv[0]);
 	progname = get_progname(argv[0]);
 	set_pglocale_pgservice(argv[0], PG_TEXTDOMAIN("pgscripts"));
 
@@ -151,9 +153,8 @@ main(int argc, char *argv[])
 				conn_limit = strtol(optarg, &endptr, 10);
 				if (*endptr != '\0' || conn_limit < -1)	/* minimum valid value */
 				{
-					fprintf(stderr,
-							_("%s: invalid value for --connection-limit: %s\n"),
-							progname, optarg);
+					pg_log_error("invalid value for --connection-limit: %s",
+								 optarg);
 					exit(1);
 				}
 				break;
@@ -186,8 +187,8 @@ main(int argc, char *argv[])
 			newuser = argv[optind];
 			break;
 		default:
-			fprintf(stderr, _("%s: too many command-line arguments (first is \"%s\")\n"),
-					progname, argv[optind + 1]);
+			pg_log_error("too many command-line arguments (first is \"%s\")",
+						 argv[optind + 1]);
 			fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
 			exit(1);
 	}
@@ -285,8 +286,8 @@ main(int argc, char *argv[])
 												   NULL);
 		if (!encrypted_password)
 		{
-			fprintf(stderr, _("%s: password encryption failed: %s"),
-					progname, PQerrorMessage(conn));
+			pg_log_error("password encryption failed: %s",
+						 PQerrorMessage(conn));
 			exit(1);
 		}
 		appendStringLiteralConn(&sql, encrypted_password, conn);
@@ -340,8 +341,7 @@ main(int argc, char *argv[])
 
 	if (PQresultStatus(result) != PGRES_COMMAND_OK)
 	{
-		fprintf(stderr, _("%s: creation of new role failed: %s"),
-				progname, PQerrorMessage(conn));
+		pg_log_error("creation of new role failed: %s", PQerrorMessage(conn));
 		PQfinish(conn);
 		exit(1);
 	}
@@ -386,5 +386,5 @@ help(const char *progname)
 	printf(_("  -U, --username=USERNAME   user name to connect as (not the one to create)\n"));
 	printf(_("  -w, --no-password         never prompt for password\n"));
 	printf(_("  -W, --password            force password prompt\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@postgresql.org>.\n"));
+	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
 }

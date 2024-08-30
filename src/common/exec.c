@@ -4,7 +4,7 @@
  *		Functions for finding and validating executable files
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -25,19 +25,37 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#ifdef EXEC_BACKEND
+#if defined(HAVE_SYS_PERSONALITY_H)
+#include <sys/personality.h>
+#elif defined(HAVE_SYS_PROCCTL_H)
+#include <sys/procctl.h>
+#endif
+#endif
+
 /* Inhibit mingw CRT's auto-globbing of command line arguments */
 #if defined(WIN32) && !defined(_MSC_VER)
 extern int _CRT_glob = 0; /* 0 turns off globbing; 1 turns it on */
 #endif
 
+/*
+ * Hacky solution to allow expressing both frontend and backend error reports
+ * in one macro call.  First argument of log_error is an errcode() call of
+ * some sort (ignored if FRONTEND); the rest are errmsg_internal() arguments,
+ * i.e. message string and any parameters for it.
+ *
+ * Caller must provide the gettext wrapper around the message string, if
+ * appropriate, so that it gets translated in the FRONTEND case; this
+ * motivates using errmsg_internal() not errmsg().  We handle appending a
+ * newline, if needed, inside the macro, so that there's only one translatable
+ * string per call not two.
+ */
 #ifndef FRONTEND
-/* We use only 3- and 4-parameter elog calls in this file, for simplicity */
-/* NOTE: caller must provide gettext call around str! */
-#define log_error(str, param)	elog(LOG, str, param)
-#define log_error4(str, param, arg1)	elog(LOG, str, param, arg1)
+#define log_error(errcodefn, ...) \
+	ereport(LOG, (errcodefn, errmsg_internal(__VA_ARGS__)))
 #else
-#define log_error(str, param)	(fprintf(stderr, str, param), fputc('\n', stderr))
-#define log_error4(str, param, arg1)	(fprintf(stderr, str, param, arg1), fputc('\n', stderr))
+#define log_error(errcodefn, ...) \
+	(fprintf(stderr, __VA_ARGS__), fputc('\n', stderr))
 #endif
 
 #ifdef _MSC_VER
@@ -129,8 +147,8 @@ find_my_exec(const char *argv0, char *retpath)
 
 	if (!getcwd(cwd, MAXPGPATH))
 	{
-		log_error(_("could not identify current directory: %s"),
-				  strerror(errno));
+		log_error(errcode_for_file_access(),
+				  _("could not identify current directory: %m"));
 		return -1;
 	}
 
@@ -148,7 +166,8 @@ find_my_exec(const char *argv0, char *retpath)
 		if (validate_exec(retpath) == 0)
 			return resolve_symlinks(retpath);
 
-		log_error(_("invalid binary \"%s\""), retpath);
+		log_error(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+				  _("invalid binary \"%s\""), retpath);
 		return -1;
 	}
 
@@ -197,14 +216,16 @@ find_my_exec(const char *argv0, char *retpath)
 				case -1:		/* wasn't even a candidate, keep looking */
 					break;
 				case -2:		/* found but disqualified */
-					log_error(_("could not read binary \"%s\""),
+					log_error(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+							  _("could not read binary \"%s\""),
 							  retpath);
 					break;
 			}
 		} while (*endp);
 	}
 
-	log_error(_("could not find a \"%s\" to execute"), argv0);
+	log_error(errcode(ERRCODE_UNDEFINED_FILE),
+			  _("could not find a \"%s\" to execute"), argv0);
 	return -1;
 }
 
@@ -243,8 +264,8 @@ resolve_symlinks(char *path)
 	 */
 	if (!getcwd(orig_wd, MAXPGPATH))
 	{
-		log_error(_("could not identify current directory: %s"),
-				  strerror(errno));
+		log_error(errcode_for_file_access(),
+				  _("could not identify current directory: %m"));
 		return -1;
 	}
 
@@ -259,7 +280,8 @@ resolve_symlinks(char *path)
 			*lsep = '\0';
 			if (chdir(path) == -1)
 			{
-				log_error4(_("could not change directory to \"%s\": %s"), path, strerror(errno));
+				log_error(errcode_for_file_access(),
+						  _("could not change directory to \"%s\": %m"), path);
 				return -1;
 			}
 			fname = lsep + 1;
@@ -271,10 +293,12 @@ resolve_symlinks(char *path)
 			!S_ISLNK(buf.st_mode))
 			break;
 
+		errno = 0;
 		rllen = readlink(fname, link_buf, sizeof(link_buf));
 		if (rllen < 0 || rllen >= sizeof(link_buf))
 		{
-			log_error(_("could not read symbolic link \"%s\""), fname);
+			log_error(errcode_for_file_access(),
+					  _("could not read symbolic link \"%s\": %m"), fname);
 			return -1;
 		}
 		link_buf[rllen] = '\0';
@@ -286,8 +310,8 @@ resolve_symlinks(char *path)
 
 	if (!getcwd(path, MAXPGPATH))
 	{
-		log_error(_("could not identify current directory: %s"),
-				  strerror(errno));
+		log_error(errcode_for_file_access(),
+				  _("could not identify current directory: %m"));
 		return -1;
 	}
 	join_path_components(path, path, link_buf);
@@ -295,7 +319,8 @@ resolve_symlinks(char *path)
 
 	if (chdir(orig_wd) == -1)
 	{
-		log_error4(_("could not change directory to \"%s\": %s"), orig_wd, strerror(errno));
+		log_error(errcode_for_file_access(),
+				  _("could not change directory to \"%s\": %m"), orig_wd);
 		return -1;
 	}
 #endif							/* HAVE_READLINK */
@@ -525,17 +550,15 @@ pclose_check(FILE *stream)
 	if (exitstatus == -1)
 	{
 		/* pclose() itself failed, and hopefully set errno */
-		log_error(_("pclose failed: %s"), strerror(errno));
+		log_error(errcode(ERRCODE_SYSTEM_ERROR),
+				  _("pclose failed: %m"));
 	}
 	else
 	{
 		reason = wait_result_to_str(exitstatus);
-		log_error("%s", reason);
-#ifdef FRONTEND
-		free(reason);
-#else
+		log_error(errcode(ERRCODE_SYSTEM_ERROR),
+				  "%s", reason);
 		pfree(reason);
-#endif
 	}
 	return exitstatus;
 }
@@ -608,6 +631,31 @@ set_pglocale_pgservice(const char *argv0, const char *app)
 	}
 }
 
+#ifdef EXEC_BACKEND
+/*
+ * For the benefit of PostgreSQL developers testing EXEC_BACKEND on Unix
+ * systems (code paths normally exercised only on Windows), provide a way to
+ * disable address space layout randomization, if we know how on this platform.
+ * Otherwise, backends may fail to attach to shared memory at the fixed address
+ * chosen by the postmaster.  (See also the macOS-specific hack in
+ * sysv_shmem.c.)
+ */
+int
+pg_disable_aslr(void)
+{
+#if defined(HAVE_SYS_PERSONALITY_H)
+	return personality(ADDR_NO_RANDOMIZE);
+#elif defined(HAVE_SYS_PROCCTL_H) && defined(PROC_ASLR_FORCE_DISABLE)
+	int			data = PROC_ASLR_FORCE_DISABLE;
+
+	return procctl(P_PID, 0, PROC_ASLR_CTL, &data);
+#else
+	errno = ENOSYS;
+	return -1;
+#endif
+}
+#endif
+
 #ifdef WIN32
 
 /*
@@ -656,19 +704,24 @@ AddUserToTokenDacl(HANDLE hToken)
 			ptdd = (TOKEN_DEFAULT_DACL *) LocalAlloc(LPTR, dwSize);
 			if (ptdd == NULL)
 			{
-				log_error("could not allocate %lu bytes of memory", dwSize);
+				log_error(errcode(ERRCODE_OUT_OF_MEMORY),
+						  _("out of memory"));
 				goto cleanup;
 			}
 
 			if (!GetTokenInformation(hToken, tic, (LPVOID) ptdd, dwSize, &dwSize))
 			{
-				log_error("could not get token information: error code %lu", GetLastError());
+				log_error(errcode(ERRCODE_SYSTEM_ERROR),
+						  "could not get token information: error code %lu",
+						  GetLastError());
 				goto cleanup;
 			}
 		}
 		else
 		{
-			log_error("could not get token information buffer size: error code %lu", GetLastError());
+			log_error(errcode(ERRCODE_SYSTEM_ERROR),
+					  "could not get token information buffer size: error code %lu",
+					  GetLastError());
 			goto cleanup;
 		}
 	}
@@ -678,7 +731,9 @@ AddUserToTokenDacl(HANDLE hToken)
 						   (DWORD) sizeof(ACL_SIZE_INFORMATION),
 						   AclSizeInformation))
 	{
-		log_error("could not get ACL information: error code %lu", GetLastError());
+		log_error(errcode(ERRCODE_SYSTEM_ERROR),
+				  "could not get ACL information: error code %lu",
+				  GetLastError());
 		goto cleanup;
 	}
 
@@ -694,13 +749,15 @@ AddUserToTokenDacl(HANDLE hToken)
 	pacl = (PACL) LocalAlloc(LPTR, dwNewAclSize);
 	if (pacl == NULL)
 	{
-		log_error("could not allocate %lu bytes of memory", dwNewAclSize);
+		log_error(errcode(ERRCODE_OUT_OF_MEMORY),
+				  _("out of memory"));
 		goto cleanup;
 	}
 
 	if (!InitializeAcl(pacl, dwNewAclSize, ACL_REVISION))
 	{
-		log_error("could not initialize ACL: error code %lu", GetLastError());
+		log_error(errcode(ERRCODE_SYSTEM_ERROR),
+				  "could not initialize ACL: error code %lu", GetLastError());
 		goto cleanup;
 	}
 
@@ -709,13 +766,15 @@ AddUserToTokenDacl(HANDLE hToken)
 	{
 		if (!GetAce(ptdd->DefaultDacl, i, (LPVOID *) &pace))
 		{
-			log_error("could not get ACE: error code %lu", GetLastError());
+			log_error(errcode(ERRCODE_SYSTEM_ERROR),
+					  "could not get ACE: error code %lu", GetLastError());
 			goto cleanup;
 		}
 
 		if (!AddAce(pacl, ACL_REVISION, MAXDWORD, pace, ((PACE_HEADER) pace)->AceSize))
 		{
-			log_error("could not add ACE: error code %lu", GetLastError());
+			log_error(errcode(ERRCODE_SYSTEM_ERROR),
+					  "could not add ACE: error code %lu", GetLastError());
 			goto cleanup;
 		}
 	}
@@ -723,7 +782,9 @@ AddUserToTokenDacl(HANDLE hToken)
 	/* Add the new ACE for the current user */
 	if (!AddAccessAllowedAceEx(pacl, ACL_REVISION, OBJECT_INHERIT_ACE, GENERIC_ALL, pTokenUser->User.Sid))
 	{
-		log_error("could not add access allowed ACE: error code %lu", GetLastError());
+		log_error(errcode(ERRCODE_SYSTEM_ERROR),
+				  "could not add access allowed ACE: error code %lu",
+				  GetLastError());
 		goto cleanup;
 	}
 
@@ -732,7 +793,9 @@ AddUserToTokenDacl(HANDLE hToken)
 
 	if (!SetTokenInformation(hToken, tic, (LPVOID) &tddNew, dwNewAclSize))
 	{
-		log_error("could not set token information: error code %lu", GetLastError());
+		log_error(errcode(ERRCODE_SYSTEM_ERROR),
+				  "could not set token information: error code %lu",
+				  GetLastError());
 		goto cleanup;
 	}
 
@@ -778,13 +841,16 @@ GetTokenUser(HANDLE hToken, PTOKEN_USER *ppTokenUser)
 
 			if (*ppTokenUser == NULL)
 			{
-				log_error("could not allocate %lu bytes of memory", dwLength);
+				log_error(errcode(ERRCODE_OUT_OF_MEMORY),
+						  _("out of memory"));
 				return FALSE;
 			}
 		}
 		else
 		{
-			log_error("could not get token information buffer size: error code %lu", GetLastError());
+			log_error(errcode(ERRCODE_SYSTEM_ERROR),
+					  "could not get token information buffer size: error code %lu",
+					  GetLastError());
 			return FALSE;
 		}
 	}
@@ -798,7 +864,9 @@ GetTokenUser(HANDLE hToken, PTOKEN_USER *ppTokenUser)
 		LocalFree(*ppTokenUser);
 		*ppTokenUser = NULL;
 
-		log_error("could not get token information: error code %lu", GetLastError());
+		log_error(errcode(ERRCODE_SYSTEM_ERROR),
+				  "could not get token information: error code %lu",
+				  GetLastError());
 		return FALSE;
 	}
 

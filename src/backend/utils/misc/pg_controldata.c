@@ -5,7 +5,7 @@
  * Routines to expose the contents of the control data file via
  * a set of SQL functions.
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -16,6 +16,7 @@
 #include "postgres.h"
 
 #include "access/htup_details.h"
+#include "access/transam.h"
 #include "access/xlog_internal.h"
 #include "access/xlog.h"
 #include "catalog/pg_control.h"
@@ -42,7 +43,7 @@ pg_control_system(PG_FUNCTION_ARGS)
 	 * Construct a tuple descriptor for the result row.  This must match this
 	 * function's pg_proc entry!
 	 */
-	tupdesc = CreateTemplateTupleDesc(4, false);
+	tupdesc = CreateTemplateTupleDesc(4);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pg_control_version",
 					   INT4OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "catalog_version_no",
@@ -55,7 +56,7 @@ pg_control_system(PG_FUNCTION_ARGS)
 
 	/* read the control file */
 	LWLockAcquire(ControlFileLock, LW_SHARED);
-	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	ControlFile = get_controlfile(DataDir, &crc_ok);
 	LWLockRelease(ControlFileLock);
 	if (!crc_ok)
 		ereport(ERROR,
@@ -94,7 +95,7 @@ pg_control_checkpoint(PG_FUNCTION_ARGS)
 	 * Construct a tuple descriptor for the result row.  This must match this
 	 * function's pg_proc entry!
 	 */
-	tupdesc = CreateTemplateTupleDesc(18, false);
+	tupdesc = CreateTemplateTupleDesc(18);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "checkpoint_lsn",
 					   LSNOID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "redo_lsn",
@@ -135,7 +136,7 @@ pg_control_checkpoint(PG_FUNCTION_ARGS)
 
 	/* Read the control file. */
 	LWLockAcquire(ControlFileLock, LW_SHARED);
-	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	ControlFile = get_controlfile(DataDir, &crc_ok);
 	LWLockRelease(ControlFileLock);
 	if (!crc_ok)
 		ereport(ERROR,
@@ -169,8 +170,8 @@ pg_control_checkpoint(PG_FUNCTION_ARGS)
 	nulls[5] = false;
 
 	values[6] = CStringGetTextDatum(psprintf("%u:%u",
-											 ControlFile->checkPointCopy.nextXidEpoch,
-											 ControlFile->checkPointCopy.nextXid));
+											 EpochFromFullTransactionId(ControlFile->checkPointCopy.nextFullXid),
+											 XidFromFullTransactionId(ControlFile->checkPointCopy.nextFullXid)));
 	nulls[6] = false;
 
 	values[7] = ObjectIdGetDatum(ControlFile->checkPointCopy.nextOid);
@@ -226,7 +227,7 @@ pg_control_recovery(PG_FUNCTION_ARGS)
 	 * Construct a tuple descriptor for the result row.  This must match this
 	 * function's pg_proc entry!
 	 */
-	tupdesc = CreateTemplateTupleDesc(5, false);
+	tupdesc = CreateTemplateTupleDesc(5);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "min_recovery_end_lsn",
 					   LSNOID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "min_recovery_end_timeline",
@@ -241,7 +242,7 @@ pg_control_recovery(PG_FUNCTION_ARGS)
 
 	/* read the control file */
 	LWLockAcquire(ControlFileLock, LW_SHARED);
-	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	ControlFile = get_controlfile(DataDir, &crc_ok);
 	LWLockRelease(ControlFileLock);
 	if (!crc_ok)
 		ereport(ERROR,
@@ -281,7 +282,7 @@ pg_control_init(PG_FUNCTION_ARGS)
 	 * Construct a tuple descriptor for the result row.  This must match this
 	 * function's pg_proc entry!
 	 */
-	tupdesc = CreateTemplateTupleDesc(12, false);
+	tupdesc = CreateTemplateTupleDesc(12);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "max_data_alignment",
 					   INT4OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2, "database_block_size",
@@ -310,7 +311,7 @@ pg_control_init(PG_FUNCTION_ARGS)
 
 	/* read the control file */
 	LWLockAcquire(ControlFileLock, LW_SHARED);
-	ControlFile = get_controlfile(DataDir, NULL, &crc_ok);
+	ControlFile = get_controlfile(DataDir, &crc_ok);
 	LWLockRelease(ControlFileLock);
 	if (!crc_ok)
 		ereport(ERROR,

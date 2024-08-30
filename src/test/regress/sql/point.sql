@@ -1,6 +1,9 @@
 --
 -- POINT
 --
+
+-- avoid bit-exact output here because operations may not be bit-exact.
+SET extra_float_digits = 0;
 -- PGXC: point type cannot use ORDER BY so table
 -- is replicated for regression tests whatever the cluster configuration
 
@@ -16,6 +19,12 @@ INSERT INTO POINT_TBL(f1) VALUES ('(5.1, 34.5)');
 
 INSERT INTO POINT_TBL(f1) VALUES ('(-5.0,-12.0)');
 
+INSERT INTO POINT_TBL(f1) VALUES ('(1e-300,-1e-300)');	-- To underflow
+
+INSERT INTO POINT_TBL(f1) VALUES ('(1e+300,Inf)');		-- To overflow
+
+INSERT INTO POINT_TBL(f1) VALUES (' ( Nan , NaN ) ');
+
 -- bad format points
 INSERT INTO POINT_TBL(f1) VALUES ('asdfasdf');
 
@@ -23,7 +32,11 @@ INSERT INTO POINT_TBL(f1) VALUES ('10.0,10.0');
 
 INSERT INTO POINT_TBL(f1) VALUES ('(10.0 10.0)');
 
+INSERT INTO POINT_TBL(f1) VALUES ('(10.0, 10.0) x');
+
 INSERT INTO POINT_TBL(f1) VALUES ('(10.0,10.0');
+
+INSERT INTO POINT_TBL(f1) VALUES ('(10.0, 1e+500)');	-- Out of range
 
 
 SELECT '' AS six, * FROM POINT_TBL;

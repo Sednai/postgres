@@ -32,7 +32,7 @@
  *	  - SH_STORE_HASH - if defined the hash is stored in the elements
  *	  - SH_GET_HASH(tb, a) - return the field to store the hash in
  *
- *	  For examples of usage look at simplehash.c (file local definition) and
+ *	  For examples of usage look at tidbitmap.c (file local definition) and
  *	  execnodes.h/execGrouping.c (exposed declaration, file local
  *	  implementation).
  *
@@ -65,8 +65,8 @@
 /* type declarations */
 #define SH_TYPE SH_MAKE_NAME(hash)
 #define SH_STATUS SH_MAKE_NAME(status)
-#define SH_STATUS_EMPTY SH_MAKE_NAME(EMPTY)
-#define SH_STATUS_IN_USE SH_MAKE_NAME(IN_USE)
+#define SH_STATUS_EMPTY SH_MAKE_NAME(SH_EMPTY)
+#define SH_STATUS_IN_USE SH_MAKE_NAME(SH_IN_USE)
 #define SH_ITERATOR SH_MAKE_NAME(iterator)
 
 /* function declarations */
@@ -139,7 +139,7 @@ typedef struct SH_ITERATOR
 
 /* externally visible function prototypes */
 SH_SCOPE	SH_TYPE *SH_CREATE(MemoryContext ctx, uint32 nelements,
-		  void *private_data);
+							   void *private_data);
 SH_SCOPE void SH_DESTROY(SH_TYPE * tb);
 SH_SCOPE void SH_RESET(SH_TYPE * tb);
 SH_SCOPE void SH_GROW(SH_TYPE * tb, uint64 newsize);
@@ -187,6 +187,16 @@ SH_SCOPE void SH_STAT(SH_TYPE * tb);
 #define SH_COMPARE_KEYS(tb, ahash, akey, b) (SH_EQUAL(tb, b->SH_KEY, akey))
 #endif
 
+/*
+ * Wrap the following definitions in include guards, to avoid multiple
+ * definition errors if this header is included more than once.  The rest of
+ * the file deliberately has no include guards, because it can be included
+ * with different parameters to define functions and types with non-colliding
+ * names.
+ */
+#ifndef SIMPLEHASH_H
+#define SIMPLEHASH_H
+
 /* FIXME: can we move these to a central location? */
 
 /* calculate ceil(log base 2) of num */
@@ -207,6 +217,8 @@ sh_pow2(uint64 num)
 {
 	return ((uint64) 1) << sh_log2(num);
 }
+
+#endif
 
 /*
  * Compute sizing parameters for hashtable. Called when creating and growing
@@ -760,7 +772,6 @@ SH_DELETE(SH_TYPE * tb, SH_KEY_TYPE key)
 SH_SCOPE void
 SH_START_ITERATE(SH_TYPE * tb, SH_ITERATOR * iter)
 {
-	uint32		i;
 	uint64		startelem = PG_UINT64_MAX;
 
 	/*
@@ -768,7 +779,7 @@ SH_START_ITERATE(SH_TYPE * tb, SH_ITERATOR * iter)
 	 * supported, we want to start/end at an element that cannot be affected
 	 * by elements being shifted.
 	 */
-	for (i = 0; i < tb->size; i++)
+	for (uint32 i = 0; i < tb->size; i++)
 	{
 		SH_ELEMENT_TYPE *entry = &tb->data[i];
 
@@ -898,6 +909,9 @@ SH_STAT(SH_TYPE * tb)
 			max_collisions = curcoll;
 	}
 
+	/* large enough to be worth freeing, even if just used for debugging */
+	pfree(collisions);
+
 	if (tb->members > 0)
 	{
 		fillfactor = tb->members / ((double) tb->size);
@@ -931,6 +945,7 @@ SH_STAT(SH_TYPE * tb)
 #undef SH_GET_HASH
 #undef SH_STORE_HASH
 #undef SH_USE_NONDEFAULT_ALLOCATOR
+#undef SH_EQUAL
 
 /* undefine locally declared macros */
 #undef SH_MAKE_PREFIX

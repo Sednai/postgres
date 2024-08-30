@@ -4,7 +4,7 @@
  *	  postgres transaction system definitions
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
  * 
@@ -15,6 +15,7 @@
 #ifndef XACT_H
 #define XACT_H
 
+#include "access/transam.h"
 #include "access/xlogreader.h"
 #include "lib/stringinfo.h"
 #include "nodes/pg_list.h"
@@ -58,6 +59,9 @@ extern PGDLLIMPORT int XactIsoLevel;
 extern bool DefaultXactReadOnly;
 extern bool XactReadOnly;
 
+/* flag for logging statements in this transaction */
+extern bool xact_is_sampled;
+
 /*
  * Xact is deferrable -- only meaningful (currently) for read only
  * SERIALIZABLE transactions
@@ -92,10 +96,10 @@ extern int	synchronous_commit;
 extern int	MyXactFlags;
 
 /*
- * XACT_FLAGS_ACCESSEDTEMPREL - set when a temporary relation is accessed. We
- * don't allow PREPARE TRANSACTION in that case.
+ * XACT_FLAGS_ACCESSEDTEMPNAMESPACE - set when a temporary object is accessed.
+ * We don't allow PREPARE TRANSACTION in that case.
  */
-#define XACT_FLAGS_ACCESSEDTEMPREL				(1U << 0)
+#define XACT_FLAGS_ACCESSEDTEMPNAMESPACE		(1U << 0)
 
 /*
  * XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK - records whether the top level xact
@@ -104,23 +108,17 @@ extern int	MyXactFlags;
 #define XACT_FLAGS_ACQUIREDACCESSEXCLUSIVELOCK	(1U << 1)
 
 /*
- * XACT_FLAGS_ACCESSEDTEMPNAMESPACE - set when a temporary namespace is
- * accessed.  We don't allow PREPARE TRANSACTION in that case.
- */
-#define XACT_FLAGS_ACCESSEDTEMPNAMESPACE		(1U << 2)
-
-/*
  * XACT_FLAGS_NEEDIMMEDIATECOMMIT - records whether the top level statement
  * is one that requires immediate commit, such as CREATE DATABASE.
  */
-#define XACT_FLAGS_NEEDIMMEDIATECOMMIT			(1U << 3)
+#define XACT_FLAGS_NEEDIMMEDIATECOMMIT			(1U << 2)
 
 /*
  * XACT_FLAGS_PIPELINING - set when we complete an extended-query-protocol
  * Execute message.  This is useful for detecting that an implicit transaction
  * block has been created via pipelining.
  */
-#define XACT_FLAGS_PIPELINING					(1U << 4)
+#define XACT_FLAGS_PIPELINING					(1U << 3)
 
 /*
  *	start- and end-of-transaction callbacks for dynamically loaded modules
@@ -400,6 +398,10 @@ extern GlobalTransactionId GetTopGlobalTransactionId(void);
 extern void SetAuxilliaryTransactionId(GlobalTransactionId gxid);
 extern void SetTopGlobalTransactionId(GlobalTransactionId gxid);
 #endif
+extern FullTransactionId GetTopFullTransactionId(void);
+extern FullTransactionId GetTopFullTransactionIdIfAny(void);
+extern FullTransactionId GetCurrentFullTransactionId(void);
+extern FullTransactionId GetCurrentFullTransactionIdIfAny(void);
 extern void MarkCurrentTransactionIdLoggedIfAny(void);
 extern bool SubTransactionIsActive(SubTransactionId subxid);
 extern CommandId GetCurrentCommandId(bool used);
@@ -417,15 +419,17 @@ extern bool TransactionIdIsCurrentTransactionId(TransactionId xid);
 extern void CommandCounterIncrement(void);
 extern void ForceSyncCommit(void);
 extern void StartTransactionCommand(void);
+extern void SaveTransactionCharacteristics(void);
+extern void RestoreTransactionCharacteristics(void);
 extern void CommitTransactionCommand(void);
 extern void AbortCurrentTransaction(void);
 #ifdef PGXC
 extern void AbortCurrentTransactionOnce(void);
 #endif
 extern void BeginTransactionBlock(void);
-extern bool EndTransactionBlock(void);
+extern bool EndTransactionBlock(bool chain);
 extern bool PrepareTransactionBlock(const char *gid);
-extern void UserAbortTransactionBlock(void);
+extern void UserAbortTransactionBlock(bool chain);
 extern void BeginImplicitTransactionBlock(void);
 extern void EndImplicitTransactionBlock(void);
 extern void ReleaseSavepoint(const char *name);
@@ -475,19 +479,19 @@ extern bool IsPGXCNodeXactDatanodeDirect(void);
 extern int	xactGetCommittedChildren(TransactionId **ptr);
 
 extern XLogRecPtr XactLogCommitRecord(TimestampTz commit_time,
-					int nsubxacts, TransactionId *subxacts,
-					int nrels, RelFileNode *rels,
-					int nmsgs, SharedInvalidationMessage *msgs,
-					bool relcacheInval, bool forceSync,
-					int xactflags,
-					TransactionId twophase_xid,
-					const char *twophase_gid);
+									  int nsubxacts, TransactionId *subxacts,
+									  int nrels, RelFileNode *rels,
+									  int nmsgs, SharedInvalidationMessage *msgs,
+									  bool relcacheInval, bool forceSync,
+									  int xactflags,
+									  TransactionId twophase_xid,
+									  const char *twophase_gid);
 
 extern XLogRecPtr XactLogAbortRecord(TimestampTz abort_time,
-				   int nsubxacts, TransactionId *subxacts,
-				   int nrels, RelFileNode *rels,
-				   int xactflags, TransactionId twophase_xid,
-				   const char *twophase_gid);
+									 int nsubxacts, TransactionId *subxacts,
+									 int nrels, RelFileNode *rels,
+									 int xactflags, TransactionId twophase_xid,
+									 const char *twophase_gid);
 extern void xact_redo(XLogReaderState *record);
 
 /* xactdesc.c */

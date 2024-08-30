@@ -11,7 +11,7 @@
  * Transactions on Mathematical Software, Vol. 24, No. 4, December 1998,
  * pages 359-367.
  *
- * Copyright (c) 1998-2018, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/numeric.c
@@ -26,7 +26,6 @@
 #include <limits.h>
 #include <math.h>
 
-#include "access/hash.h"
 #include "catalog/pg_type.h"
 #include "common/int.h"
 #include "funcapi.h"
@@ -34,9 +33,12 @@
 #include "libpq/pqformat.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/supportnodes.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
+#include "utils/float.h"
 #include "utils/guc.h"
+#include "utils/hashutils.h"
 #include "utils/int8.h"
 #include "utils/numeric.h"
 #include "utils/sortsupport.h"
@@ -218,6 +220,13 @@ struct NumericData
 		~NUMERIC_SHORT_WEIGHT_MASK : 0) \
 	 | ((n)->choice.n_short.n_header & NUMERIC_SHORT_WEIGHT_MASK)) \
 	: ((n)->choice.n_long.n_weight))
+
+/*
+ * Maximum weight of a stored Numeric value (based on the use of int16 for the
+ * weight in NumericLong).  Note that intermediate values held in NumericVar
+ * and NumericSumAccum variables may have much larger weights.
+ */
+#define NUMERIC_WEIGHT_MAX			PG_INT16_MAX
 
 /* ----------
  * NumericVar is the format we use for arithmetic.  The digit-array part
@@ -456,7 +465,7 @@ static void free_var(NumericVar *var);
 static void zero_var(NumericVar *var);
 
 static const char *set_var_from_str(const char *str, const char *cp,
-				 NumericVar *dest);
+									NumericVar *dest);
 static void set_var_from_num(Numeric value, NumericVar *dest);
 static void init_var_from_num(Numeric num, NumericVar *dest);
 static void set_var_from_var(const NumericVar *value, NumericVar *dest);
@@ -464,10 +473,11 @@ static char *get_str_from_var(const NumericVar *var);
 static char *get_str_from_var_sci(const NumericVar *var, int rscale);
 
 static Numeric make_result(const NumericVar *var);
+static Numeric make_result_opt_error(const NumericVar *var, bool *error);
 
 static void apply_typmod(NumericVar *var, int32 typmod);
 
-static int32 numericvar_to_int32(const NumericVar *var);
+static bool numericvar_to_int32(const NumericVar *var, int32 *result);
 static bool numericvar_to_int64(const NumericVar *var, int64 *result);
 static void int64_to_numericvar(int64 val, NumericVar *var);
 #ifdef HAVE_INT128
@@ -483,29 +493,29 @@ static int	numeric_fast_cmp(Datum x, Datum y, SortSupport ssup);
 static int	numeric_cmp_abbrev(Datum x, Datum y, SortSupport ssup);
 
 static Datum numeric_abbrev_convert_var(const NumericVar *var,
-						   NumericSortSupport *nss);
+										NumericSortSupport *nss);
 
 static int	cmp_numerics(Numeric num1, Numeric num2);
 static int	cmp_var(const NumericVar *var1, const NumericVar *var2);
-static int cmp_var_common(const NumericDigit *var1digits, int var1ndigits,
-			   int var1weight, int var1sign,
-			   const NumericDigit *var2digits, int var2ndigits,
-			   int var2weight, int var2sign);
+static int	cmp_var_common(const NumericDigit *var1digits, int var1ndigits,
+						   int var1weight, int var1sign,
+						   const NumericDigit *var2digits, int var2ndigits,
+						   int var2weight, int var2sign);
 static void add_var(const NumericVar *var1, const NumericVar *var2,
-		NumericVar *result);
+					NumericVar *result);
 static void sub_var(const NumericVar *var1, const NumericVar *var2,
-		NumericVar *result);
+					NumericVar *result);
 static void mul_var(const NumericVar *var1, const NumericVar *var2,
-		NumericVar *result,
-		int rscale);
+					NumericVar *result,
+					int rscale);
 static void div_var(const NumericVar *var1, const NumericVar *var2,
-		NumericVar *result,
-		int rscale, bool round);
+					NumericVar *result,
+					int rscale, bool round);
 static void div_var_fast(const NumericVar *var1, const NumericVar *var2,
-			 NumericVar *result, int rscale, bool round);
+						 NumericVar *result, int rscale, bool round);
 static int	select_div_scale(const NumericVar *var1, const NumericVar *var2);
 static void mod_var(const NumericVar *var1, const NumericVar *var2,
-		NumericVar *result);
+					NumericVar *result);
 static void ceil_var(const NumericVar *var, NumericVar *result);
 static void floor_var(const NumericVar *var, NumericVar *result);
 
@@ -514,27 +524,27 @@ static void exp_var(const NumericVar *arg, NumericVar *result, int rscale);
 static int	estimate_ln_dweight(const NumericVar *var);
 static void ln_var(const NumericVar *arg, NumericVar *result, int rscale);
 static void log_var(const NumericVar *base, const NumericVar *num,
-		NumericVar *result);
+					NumericVar *result);
 static void power_var(const NumericVar *base, const NumericVar *exp,
-		  NumericVar *result);
+					  NumericVar *result);
 static void power_var_int(const NumericVar *base, int exp, NumericVar *result,
-			  int rscale);
+						  int rscale);
 static void power_ten_int(int exp, NumericVar *result);
 
 static int	cmp_abs(const NumericVar *var1, const NumericVar *var2);
-static int cmp_abs_common(const NumericDigit *var1digits, int var1ndigits,
-			   int var1weight,
-			   const NumericDigit *var2digits, int var2ndigits,
-			   int var2weight);
+static int	cmp_abs_common(const NumericDigit *var1digits, int var1ndigits,
+						   int var1weight,
+						   const NumericDigit *var2digits, int var2ndigits,
+						   int var2weight);
 static void add_abs(const NumericVar *var1, const NumericVar *var2,
-		NumericVar *result);
+					NumericVar *result);
 static void sub_abs(const NumericVar *var1, const NumericVar *var2,
-		NumericVar *result);
+					NumericVar *result);
 static void round_var(NumericVar *var, int rscale);
 static void trunc_var(NumericVar *var, int rscale);
 static void strip_var(NumericVar *var);
 static void compute_bucket(Numeric operand, Numeric bound1, Numeric bound2,
-			   const NumericVar *count_var, NumericVar *result_var);
+						   const NumericVar *count_var, NumericVar *result_var);
 
 static void accum_sum_add(NumericSumAccum *accum, const NumericVar *var1);
 static void accum_sum_rescale(NumericSumAccum *accum, const NumericVar *val);
@@ -881,45 +891,53 @@ numeric_send(PG_FUNCTION_ARGS)
 
 
 /*
- * numeric_transform() -
+ * numeric_support()
  *
- * Flatten calls to numeric's length coercion function that solely represent
- * increases in allowable precision.  Scale changes mutate every datum, so
- * they are unoptimizable.  Some values, e.g. 1E-1001, can only fit into an
- * unconstrained numeric, so a change from an unconstrained numeric to any
- * constrained numeric is also unoptimizable.
+ * Planner support function for the numeric() length coercion function.
+ *
+ * Flatten calls that solely represent increases in allowable precision.
+ * Scale changes mutate every datum, so they are unoptimizable.  Some values,
+ * e.g. 1E-1001, can only fit into an unconstrained numeric, so a change from
+ * an unconstrained numeric to any constrained numeric is also unoptimizable.
  */
 Datum
-numeric_transform(PG_FUNCTION_ARGS)
+numeric_support(PG_FUNCTION_ARGS)
 {
-	FuncExpr   *expr = castNode(FuncExpr, PG_GETARG_POINTER(0));
+	Node	   *rawreq = (Node *) PG_GETARG_POINTER(0);
 	Node	   *ret = NULL;
-	Node	   *typmod;
 
-	Assert(list_length(expr->args) >= 2);
-
-	typmod = (Node *) lsecond(expr->args);
-
-	if (IsA(typmod, Const) &&!((Const *) typmod)->constisnull)
+	if (IsA(rawreq, SupportRequestSimplify))
 	{
-		Node	   *source = (Node *) linitial(expr->args);
-		int32		old_typmod = exprTypmod(source);
-		int32		new_typmod = DatumGetInt32(((Const *) typmod)->constvalue);
-		int32		old_scale = (old_typmod - VARHDRSZ) & 0xffff;
-		int32		new_scale = (new_typmod - VARHDRSZ) & 0xffff;
-		int32		old_precision = (old_typmod - VARHDRSZ) >> 16 & 0xffff;
-		int32		new_precision = (new_typmod - VARHDRSZ) >> 16 & 0xffff;
+		SupportRequestSimplify *req = (SupportRequestSimplify *) rawreq;
+		FuncExpr   *expr = req->fcall;
+		Node	   *typmod;
 
-		/*
-		 * If new_typmod < VARHDRSZ, the destination is unconstrained; that's
-		 * always OK.  If old_typmod >= VARHDRSZ, the source is constrained,
-		 * and we're OK if the scale is unchanged and the precision is not
-		 * decreasing.  See further notes in function header comment.
-		 */
-		if (new_typmod < (int32) VARHDRSZ ||
-			(old_typmod >= (int32) VARHDRSZ &&
-			 new_scale == old_scale && new_precision >= old_precision))
-			ret = relabel_to_typmod(source, new_typmod);
+		Assert(list_length(expr->args) >= 2);
+
+		typmod = (Node *) lsecond(expr->args);
+
+		if (IsA(typmod, Const) &&!((Const *) typmod)->constisnull)
+		{
+			Node	   *source = (Node *) linitial(expr->args);
+			int32		old_typmod = exprTypmod(source);
+			int32		new_typmod = DatumGetInt32(((Const *) typmod)->constvalue);
+			int32		old_scale = (old_typmod - VARHDRSZ) & 0xffff;
+			int32		new_scale = (new_typmod - VARHDRSZ) & 0xffff;
+			int32		old_precision = (old_typmod - VARHDRSZ) >> 16 & 0xffff;
+			int32		new_precision = (new_typmod - VARHDRSZ) >> 16 & 0xffff;
+
+			/*
+			 * If new_typmod < VARHDRSZ, the destination is unconstrained;
+			 * that's always OK.  If old_typmod >= VARHDRSZ, the source is
+			 * constrained, and we're OK if the scale is unchanged and the
+			 * precision is not decreasing.  See further notes in function
+			 * header comment.
+			 */
+			if (new_typmod < (int32) VARHDRSZ ||
+				(old_typmod >= (int32) VARHDRSZ &&
+				 new_scale == old_scale && new_precision >= old_precision))
+				ret = relabel_to_typmod(source, new_typmod);
+		}
 	}
 
 	PG_RETURN_POINTER(ret);
@@ -1225,10 +1243,15 @@ numeric_round(PG_FUNCTION_ARGS)
 		PG_RETURN_NUMERIC(make_result(&const_nan));
 
 	/*
-	 * Limit the scale value to avoid possible overflow in calculations
+	 * Limit the scale value to avoid possible overflow in calculations.
+	 *
+	 * These limits are based on the maximum number of digits a Numeric value
+	 * can have before and after the decimal point, but we must allow for one
+	 * extra digit before the decimal point, in case the most significant
+	 * digit rounds up; we must check if that causes Numeric overflow.
 	 */
-	scale = Max(scale, -NUMERIC_MAX_RESULT_SCALE);
-	scale = Min(scale, NUMERIC_MAX_RESULT_SCALE);
+	scale = Max(scale, -(NUMERIC_WEIGHT_MAX + 1) * DEC_DIGITS - 1);
+	scale = Min(scale, NUMERIC_DSCALE_MAX);
 
 	/*
 	 * Unpack the argument and round it at the proper digit position
@@ -1274,10 +1297,13 @@ numeric_trunc(PG_FUNCTION_ARGS)
 		PG_RETURN_NUMERIC(make_result(&const_nan));
 
 	/*
-	 * Limit the scale value to avoid possible overflow in calculations
+	 * Limit the scale value to avoid possible overflow in calculations.
+	 *
+	 * These limits are based on the maximum number of digits a Numeric value
+	 * can have before and after the decimal point.
 	 */
-	scale = Max(scale, -NUMERIC_MAX_RESULT_SCALE);
-	scale = Min(scale, NUMERIC_MAX_RESULT_SCALE);
+	scale = Max(scale, -(NUMERIC_WEIGHT_MAX + 1) * DEC_DIGITS);
+	scale = Min(scale, NUMERIC_DSCALE_MAX);
 
 	/*
 	 * Unpack the argument and truncate it at the proper digit position
@@ -1540,7 +1566,10 @@ width_bucket_numeric(PG_FUNCTION_ARGS)
 	}
 
 	/* if result exceeds the range of a legal int4, we ereport here */
-	result = numericvar_to_int32(&result_var);
+	if (!numericvar_to_int32(&result_var, &result))
+		ereport(ERROR,
+				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+				 errmsg("integer out of range")));
 
 	free_var(&count_var);
 	free_var(&result_var);
@@ -2388,6 +2417,23 @@ numeric_add(PG_FUNCTION_ARGS)
 {
 	Numeric		num1 = PG_GETARG_NUMERIC(0);
 	Numeric		num2 = PG_GETARG_NUMERIC(1);
+	Numeric		res;
+
+	res = numeric_add_opt_error(num1, num2, NULL);
+
+	PG_RETURN_NUMERIC(res);
+}
+
+/*
+ * numeric_add_opt_error() -
+ *
+ *	Internal version of numeric_add().  If "*have_error" flag is provided,
+ *	on error it's set to true, NULL returned.  This is helpful when caller
+ *	need to handle errors by itself.
+ */
+Numeric
+numeric_add_opt_error(Numeric num1, Numeric num2, bool *have_error)
+{
 	NumericVar	arg1;
 	NumericVar	arg2;
 	NumericVar	result;
@@ -2397,7 +2443,7 @@ numeric_add(PG_FUNCTION_ARGS)
 	 * Handle NaN
 	 */
 	if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
-		PG_RETURN_NUMERIC(make_result(&const_nan));
+		return make_result(&const_nan);
 
 	/*
 	 * Unpack the values, let add_var() compute the result and return it.
@@ -2408,11 +2454,11 @@ numeric_add(PG_FUNCTION_ARGS)
 	init_var(&result);
 	add_var(&arg1, &arg2, &result);
 
-	res = make_result(&result);
+	res = make_result_opt_error(&result, have_error);
 
 	free_var(&result);
 
-	PG_RETURN_NUMERIC(res);
+	return res;
 }
 
 
@@ -2426,6 +2472,24 @@ numeric_sub(PG_FUNCTION_ARGS)
 {
 	Numeric		num1 = PG_GETARG_NUMERIC(0);
 	Numeric		num2 = PG_GETARG_NUMERIC(1);
+	Numeric		res;
+
+	res = numeric_sub_opt_error(num1, num2, NULL);
+
+	PG_RETURN_NUMERIC(res);
+}
+
+
+/*
+ * numeric_sub_opt_error() -
+ *
+ *	Internal version of numeric_sub().  If "*have_error" flag is provided,
+ *	on error it's set to true, NULL returned.  This is helpful when caller
+ *	need to handle errors by itself.
+ */
+Numeric
+numeric_sub_opt_error(Numeric num1, Numeric num2, bool *have_error)
+{
 	NumericVar	arg1;
 	NumericVar	arg2;
 	NumericVar	result;
@@ -2435,7 +2499,7 @@ numeric_sub(PG_FUNCTION_ARGS)
 	 * Handle NaN
 	 */
 	if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
-		PG_RETURN_NUMERIC(make_result(&const_nan));
+		return make_result(&const_nan);
 
 	/*
 	 * Unpack the values, let sub_var() compute the result and return it.
@@ -2446,11 +2510,11 @@ numeric_sub(PG_FUNCTION_ARGS)
 	init_var(&result);
 	sub_var(&arg1, &arg2, &result);
 
-	res = make_result(&result);
+	res = make_result_opt_error(&result, have_error);
 
 	free_var(&result);
 
-	PG_RETURN_NUMERIC(res);
+	return res;
 }
 
 
@@ -2464,6 +2528,24 @@ numeric_mul(PG_FUNCTION_ARGS)
 {
 	Numeric		num1 = PG_GETARG_NUMERIC(0);
 	Numeric		num2 = PG_GETARG_NUMERIC(1);
+	Numeric		res;
+
+	res = numeric_mul_opt_error(num1, num2, NULL);
+
+	PG_RETURN_NUMERIC(res);
+}
+
+
+/*
+ * numeric_mul_opt_error() -
+ *
+ *	Internal version of numeric_mul().  If "*have_error" flag is provided,
+ *	on error it's set to true, NULL returned.  This is helpful when caller
+ *	need to handle errors by itself.
+ */
+Numeric
+numeric_mul_opt_error(Numeric num1, Numeric num2, bool *have_error)
+{
 	NumericVar	arg1;
 	NumericVar	arg2;
 	NumericVar	result;
@@ -2473,7 +2555,7 @@ numeric_mul(PG_FUNCTION_ARGS)
 	 * Handle NaN
 	 */
 	if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
-		PG_RETURN_NUMERIC(make_result(&const_nan));
+		return make_result(&const_nan);
 
 	/*
 	 * Unpack the values, let mul_var() compute the result and return it.
@@ -2495,11 +2577,11 @@ numeric_mul(PG_FUNCTION_ARGS)
 	if (result.dscale > NUMERIC_DSCALE_MAX)
 		round_var(&result, NUMERIC_DSCALE_MAX);
 
-	res = make_result(&result);
+	res = make_result_opt_error(&result, have_error);
 
 	free_var(&result);
 
-	PG_RETURN_NUMERIC(res);
+	return res;
 }
 
 
@@ -2513,6 +2595,24 @@ numeric_div(PG_FUNCTION_ARGS)
 {
 	Numeric		num1 = PG_GETARG_NUMERIC(0);
 	Numeric		num2 = PG_GETARG_NUMERIC(1);
+	Numeric		res;
+
+	res = numeric_div_opt_error(num1, num2, NULL);
+
+	PG_RETURN_NUMERIC(res);
+}
+
+
+/*
+ * numeric_div_opt_error() -
+ *
+ *	Internal version of numeric_div().  If "*have_error" flag is provided,
+ *	on error it's set to true, NULL returned.  This is helpful when caller
+ *	need to handle errors by itself.
+ */
+Numeric
+numeric_div_opt_error(Numeric num1, Numeric num2, bool *have_error)
+{
 	NumericVar	arg1;
 	NumericVar	arg2;
 	NumericVar	result;
@@ -2523,7 +2623,7 @@ numeric_div(PG_FUNCTION_ARGS)
 	 * Handle NaN
 	 */
 	if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
-		PG_RETURN_NUMERIC(make_result(&const_nan));
+		return make_result(&const_nan);
 
 	/*
 	 * Unpack the arguments
@@ -2539,15 +2639,24 @@ numeric_div(PG_FUNCTION_ARGS)
 	rscale = select_div_scale(&arg1, &arg2);
 
 	/*
+	 * If "have_error" is provided, check for division by zero here
+	 */
+	if (have_error && (arg2.ndigits == 0 || arg2.digits[0] == 0))
+	{
+		*have_error = true;
+		return NULL;
+	}
+
+	/*
 	 * Do the divide and return the result
 	 */
 	div_var(&arg1, &arg2, &result, rscale, true);
 
-	res = make_result(&result);
+	res = make_result_opt_error(&result, have_error);
 
 	free_var(&result);
 
-	PG_RETURN_NUMERIC(res);
+	return res;
 }
 
 
@@ -2604,25 +2713,52 @@ numeric_mod(PG_FUNCTION_ARGS)
 	Numeric		num1 = PG_GETARG_NUMERIC(0);
 	Numeric		num2 = PG_GETARG_NUMERIC(1);
 	Numeric		res;
+
+	res = numeric_mod_opt_error(num1, num2, NULL);
+
+	PG_RETURN_NUMERIC(res);
+}
+
+
+/*
+ * numeric_mod_opt_error() -
+ *
+ *	Internal version of numeric_mod().  If "*have_error" flag is provided,
+ *	on error it's set to true, NULL returned.  This is helpful when caller
+ *	need to handle errors by itself.
+ */
+Numeric
+numeric_mod_opt_error(Numeric num1, Numeric num2, bool *have_error)
+{
+	Numeric		res;
 	NumericVar	arg1;
 	NumericVar	arg2;
 	NumericVar	result;
 
 	if (NUMERIC_IS_NAN(num1) || NUMERIC_IS_NAN(num2))
-		PG_RETURN_NUMERIC(make_result(&const_nan));
+		return make_result(&const_nan);
 
 	init_var_from_num(num1, &arg1);
 	init_var_from_num(num2, &arg2);
 
 	init_var(&result);
 
+	/*
+	 * If "have_error" is provided, check for division by zero here
+	 */
+	if (have_error && (arg2.ndigits == 0 || arg2.digits[0] == 0))
+	{
+		*have_error = true;
+		return NULL;
+	}
+
 	mod_var(&arg1, &arg2, &result);
 
-	res = make_result(&result);
+	res = make_result_opt_error(&result, NULL);
 
 	free_var(&result);
 
-	PG_RETURN_NUMERIC(res);
+	return res;
 }
 
 
@@ -3075,48 +3211,77 @@ int4_numeric(PG_FUNCTION_ARGS)
 	PG_RETURN_NUMERIC(res);
 }
 
-
-Datum
-numeric_int4(PG_FUNCTION_ARGS)
+int32
+numeric_int4_opt_error(Numeric num, bool *have_error)
 {
-	Numeric		num = PG_GETARG_NUMERIC(0);
 	NumericVar	x;
 	int32		result;
 
 	/* XXX would it be better to return NULL? */
 	if (NUMERIC_IS_NAN(num))
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("cannot convert NaN to integer")));
+	{
+		if (have_error)
+		{
+			*have_error = true;
+			return 0;
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("cannot convert NaN to integer")));
+		}
+	}
 
 	/* Convert to variable format, then convert to int4 */
 	init_var_from_num(num, &x);
-	result = numericvar_to_int32(&x);
-	PG_RETURN_INT32(result);
+
+	if (!numericvar_to_int32(&x, &result))
+	{
+		if (have_error)
+		{
+			*have_error = true;
+			return 0;
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("integer out of range")));
+		}
+	}
+
+	return result;
+}
+
+Datum
+numeric_int4(PG_FUNCTION_ARGS)
+{
+	Numeric		num = PG_GETARG_NUMERIC(0);
+
+	PG_RETURN_INT32(numeric_int4_opt_error(num, NULL));
 }
 
 /*
  * Given a NumericVar, convert it to an int32. If the NumericVar
- * exceeds the range of an int32, raise the appropriate error via
- * ereport(). The input NumericVar is *not* free'd.
+ * exceeds the range of an int32, false is returned, otherwise true is returned.
+ * The input NumericVar is *not* free'd.
  */
-static int32
-numericvar_to_int32(const NumericVar *var)
+static bool
+numericvar_to_int32(const NumericVar *var, int32 *result)
 {
 	int64		val;
 
 	if (!numericvar_to_int64(var, &val))
-		ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				 errmsg("integer out of range")));
+		return false;
 
 	if (unlikely(val < PG_INT32_MIN) || unlikely(val > PG_INT32_MAX))
-		ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				 errmsg("integer out of range")));
+		return false;
 
 	/* Down-convert to int4 */
-	return (int32) val;
+	*result = (int32) val;
+
+	return true;
 }
 
 Datum
@@ -6067,13 +6232,15 @@ get_str_from_var_sci(const NumericVar *var, int rscale)
 
 
 /*
- * make_result() -
+ * make_result_opt_error() -
  *
  *	Create the packed db numeric format in palloc()'d memory from
- *	a variable.
+ *	a variable.  If "*have_error" flag is provided, on error it's set to
+ *	true, NULL returned.  This is helpful when caller need to handle errors
+ *	by itself.
  */
 static Numeric
-make_result(const NumericVar *var)
+make_result_opt_error(const NumericVar *var, bool *have_error)
 {
 	Numeric		result;
 	NumericDigit *digits = var->digits;
@@ -6144,12 +6311,34 @@ make_result(const NumericVar *var)
 	/* Check for overflow of int16 fields */
 	if (NUMERIC_WEIGHT(result) != weight ||
 		NUMERIC_DSCALE(result) != var->dscale)
-		ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				 errmsg("value overflows numeric format")));
+	{
+		if (have_error)
+		{
+			*have_error = true;
+			return NULL;
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("value overflows numeric format")));
+		}
+	}
 
 	dump_numeric("make_result()", result);
 	return result;
+}
+
+
+/*
+ * make_result() -
+ *
+ *	An interface to make_result_opt_error() without "have_error" argument.
+ */
+static Numeric
+make_result(const NumericVar *var)
+{
+	return make_result_opt_error(var, NULL);
 }
 
 
@@ -8313,7 +8502,8 @@ power_var(const NumericVar *base, const NumericVar *exp, NumericVar *result)
 	/*
 	 * Set the scale for the low-precision calculation, computing ln(base) to
 	 * around 8 significant digits.  Note that ln_dweight may be as small as
-	 * -SHRT_MAX, so the scale may exceed NUMERIC_MAX_DISPLAY_SCALE here.
+	 * -NUMERIC_DSCALE_MAX, so the scale may exceed NUMERIC_MAX_DISPLAY_SCALE
+	 * here.
 	 */
 	local_rscale = 8 - ln_dweight;
 	local_rscale = Max(local_rscale, NUMERIC_MIN_DISPLAY_SCALE);
@@ -8453,7 +8643,7 @@ power_var_int(const NumericVar *base, int exp, NumericVar *result, int rscale)
 	 * Apply crude overflow/underflow tests so we can exit early if the result
 	 * certainly will overflow/underflow.
 	 */
-	if (f > 3 * SHRT_MAX * DEC_DIGITS)
+	if (f > 3 * NUMERIC_WEIGHT_MAX * DEC_DIGITS)
 		ereport(ERROR,
 				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
 				 errmsg("value overflows numeric format")));
@@ -8523,7 +8713,8 @@ power_var_int(const NumericVar *base, int exp, NumericVar *result, int rscale)
 		 * int16, the final result is guaranteed to overflow (or underflow, if
 		 * exp < 0), so we can give up before wasting too many cycles.
 		 */
-		if (base_prod.weight > SHRT_MAX || result->weight > SHRT_MAX)
+		if (base_prod.weight > NUMERIC_WEIGHT_MAX ||
+			result->weight > NUMERIC_WEIGHT_MAX)
 		{
 			/* overflow, unless neg, in which case result should be 0 */
 			if (!neg)

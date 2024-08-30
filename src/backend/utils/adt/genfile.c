@@ -4,7 +4,7 @@
  *		Functions for direct access to files
  *
  *
- * Copyright (c) 2004-2018, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2019, PostgreSQL Global Development Group
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -23,6 +23,7 @@
 #include "access/htup_details.h"
 #include "access/xlog_internal.h"
 #include "catalog/pg_authid.h"
+#include "catalog/pg_tablespace_d.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "mb/pg_wchar.h"
@@ -31,6 +32,7 @@
 #include "storage/fd.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
+#include "utils/syscache.h"
 #include "utils/timestamp.h"
 
 
@@ -246,7 +248,9 @@ pg_read_file(PG_FUNCTION_ARGS)
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
 				 (errmsg("must be superuser to read files with adminpack 1.0"),
-				  errhint("Consider using pg_read_file(), which is part of core, instead."))));
+		/* translator: %s is a SQL function name */
+				  errhint("Consider using %s, which is part of core, instead.",
+						  "pg_read_file()"))));
 
 	/* handle optional arguments */
 	if (PG_NARGS() >= 3)
@@ -415,7 +419,7 @@ pg_stat_file(PG_FUNCTION_ARGS)
 	 * This record type had better match the output parameters declared for me
 	 * in pg_proc.h.
 	 */
-	tupdesc = CreateTemplateTupleDesc(6, false);
+	tupdesc = CreateTemplateTupleDesc(6);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1,
 					   "size", INT8OID, -1, 0);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 2,
@@ -506,7 +510,7 @@ pg_ls_dir(PG_FUNCTION_ARGS)
 	/* The tupdesc and tuplestore must be created in ecxt_per_query_memory */
 	oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
 
-	tupdesc = CreateTemplateTupleDesc(1, false);
+	tupdesc = CreateTemplateTupleDesc(1);
 	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pg_ls_dir", TEXTOID, -1, 0);
 
 	randomAccess = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
@@ -561,9 +565,12 @@ pg_ls_dir_1arg(PG_FUNCTION_ARGS)
 
 /*
  * Generic function to return a directory listing of files.
+ *
+ * If the directory isn't there, silently return an empty set if missing_ok.
+ * Other unreadable-directory cases throw an error.
  */
 static Datum
-pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir)
+pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir, bool missing_ok)
 {
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 	bool		randomAccess;
@@ -603,6 +610,14 @@ pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir)
 	 * can't count on the SRF being run to completion.
 	 */
 	dirdesc = AllocateDir(dir);
+	if (!dirdesc)
+	{
+		/* Return empty tuplestore if appropriate */
+		if (missing_ok && errno == ENOENT)
+			return (Datum) 0;
+		/* Otherwise, we can let ReadDir() throw the error */
+	}
+
 	while ((de = ReadDir(dirdesc, dir)) != NULL)
 	{
 		Datum		values[3];
@@ -646,12 +661,59 @@ pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir)
 Datum
 pg_ls_logdir(PG_FUNCTION_ARGS)
 {
-	return pg_ls_dir_files(fcinfo, Log_directory);
+	return pg_ls_dir_files(fcinfo, Log_directory, false);
 }
 
 /* Function to return the list of files in the WAL directory */
 Datum
 pg_ls_waldir(PG_FUNCTION_ARGS)
 {
-	return pg_ls_dir_files(fcinfo, XLOGDIR);
+	return pg_ls_dir_files(fcinfo, XLOGDIR, false);
+}
+
+/*
+ * Generic function to return the list of files in pgsql_tmp
+ */
+static Datum
+pg_ls_tmpdir(FunctionCallInfo fcinfo, Oid tblspc)
+{
+	char		path[MAXPGPATH];
+
+	if (!SearchSysCacheExists1(TABLESPACEOID, ObjectIdGetDatum(tblspc)))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("tablespace with OID %u does not exist",
+						tblspc)));
+
+	TempTablespacePath(path, tblspc);
+	return pg_ls_dir_files(fcinfo, path, true);
+}
+
+/*
+ * Function to return the list of temporary files in the pg_default tablespace's
+ * pgsql_tmp directory
+ */
+Datum
+pg_ls_tmpdir_noargs(PG_FUNCTION_ARGS)
+{
+	return pg_ls_tmpdir(fcinfo, DEFAULTTABLESPACE_OID);
+}
+
+/*
+ * Function to return the list of temporary files in the specified tablespace's
+ * pgsql_tmp directory
+ */
+Datum
+pg_ls_tmpdir_1arg(PG_FUNCTION_ARGS)
+{
+	return pg_ls_tmpdir(fcinfo, PG_GETARG_OID(0));
+}
+
+/*
+ * Function to return the list of files in the WAL archive status directory.
+ */
+Datum
+pg_ls_archive_statusdir(PG_FUNCTION_ARGS)
+{
+	return pg_ls_dir_files(fcinfo, XLOGDIR "/archive_status", true);
 }

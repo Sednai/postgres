@@ -4,7 +4,7 @@
  *	  various support functions for SP-GiST
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -15,16 +15,21 @@
 
 #include "postgres.h"
 
+#include "access/amvalidate.h"
+#include "access/htup_details.h"
 #include "access/reloptions.h"
 #include "access/spgist_private.h"
 #include "access/transam.h"
 #include "access/xact.h"
+#include "catalog/pg_amop.h"
 #include "storage/bufmgr.h"
 #include "storage/indexfsm.h"
 #include "storage/lmgr.h"
 #include "utils/builtins.h"
+#include "utils/catcache.h"
 #include "utils/index_selfuncs.h"
 #include "utils/lsyscache.h"
+#include "utils/syscache.h"
 
 
 /*
@@ -39,7 +44,7 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amstrategies = 0;
 	amroutine->amsupport = SPGISTNProc;
 	amroutine->amcanorder = false;
-	amroutine->amcanorderbyop = false;
+	amroutine->amcanorderbyop = true;
 	amroutine->amcanbackward = false;
 	amroutine->amcanunique = false;
 	amroutine->amcanmulticol = false;
@@ -61,7 +66,8 @@ spghandler(PG_FUNCTION_ARGS)
 	amroutine->amcanreturn = spgcanreturn;
 	amroutine->amcostestimate = spgcostestimate;
 	amroutine->amoptions = spgoptions;
-	amroutine->amproperty = NULL;
+	amroutine->amproperty = spgproperty;
+	amroutine->ambuildphasename = NULL;
 	amroutine->amvalidate = spgvalidate;
 	amroutine->ambeginscan = spgbeginscan;
 	amroutine->amrescan = spgrescan;
@@ -99,8 +105,6 @@ spgGetCache(Relation index)
 		Oid			atttype;
 		spgConfigIn in;
 		FmgrInfo   *procinfo;
-		Buffer		metabuffer;
-		SpGistMetaPageData *metadata;
 
 		cache = MemoryContextAllocZero(index->rd_indexcxt,
 									   sizeof(SpGistCache));
@@ -145,19 +149,28 @@ spgGetCache(Relation index)
 		fillTypeDesc(&cache->attPrefixType, cache->config.prefixType);
 		fillTypeDesc(&cache->attLabelType, cache->config.labelType);
 
-		/* Last, get the lastUsedPages data from the metapage */
-		metabuffer = ReadBuffer(index, SPGIST_METAPAGE_BLKNO);
-		LockBuffer(metabuffer, BUFFER_LOCK_SHARE);
+		/*
+		 * Finally, if it's a real index (not a partitioned one), get the
+		 * lastUsedPages data from the metapage
+		 */
+		if (index->rd_rel->relkind != RELKIND_PARTITIONED_INDEX)
+		{
+			Buffer		metabuffer;
+			SpGistMetaPageData *metadata;
 
-		metadata = SpGistPageGetMeta(BufferGetPage(metabuffer));
+			metabuffer = ReadBuffer(index, SPGIST_METAPAGE_BLKNO);
+			LockBuffer(metabuffer, BUFFER_LOCK_SHARE);
 
-		if (metadata->magicNumber != SPGIST_MAGIC_NUMBER)
-			elog(ERROR, "index \"%s\" is not an SP-GiST index",
-				 RelationGetRelationName(index));
+			metadata = SpGistPageGetMeta(BufferGetPage(metabuffer));
 
-		cache->lastUsedPages = metadata->lastUsedPages;
+			if (metadata->magicNumber != SPGIST_MAGIC_NUMBER)
+				elog(ERROR, "index \"%s\" is not an SP-GiST index",
+					 RelationGetRelationName(index));
 
-		UnlockReleaseBuffer(metabuffer);
+			cache->lastUsedPages = metadata->lastUsedPages;
+
+			UnlockReleaseBuffer(metabuffer);
+		}
 
 		index->rd_amcache = (void *) cache;
 	}
@@ -188,7 +201,18 @@ initSpGistState(SpGistState *state, Relation index)
 	/* Make workspace for constructing dead tuples */
 	state->deadTupleStorage = palloc0(SGDTSIZE);
 
-	/* Set XID to use in redirection tuples */
+	/*
+	 * Set horizon XID to use in redirection tuples.  Use our own XID if we
+	 * have one, else use InvalidTransactionId.  The latter case can happen in
+	 * VACUUM or REINDEX CONCURRENTLY, and in neither case would it be okay to
+	 * force an XID to be assigned.  VACUUM won't create any redirection
+	 * tuples anyway, but REINDEX CONCURRENTLY can.  Fortunately, REINDEX
+	 * CONCURRENTLY doesn't mark the index valid until the end, so there could
+	 * never be any concurrent scans "in flight" to a redirection tuple it has
+	 * inserted.  And it locks out VACUUM until the end, too.  So it's okay
+	 * for VACUUM to immediately expire a redirection tuple that contains an
+	 * invalid xid.
+	 */
 	state->myXid = GetTopTransactionIdIfAny();
 
 	/* Assume we're not in an index build (spgbuild will override) */
@@ -801,7 +825,6 @@ spgFormDeadTuple(SpGistState *state, int tupstate,
 	if (tupstate == SPGIST_REDIRECT)
 	{
 		ItemPointerSet(&tuple->pointer, blkno, offnum);
-		Assert(TransactionIdIsValid(state->myXid));
 		tuple->xid = state->myXid;
 	}
 	else
@@ -948,4 +971,83 @@ SpGistPageAddNewItem(SpGistState *state, Page page, Item item, Size size,
 			 (int) size);
 
 	return offnum;
+}
+
+/*
+ *	spgproperty() -- Check boolean properties of indexes.
+ *
+ * This is optional for most AMs, but is required for SP-GiST because the core
+ * property code doesn't support AMPROP_DISTANCE_ORDERABLE.
+ */
+bool
+spgproperty(Oid index_oid, int attno,
+			IndexAMProperty prop, const char *propname,
+			bool *res, bool *isnull)
+{
+	Oid			opclass,
+				opfamily,
+				opcintype;
+	CatCList   *catlist;
+	int			i;
+
+	/* Only answer column-level inquiries */
+	if (attno == 0)
+		return false;
+
+	switch (prop)
+	{
+		case AMPROP_DISTANCE_ORDERABLE:
+			break;
+		default:
+			return false;
+	}
+
+	/*
+	 * Currently, SP-GiST distance-ordered scans require that there be a
+	 * distance operator in the opclass with the default types. So we assume
+	 * that if such an operator exists, then there's a reason for it.
+	 */
+
+	/* First we need to know the column's opclass. */
+	opclass = get_index_column_opclass(index_oid, attno);
+	if (!OidIsValid(opclass))
+	{
+		*isnull = true;
+		return true;
+	}
+
+	/* Now look up the opclass family and input datatype. */
+	if (!get_opclass_opfamily_and_input_type(opclass, &opfamily, &opcintype))
+	{
+		*isnull = true;
+		return true;
+	}
+
+	/* And now we can check whether the operator is provided. */
+	catlist = SearchSysCacheList1(AMOPSTRATEGY,
+								  ObjectIdGetDatum(opfamily));
+
+	*res = false;
+
+	for (i = 0; i < catlist->n_members; i++)
+	{
+		HeapTuple	amoptup = &catlist->members[i]->tuple;
+		Form_pg_amop amopform = (Form_pg_amop) GETSTRUCT(amoptup);
+
+		if (amopform->amoppurpose == AMOP_ORDER &&
+			(amopform->amoplefttype == opcintype ||
+			 amopform->amoprighttype == opcintype) &&
+			opfamily_can_sort_type(amopform->amopsortfamily,
+								   get_op_rettype(amopform->amopopr)))
+		{
+			*res = true;
+			break;
+		}
+	}
+
+	ReleaseSysCacheList(catlist);
+
+	*isnull = false;
+
+	return true;
 }

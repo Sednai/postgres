@@ -3,7 +3,7 @@
  * miscinit.c
  *	  miscellaneous initialization support stuff
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -43,10 +43,12 @@
 #include "storage/ipc.h"
 #include "storage/latch.h"
 #include "storage/pg_shmem.h"
+#include "storage/pmsignal.h"
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "utils/builtins.h"
 #include "utils/guc.h"
+#include "utils/inval.h"
 #include "utils/memutils.h"
 #include "utils/pidfile.h"
 #include "utils/syscache.h"
@@ -272,9 +274,15 @@ InitPostmasterChild(void)
 {
 	IsUnderPostmaster = true;	/* we are a postmaster subprocess now */
 
-	MyProcPid = getpid();		/* reset MyProcPid */
+	/*
+	 * Set reference point for stack-depth checking.  This might seem
+	 * redundant in !EXEC_BACKEND builds; but it's not because the postmaster
+	 * launches its children from signal handlers, so we might be running on
+	 * an alternative stack.
+	 */
+	(void) set_stack_base();
 
-	MyStartTime = time(NULL);	/* set our start time in case we call elog */
+	InitProcessGlobals();
 
 	/*
 	 * make sure stderr is in binary mode before anything can possibly be
@@ -305,6 +313,9 @@ InitPostmasterChild(void)
 	if (setsid() < 0)
 		elog(FATAL, "setsid() failed: %m");
 #endif
+
+	/* Request a signal if the postmaster dies, if possible. */
+	PostmasterDeathSignalInit();
 }
 
 /*
@@ -317,9 +328,7 @@ InitStandaloneProcess(const char *argv0)
 {
 	Assert(!IsPostmasterEnvironment);
 
-	MyProcPid = getpid();		/* reset MyProcPid */
-
-	MyStartTime = time(NULL);	/* set our start time in case we call elog */
+	InitProcessGlobals();
 
 	/*
 	 * Initialize random() for the first time, like PostmasterMain() would.
@@ -605,6 +614,13 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 	/* call only once */
 	AssertState(!OidIsValid(AuthenticatedUserId));
 
+	/*
+	 * Make sure syscache entries are flushed for recent catalog changes. This
+	 * allows us to find roles that were created on-the-fly during
+	 * authentication.
+	 */
+	AcceptInvalidationMessages();
+
 	if (rolename != NULL)
 	{
 		roleTup = SearchSysCache1(AUTHNAME, PointerGetDatum(rolename));
@@ -623,7 +639,7 @@ InitializeSessionUserId(const char *rolename, Oid roleid)
 	}
 
 	rform = (Form_pg_authid) GETSTRUCT(roleTup);
-	roleid = HeapTupleGetOid(roleTup);
+	roleid = rform->oid;
 	rname = NameStr(rform->rolname);
 
 	AuthenticatedUserId = roleid;

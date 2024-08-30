@@ -60,7 +60,7 @@ my $node_cascade = get_new_node('cascade');
 $node_cascade->init_from_backup($node_standby, $backup_name,
 	has_streaming => 1);
 $node_cascade->enable_restoring($node_primary);
-$node_cascade->append_conf('recovery.conf', qq(
+$node_cascade->append_conf('postgresql.conf', qq(
 recovery_target_timeline='latest'
 ));
 

@@ -1307,7 +1307,12 @@ FETCH ABSOLUTE 8 FROM c1;
          8 | p8
 (1 row)
 
--- DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
+DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
+ currentid | payload 
+-----------+---------
+         8 | p8
+(1 row)
+
 -- This tests the ExecutorRewind code path
 FETCH ABSOLUTE 13 FROM c1;
  currentid | payload 
@@ -1321,7 +1326,12 @@ FETCH ABSOLUTE 1 FROM c1;
          1 | p1
 (1 row)
 
--- DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
+DELETE FROM current_check WHERE CURRENT OF c1 RETURNING *;
+ currentid | payload 
+-----------+---------
+         1 | p1
+(1 row)
+
 SELECT * FROM current_check;
  currentid | payload 
 -----------+---------

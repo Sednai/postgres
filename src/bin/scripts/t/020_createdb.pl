@@ -30,14 +30,14 @@ $node->command_checks_all(
 	[ 'createdb', '--encoding', "foo'; SELECT '1", 'foobar2' ],
 	1,
 	[qr/^$/],
-	[qr/^createdb: "foo'; SELECT '1" is not a valid encoding name/s],
+	[qr/^createdb: error: "foo'; SELECT '1" is not a valid encoding name/s],
 	'createdb with incorrect --encoding');
 $node->command_checks_all(
 	[ 'createdb', '--lc-collate', "foo'; SELECT '1", 'foobar2' ],
 	1,
 	[qr/^$/],
 	[
-		qr/^createdb: database creation failed: ERROR:  invalid locale name|^createdb: database creation failed: ERROR:  new collation \(foo'; SELECT '1\) is incompatible with the collation of the template database/s
+		qr/^createdb: error: database creation failed: ERROR:  invalid locale name|^createdb: error: database creation failed: ERROR:  new collation \(foo'; SELECT '1\) is incompatible with the collation of the template database/s
 	],
 	'createdb with incorrect --lc-collate');
 $node->command_checks_all(
@@ -45,6 +45,6 @@ $node->command_checks_all(
 	1,
 	[qr/^$/],
 	[
-		qr/^createdb: database creation failed: ERROR:  invalid locale name|^createdb: database creation failed: ERROR:  new LC_CTYPE \(foo'; SELECT '1\) is incompatible with the LC_CTYPE of the template database/s
+		qr/^createdb: error: database creation failed: ERROR:  invalid locale name|^createdb: error: database creation failed: ERROR:  new LC_CTYPE \(foo'; SELECT '1\) is incompatible with the LC_CTYPE of the template database/s
 	],
 	'createdb with incorrect --lc-ctype');

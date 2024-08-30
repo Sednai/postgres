@@ -81,13 +81,12 @@ $node_publisher->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"ALTER PUBLICATION tap_pub_ins_only ADD TABLE tab_ins");
 
-my $appname = 'tap_sub';
 $node_subscriber->safe_psql('postgres',
-	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr application_name=$appname' PUBLICATION tap_pub, tap_pub_ins_only"
+	"CREATE SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr' PUBLICATION tap_pub, tap_pub_ins_only"
 );
 
 # Wait for initial table sync to finish
-$node_subscriber->wait_for_subscription_sync($node_publisher, $appname);
+$node_subscriber->wait_for_subscription_sync($node_publisher, 'tap_sub');
 
 my $result =
   $node_subscriber->safe_psql('postgres', "SELECT count(*) FROM tab_notrep");
@@ -122,7 +121,7 @@ $node_publisher->safe_psql('postgres',
 	"DELETE FROM tab_include WHERE a > 20");
 $node_publisher->safe_psql('postgres', "UPDATE tab_include SET a = -a");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), min(a), max(a) FROM tab_ins");
@@ -173,7 +172,7 @@ $node_publisher->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_full_pk SET b = 'bar' WHERE a = 1");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), min(a), max(a) FROM tab_full");
@@ -198,7 +197,7 @@ local|2.2|bar|2),
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_mixed SET b = repeat('xyzzy', 100000) WHERE a = 2");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT a, length(b), c, d FROM tab_mixed ORDER BY a");
@@ -209,7 +208,7 @@ is( $result, qq(1|3|1.1|local
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_mixed SET c = 3.3 WHERE a = 2");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT a, length(b), c, d FROM tab_mixed ORDER BY a");
@@ -228,7 +227,7 @@ $node_publisher->safe_psql('postgres', "ALTER TABLE tab_mixed DROP COLUMN b");
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_mixed SET c = 11.11 WHERE a = 1");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT * FROM tab_mixed ORDER BY a");
@@ -242,7 +241,7 @@ $node_subscriber->safe_psql('postgres',
 $node_publisher->safe_psql('postgres',
 	"UPDATE tab_mixed SET c = 22.22 WHERE a = 2");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT * FROM tab_mixed ORDER BY a");
@@ -257,23 +256,23 @@ is( $result, qq(11.11|baz|1
 # Not all of these are registered as tests as we need to poll for a change
 # but the test suite will fail none the less when something goes wrong.
 my $oldpid = $node_publisher->safe_psql('postgres',
-	"SELECT pid FROM pg_stat_replication WHERE application_name = '$appname' AND state = 'streaming';"
+	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 );
 $node_subscriber->safe_psql('postgres',
-	"ALTER SUBSCRIPTION tap_sub CONNECTION 'application_name=$appname $publisher_connstr'"
+	"ALTER SUBSCRIPTION tap_sub CONNECTION '$publisher_connstr sslmode=disable'"
 );
 $node_publisher->poll_query_until('postgres',
-	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = '$appname' AND state = 'streaming';"
+	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 ) or die "Timed out while waiting for apply to restart after changing CONNECTION";
 
 $oldpid = $node_publisher->safe_psql('postgres',
-	"SELECT pid FROM pg_stat_replication WHERE application_name = '$appname' AND state = 'streaming';"
+	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 );
 $node_subscriber->safe_psql('postgres',
 	"ALTER SUBSCRIPTION tap_sub SET PUBLICATION tap_pub_ins_only WITH (copy_data = false)"
 );
 $node_publisher->poll_query_until('postgres',
-	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = '$appname' AND state = 'streaming';"
+	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 ) or die "Timed out while waiting for apply to restart after changing PUBLICATION";
 
 $node_publisher->safe_psql('postgres',
@@ -285,7 +284,7 @@ $node_publisher->safe_psql('postgres', "DELETE FROM tab_rep");
 $node_publisher->stop('fast');
 $node_publisher->start;
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), min(a), max(a) FROM tab_ins");
@@ -308,7 +307,7 @@ $node_subscriber->safe_psql('postgres',
 );
 $node_publisher->safe_psql('postgres', "INSERT INTO tab_full VALUES(0)");
 
-$node_publisher->wait_for_catchup($appname);
+$node_publisher->wait_for_catchup('tap_sub');
 
 # note that data are different on provider and subscriber
 $result = $node_subscriber->safe_psql('postgres',
@@ -322,12 +321,12 @@ is($result, qq(21|0|100), 'check replicated insert after alter publication');
 
 # check restart on rename
 $oldpid = $node_publisher->safe_psql('postgres',
-	"SELECT pid FROM pg_stat_replication WHERE application_name = '$appname';"
+	"SELECT pid FROM pg_stat_replication WHERE application_name = 'tap_sub' AND state = 'streaming';"
 );
 $node_subscriber->safe_psql('postgres',
 	"ALTER SUBSCRIPTION tap_sub RENAME TO tap_sub_renamed");
 $node_publisher->poll_query_until('postgres',
-	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = '$appname' AND state = 'streaming';"
+	"SELECT pid != $oldpid FROM pg_stat_replication WHERE application_name = 'tap_sub_renamed' AND state = 'streaming';"
 ) or die "Timed out while waiting for apply to restart after renaming SUBSCRIPTION";
 
 # check all the cleanup

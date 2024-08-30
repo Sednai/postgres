@@ -27,7 +27,7 @@ $node_pitr->init_from_backup(
 	standby       => 0,
 	has_restoring => 1);
 $node_pitr->append_conf(
-	'recovery.conf', qq{
+	'postgresql.conf', qq{
 recovery_target_name = 'rp'
 recovery_target_action = 'promote'});
 

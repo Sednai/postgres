@@ -112,6 +112,52 @@ sub adjust_database_contents
 			'drop function if exists public.wait_pid(integer)');
 	}
 
+	# user table OIDs are gone from release 12 on
+	if ($old_version < 12)
+	{
+		my $nooid_stmt = q{
+           DO $stmt$
+           DECLARE
+              rec text;
+           BEGIN
+              FOR rec in
+                 select oid::regclass::text
+                 from pg_class
+                 where relname !~ '^pg_'
+                    and relhasoids
+                    and relkind in ('r','m')
+                 order by 1
+              LOOP
+                 execute 'ALTER TABLE ' || rec || ' SET WITHOUT OIDS';
+                 RAISE NOTICE 'removing oids from table %', rec;
+              END LOOP;
+           END; $stmt$;
+        };
+
+		foreach my $oiddb ('regression', 'contrib_regression_btree_gist')
+		{
+			next unless $dbnames{$oiddb};
+			_add_st($result, $oiddb, $nooid_stmt);
+		}
+
+		# this table had OIDs too, but we'll just drop it
+		if ($old_version >= 10 && $dbnames{'contrib_regression_postgres_fdw'})
+		{
+			_add_st(
+				$result,
+				'contrib_regression_postgres_fdw',
+				'drop foreign table ft_pg_type');
+		}
+	}
+
+	# abstime+friends are gone from release 12 on; but these tables
+	# might or might not be present depending on regression test vintage
+	if ($old_version < 12)
+	{
+		_add_st($result, 'regression',
+			'drop table if exists abstime_tbl, reltime_tbl, tinterval_tbl');
+	}
+
 	# some regression functions gone from release 11 on
 	if ($old_version < 11)
 	{
@@ -195,6 +241,17 @@ sub adjust_old_dumpfile
 
 	# Version comments will certainly not match.
 	$dump =~ s/^-- Dumped from database version.*\n//mg;
+
+	# Change trigger definitions to say ... EXECUTE FUNCTION ...
+	if ($old_version < 12)
+	{
+		# would like to use lookbehind here but perl complains
+		# so do it this way
+		$dump =~ s/
+			(^CREATE\sTRIGGER\s.*?)
+			\sEXECUTE\sPROCEDURE
+			/$1 EXECUTE FUNCTION/mgx;
+	}
 
 	if ($old_version lt '9.6')
 	{
@@ -383,6 +440,12 @@ sub adjust_new_dumpfile
 
 	# Version comments will certainly not match.
 	$dump =~ s/^-- Dumped from database version.*\n//mg;
+
+	# pre-v12 dumps will not say anything about default_table_access_method.
+	if ($old_version < 12)
+	{
+		$dump =~ s/^SET default_table_access_method = heap;\n//mg;
+	}
 
 	# dumps from pre-9.6 dblink may include redundant ACL settings
 	if ($old_version lt '9.6')

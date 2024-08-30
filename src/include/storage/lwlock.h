@@ -4,7 +4,7 @@
  *	  Lightweight lock manager
  *
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/lwlock.h
@@ -23,6 +23,14 @@
 #include "port/atomics.h"
 
 struct PGPROC;
+
+/* what state of the wait process is a backend in */
+typedef enum LWLockWaitState
+{
+	LW_WS_NOT_WAITING, /* not currently waiting / woken up */
+	LW_WS_WAITING, /* currently waiting */
+	LW_WS_PENDING_WAKEUP /* removed from waitlist, but not yet signalled */
+} LWLockWaitState;
 
 /*
  * Code outside of lwlock.c should not manipulate the contents of this
@@ -88,7 +96,7 @@ typedef union LWLockMinimallyPadded
 } LWLockMinimallyPadded;
 
 extern PGDLLIMPORT LWLockPadded *MainLWLockArray;
-extern char *MainLWLockNames[];
+extern const char *const MainLWLockNames[];
 
 /* struct for storing named tranche information */
 typedef struct NamedLWLockTranche
@@ -220,6 +228,7 @@ typedef enum BuiltinTrancheIds
 	LWTRANCHE_SHARED_TUPLESTORE,
 	LWTRANCHE_TBM,
 	LWTRANCHE_PARALLEL_APPEND,
+	LWTRANCHE_SXACT,
 	LWTRANCHE_FIRST_USER_DEFINED
 }			BuiltinTrancheIds;
 

@@ -1368,7 +1368,7 @@ localsub(struct state const *sp, pg_time_t const *timep,
 	if (result)
 	{
 		result->tm_isdst = ttisp->tt_isdst;
-		result->tm_zone = (char *) &sp->chars[ttisp->tt_desigidx];
+		result->tm_zone = unconstify(char *, &sp->chars[ttisp->tt_desigidx]);
 	}
 	return result;
 }

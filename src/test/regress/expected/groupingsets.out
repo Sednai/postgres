@@ -678,6 +678,33 @@ select a, b, sum(v.x)
 (12 rows)
 
 -- Test reordering of grouping sets
+explain (costs off)
+select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ GroupAggregate
+   Group Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
+   Group Key: "*VALUES*".column3
+   ->  Sort
+         Sort Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
+         ->  Values Scan on "*VALUES*"
+(6 rows)
+
+-- Test reordering of grouping sets
+
+explain (costs off)
+select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
+                                  QUERY PLAN                                  
+------------------------------------------------------------------------------
+ GroupAggregate
+   Group Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
+   Group Key: "*VALUES*".column3
+   ->  Sort
+         Sort Key: "*VALUES*".column3, "*VALUES*".column2, "*VALUES*".column1
+         ->  Values Scan on "*VALUES*"
+(6 rows)
+
+-- Test reordering of grouping sets
 -- explain (costs off)
 -- select * from gstest1 group by grouping sets((a,b,v),(v)) order by v,b,a;
 -- Agg level check. This query should error out.
@@ -1306,6 +1333,61 @@ explain (costs off)
                ->  Function Scan on gstest_data
 (10 rows)
 
+-- Verify that we correctly handle the child node returning a
+-- non-minimal slot, which happens if the input is pre-sorted,
+-- e.g. due to an index scan.
+BEGIN;
+SET LOCAL enable_hashagg = false;
+EXPLAIN (COSTS OFF) SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
+              QUERY PLAN               
+---------------------------------------
+ Sort
+   Sort Key: a, b
+   ->  GroupAggregate
+         Group Key: a
+         Group Key: ()
+         Sort Key: b
+           Group Key: b
+         ->  Sort
+               Sort Key: a
+               ->  Seq Scan on gstest3
+(10 rows)
+
+SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
+ a | b | count | max | max 
+---+---+-------+-----+-----
+ 1 |   |     1 |   1 |   1
+ 2 |   |     1 |   2 |   2
+   | 1 |     1 |   1 |   1
+   | 2 |     1 |   2 |   2
+   |   |     2 |   2 |   2
+(5 rows)
+
+SET LOCAL enable_seqscan = false;
+EXPLAIN (COSTS OFF) SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
+                      QUERY PLAN                      
+------------------------------------------------------
+ Sort
+   Sort Key: a, b
+   ->  GroupAggregate
+         Group Key: a
+         Group Key: ()
+         Sort Key: b
+           Group Key: b
+         ->  Index Scan using gstest3_pkey on gstest3
+(8 rows)
+
+SELECT a, b, count(*), max(a), max(b) FROM gstest3 GROUP BY GROUPING SETS(a, b,()) ORDER BY a, b;
+ a | b | count | max | max 
+---+---+-------+-----+-----
+ 1 |   |     1 |   1 |   1
+ 2 |   |     1 |   2 |   2
+   | 1 |     1 |   1 |   1
+   | 2 |     1 |   2 |   2
+   |   |     2 |   2 |   2
+(5 rows)
+
+COMMIT;
 -- More rescan tests
 select * from (values (1),(2)) v(a) left join lateral (select v.a, four, ten, count(*) from onek group by cube(four,ten)) s on true order by v.a,four,ten;
  a | a | four | ten | count 
@@ -1525,8 +1607,22 @@ select v||'a', case when grouping(v||'a') = 1 then 1 else 0 end, count(*)
 (4 rows)
 
 -- test handling of outer GroupingFunc within subqueries
--- explain (costs off)
--- select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
+explain (costs off)
+select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
+        QUERY PLAN         
+---------------------------
+ MixedAggregate
+   Hash Key: $2
+   Group Key: ()
+   InitPlan 1 (returns $1)
+     ->  Result
+   InitPlan 3 (returns $2)
+     ->  Result
+   ->  Result
+   SubPlan 2
+     ->  Result
+(10 rows)
+
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
  grouping 
 ----------
@@ -1534,28 +1630,25 @@ select (select grouping(v1)) from (values ((select 1))) v(v1) group by cube(v1);
         0
 (2 rows)
 
--- explain (costs off)
--- select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
+explain (costs off)
+select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
+        QUERY PLAN         
+---------------------------
+ GroupAggregate
+   Group Key: $2
+   InitPlan 1 (returns $1)
+     ->  Result
+   InitPlan 3 (returns $2)
+     ->  Result
+   ->  Result
+   SubPlan 2
+     ->  Result
+(9 rows)
+
 select (select grouping(v1)) from (values ((select 1))) v(v1) group by v1;
  grouping 
 ----------
         0
 (1 row)
-
--- check that we don't pull up when a phrel-less PHV would result
--- explain (verbose, costs off)
--- select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
--- group by cube(ss.f) order by 1;
-select ss.f from int4_tbl as i4 cross join lateral (select i4.f1 as f) as ss
-group by cube(ss.f) order by 1;
-      f      
--------------
- -2147483647
-     -123456
-           0
-      123456
-  2147483647
-            
-(6 rows)
 
 -- end

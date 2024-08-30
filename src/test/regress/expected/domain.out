@@ -562,6 +562,15 @@ table dcomptable;
  {"(1,5)"}
 (1 row)
 
+-- if there's no constraints, a different code path is taken:
+alter domain dcomptype drop constraint dcomptype_check;
+update dcomptable set f1[1].cf1 = -1;  -- now ok
+table dcomptable;
+     f1     
+------------
+ {"(-1,5)"}
+(1 row)
+
 drop table dcomptable;
 drop type comptype cascade;
 NOTICE:  drop cascades to type dcomptype
@@ -692,8 +701,8 @@ alter domain dnotnulltest drop not null;
 update domnotnull set col1 = null;
 drop domain dnotnulltest cascade;
 NOTICE:  drop cascades to 2 other objects
-DETAIL:  drop cascades to column col1 of table domnotnull
-drop cascades to column col2 of table domnotnull
+DETAIL:  drop cascades to column col2 of table domnotnull
+drop cascades to column col1 of table domnotnull
 -- Test ALTER DOMAIN .. DEFAULT ..
 create table domdeftest (col1 ddef1);
 insert into domdeftest default values;
@@ -1065,6 +1074,31 @@ drop function array_elem_check(int);
 --
 create domain di as int;
 create function dom_check(int) returns di as $$
+declare d di;
+begin
+  d := $1::di;
+  return d;
+end
+$$ language plpgsql immutable;
+select dom_check(0);
+ dom_check 
+-----------
+         0
+(1 row)
+
+alter domain di add constraint pos check (value > 0);
+select dom_check(0); -- fail
+ERROR:  value for domain di violates check constraint "pos"
+CONTEXT:  PL/pgSQL function dom_check(integer) line 4 at assignment
+alter domain di drop constraint pos;
+select dom_check(0);
+ dom_check 
+-----------
+         0
+(1 row)
+
+-- implicit cast during assignment is a separate code path, test that too
+create or replace function dom_check(int) returns di as $$
 declare d di;
 begin
   d := $1;

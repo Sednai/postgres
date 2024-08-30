@@ -46,8 +46,8 @@ SET vacuum_cost_delay TO 70;
 SET datestyle = 'MDY';
 SHOW datestyle;
 SELECT '2006-08-13 12:34:56'::timestamptz;
--- SAVEPOINT first_sp;
-SET vacuum_cost_delay TO 80;
+SAVEPOINT first_sp;
+SET vacuum_cost_delay TO 80.1;
 SHOW vacuum_cost_delay;
 SET datestyle = 'German, DMY';
 SHOW datestyle;
@@ -56,8 +56,8 @@ SELECT '2006-08-13 12:34:56'::timestamptz;
 SET datestyle = 'MDY';
 SHOW datestyle;
 SELECT '2006-08-13 12:34:56'::timestamptz;
--- SAVEPOINT second_sp;
-SET vacuum_cost_delay TO 90;
+SAVEPOINT second_sp;
+SET vacuum_cost_delay TO '900us';
 SET datestyle = 'SQL, YMD';
 SHOW datestyle;
 SELECT '2006-08-13 12:34:56'::timestamptz;
@@ -293,3 +293,7 @@ set default_text_search_config = no_such_config;
 select func_with_bad_set();
 
 reset check_function_bodies;
+
+set default_with_oids to f;
+-- Should not allow to set it to true.
+set default_with_oids to t;

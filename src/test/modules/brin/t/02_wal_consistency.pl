@@ -28,7 +28,7 @@ $whiskey->backup($backup_name);
 # Create streaming standby linking to primary
 my $charlie = PostgreSQL::Test::Cluster->new('charlie');
 $charlie->init_from_backup($whiskey, $backup_name, has_streaming => 1);
-$charlie->append_conf('recovery.conf', 'primary_slot_name = standby_1');
+$charlie->append_conf('postgresql.conf', 'primary_slot_name = standby_1');
 $charlie->start;
 
 # Now write some WAL in the primary
