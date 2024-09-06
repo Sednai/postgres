@@ -264,7 +264,7 @@ help(const char *progname)
 	printf(_("  -h hostname     GTM server hostname/IP to listen.\n"));
 	printf(_("  -p port         GTM server port number to listen.\n"));
 	printf(_("  -n nodename     Node name for GTM server.\n"));
-	printf(_("  -x xid          Starting GXID \n"));
+	printf(_("  -x xid          Starting GXID (epoch is set to 0) \n"));
 	printf(_("  -D directory    GTM working directory\n"));
 	printf(_("  -l filename     GTM server log file name \n"));
 	printf(_("  -c              show server status, then exit\n"));
@@ -291,7 +291,7 @@ main(int argc, char *argv[])
 	int			opt;
 	int			status;
 	int			i;
-	GlobalTransactionId next_gxid = InvalidGlobalTransactionId;
+	FullTransactionId next_gxid = InvalidFullTransactionId;
 	FILE	   *ctlf;
 
 	/*
@@ -383,7 +383,7 @@ main(int argc, char *argv[])
 				break;
 
 			case 'x':
-				next_gxid = (GlobalTransactionId)atoll(optarg);
+				next_gxid = FullTransactionIdFromEpochAndXid(0,atoll(optarg));
 				break;
 
 			case 'D':

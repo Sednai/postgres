@@ -144,6 +144,7 @@ static void init_params(ParseState *pstate, List *options, bool for_identity,
 						Form_pg_sequence_data seqdataform,
 						bool *need_seq_rewrite,
 						List **owned_by);
+#endif
 static void do_setval(Oid relid, int64 next, bool iscalled);
 static void process_owned_by(Relation seqrel, List *owned_by, bool for_identity);
 

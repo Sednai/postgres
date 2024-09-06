@@ -2485,9 +2485,9 @@ range_table_entry_walker(RangeTblEntry *rte,
 				return true;
 			break;
 #ifdef PGXC
-			case RTE_REMOTE_DUMMY:
-				elog(ERROR, "Invalid RTE found.");
-				break;
+		case RTE_REMOTE_DUMMY:
+			elog(ERROR, "Invalid RTE found.");
+			break;
 #endif /* PGXC */
 		case RTE_CTE:
 		case RTE_NAMEDTUPLESTORE:
@@ -3364,9 +3364,6 @@ range_table_mutator(List *rtable,
 				MUTATE(newrte->tablesample, rte->tablesample,
 					   TableSampleClause *);
 				/* we don't bother to copy eref, aliases, etc; OK? */
-				break;
-			case RTE_NAMEDTUPLESTORE:
-				/* nothing to do */
 				break;
 			case RTE_SUBQUERY:
 				if (!(flags & QTW_IGNORE_RT_SUBQUERIES))

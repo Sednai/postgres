@@ -606,7 +606,7 @@ static const struct cachedesc cacheinfo[] = {
 		PgxcGroupOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pgxc_group_oid,
 			0,
 			0,
 			0
@@ -628,7 +628,7 @@ static const struct cachedesc cacheinfo[] = {
 		PgxcNodeOidIndexId,
 		1,
 		{
-			ObjectIdAttributeNumber,
+			Anum_pgxc_node_oid,
 			0,
 			0,
 			0

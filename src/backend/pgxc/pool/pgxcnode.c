@@ -443,7 +443,8 @@ retry:
 		{
 			elog(WARNING, "select() bad file descriptor set");
 		}
-		elog(WARNING, "select() error: %d", errno);
+		int errn = errno;
+		elog(WARNING, "select() error: %d", errn);
 		if (errno)
 			return ERROR_OCCURED;
 		return NO_ERROR_OCCURED;
@@ -563,8 +564,10 @@ retry:
 
 	if (nread < 0)
 	{
-		if (close_if_error)
-			elog(DEBUG1, "dnrd errno = %d", errno);
+		if (close_if_error) {
+			int errn = errno;
+			elog(DEBUG1, "dnrd errno = %d", errn);
+		}
 		if (errno == EINTR)
 			goto retry;
 		/* Some systems return EAGAIN/EWOULDBLOCK for no data */
@@ -1602,7 +1605,7 @@ pgxc_node_send_query(PGXCNodeHandle * handle, const char *query)
  * Send the GXID down to the PGXC node
  */
 int
-pgxc_node_send_gxid(PGXCNodeHandle *handle, GlobalTransactionId gxid)
+pgxc_node_send_gxid(PGXCNodeHandle *handle, FullTransactionId gxid)
 {
 	int			msglen = 8;
 	int			i32;
@@ -1622,7 +1625,10 @@ pgxc_node_send_gxid(PGXCNodeHandle *handle, GlobalTransactionId gxid)
 	msglen = htonl(msglen);
 	memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 	handle->outEnd += 4;
-	i32 = htonl(gxid);
+	i32 = htonl(EpochFromFullTransactionId(gxid));
+	memcpy(handle->outBuffer + handle->outEnd, &i32, 4);
+	handle->outEnd += 4;
+	i32 = htonl(XidFromFullTransactionId(gxid));
 	memcpy(handle->outBuffer + handle->outEnd, &i32, 4);
 	handle->outEnd += 4;
 

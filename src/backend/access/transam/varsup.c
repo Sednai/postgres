@@ -40,16 +40,16 @@ VariableCache ShmemVariableCache = NULL;
 
 
 #ifdef PGXC  /* PGXC_DATANODE */
-static TransactionId next_xid = InvalidTransactionId;
+static FullTransactionId next_xid = {InvalidTransactionId};
 static bool force_get_xid_from_gtm = false;
 
 /*
  * Set next transaction id to use
  */
 void
-SetNextTransactionId(TransactionId xid)
+SetNextFullTransactionId(FullTransactionId xid)
 {
-	elog (DEBUG1, "[re]setting xid = %d, old_value = %d", xid, next_xid);
+	elog (DEBUG1, "[re]setting xid = %lu, old_value = %lu", xid.value, next_xid.value);
 	next_xid = xid;
 }
 
@@ -97,7 +97,6 @@ GetNewTransactionId(bool isSubXact)
 	TransactionId xid;
 #ifdef PGXC
 	bool increment_xid = true;
-
 	*timestamp_received = false;
 #endif
 
@@ -125,6 +124,7 @@ GetNewTransactionId(bool isSubXact)
 
 #ifdef PGXC
 	/* Initialize transaction ID */
+	full_xid = InvalidFullTransactionId;
 	xid = InvalidTransactionId;
 
 	while (1)
@@ -132,9 +132,9 @@ GetNewTransactionId(bool isSubXact)
 		increment_xid = true;
 		*timestamp_received = false;
 		/* if xid fall back, here we just commit the xid dummy and reget a new one from gtm */
-		if (TransactionIdIsValid(xid))
+		if (FullTransactionIdIsValid(full_xid))
 		{
-			CommitTranGTM(xid);
+			CommitTranGTM(full_xid);
 		}
 		
 		if ((IS_PGXC_COORDINATOR && !IsConnFromCoord()) || IsPGXCNodeXactDatanodeDirect())
@@ -145,9 +145,9 @@ GetNewTransactionId(bool isSubXact)
 			 * order.
 			 */
 			if (IsAutoVacuumWorkerProcess() && (MyPgXact->vacuumFlags & PROC_IN_VACUUM))
-				xid = (TransactionId) BeginTranAutovacuumGTM();
+				full_xid = BeginTranAutovacuumGTM();
 			else
-				xid = (TransactionId) BeginTranGTM(timestamp);
+				full_xid = BeginTranGTM(timestamp);
 			*timestamp_received = true;
 		}
 #endif
@@ -158,38 +158,38 @@ GetNewTransactionId(bool isSubXact)
 		/* Only remote Coordinator or a Datanode accessed directly by an application can get a GXID */
 		if ((IS_PGXC_COORDINATOR && !IsConnFromCoord()) || IsPGXCNodeXactDatanodeDirect())
 		{
-			if (TransactionIdIsValid(xid))
+			if (FullTransactionIdIsValid(full_xid))
 			{
 				/* Log some information about the new transaction ID obtained */
 				if (IsAutoVacuumWorkerProcess() && (MyPgXact->vacuumFlags & PROC_IN_VACUUM))
-					elog(DEBUG1, "Assigned new transaction ID from GTM for autovacuum = %d", xid);
+					elog(DEBUG1, "Assigned new FullTransaction ID from GTM for autovacuum = %lu", full_xid.value);
 				else
-					elog(DEBUG1, "Assigned new transaction ID from GTM = %d", xid);
+					elog(DEBUG1, "Assigned new FullTransaction ID from GTM = %lu", full_xid.value);
 				
-				if (!TransactionIdFollowsOrEquals(xid, ShmemVariableCache->nextXid))
+				if (!TransactionIdFollowsOrEquals(xid, XidFromFullTransactionId(ShmemVariableCache->nextFullXid)))
 				{
 					increment_xid = false;
 					LWLockRelease(XidGenLock);
 					
 					/* It is a serious issue when xid fall back, so here we write a message to record this */
 					ereport(DEBUG1,
-					   (errmsg("xid (%d) was less than ShmemVariableCache->nextXid (%d), IS_PGXC_COORDINATOR:%d, IS_PGXC_DATANODE:%d, REMOTE_CONN_TYPE:%d, regen now",
-						   xid, ShmemVariableCache->nextXid, IS_PGXC_COORDINATOR, IS_PGXC_DATANODE, REMOTE_CONN_TYPE)));
+					   (errmsg("full_xid (%lu) was less than ShmemVariableCache->nextFullXid (%lu), IS_PGXC_COORDINATOR:%d, IS_PGXC_DATANODE:%d, REMOTE_CONN_TYPE:%d, regen now",
+						   full_xid.value, ShmemVariableCache->nextFullXid.value, IS_PGXC_COORDINATOR, IS_PGXC_DATANODE, REMOTE_CONN_TYPE)));
 
 					/* here, we get a fallback xid, reget a new one to avoid data corruption */
 					continue;					 
 				}
 				else
-					ShmemVariableCache->nextXid = xid;
+					ShmemVariableCache->nextFullXid = full_xid;
 			}
 			else
 			{
 				ereport(WARNING,
-				   (errmsg("Xid is invalid.")));
+				   (errmsg("FullXid is invalid.")));
 
 				/* Problem is already reported, so just remove lock and return */
 				LWLockRelease(XidGenLock);
-				return xid;
+				return full_xid;
 			}
 		}
 		else if(IS_PGXC_DATANODE || IsConnFromCoord())
@@ -203,23 +203,23 @@ GetNewTransactionId(bool isSubXact)
 				 * For a simple worker get transaction ID like a normal transaction would do.
 				 */
 				if (MyPgXact->vacuumFlags & PROC_IN_VACUUM)
-					next_xid = (TransactionId) BeginTranAutovacuumGTM();
+					next_xid = BeginTranAutovacuumGTM();
 				else
-					next_xid = (TransactionId) BeginTranGTM(timestamp);
+					next_xid = BeginTranGTM(timestamp);
 			}
 			else if (GetForceXidFromGTM())
 			{
 				elog (DEBUG1, "Force get XID from GTM");
 				/* try and get gxid directly from GTM */
-				next_xid = (TransactionId) BeginTranGTM(NULL);
+				next_xid =  BeginTranGTM(NULL);
 			}
 
-			if (TransactionIdIsValid(next_xid))
+			if (FullTransactionIdIsValid(next_xid))
 			{
-				xid = next_xid;
-				elog(DEBUG1, "TransactionId = %d", next_xid);
-				next_xid = InvalidTransactionId; /* reset */
-				if (!TransactionIdFollowsOrEquals(xid, ShmemVariableCache->nextXid))
+				full_xid = next_xid;
+				elog(DEBUG1, "TransactionId = %lu", next_xid.value);
+				next_xid = InvalidFullTransactionId; /* reset */
+				if (!FullTransactionIdFollowsOrEquals(full_xid, ShmemVariableCache->nextFullXid))
 				{
 					/* This should be ok, due to concurrency from multiple coords
 					 * passing down the xids.
@@ -227,19 +227,19 @@ GetNewTransactionId(bool isSubXact)
 					 * in shared memory though.
 					 */
 					increment_xid = false;
-					elog(DEBUG1, "xid (%d) does not follow ShmemVariableCache->nextXid (%d)",
-						xid, ShmemVariableCache->nextXid);
+					elog(DEBUG1, "xid (%lu) does not follow ShmemVariableCache->nextXid (%lu)",
+						full_xid.value, ShmemVariableCache->nextFullXid.value);
 				}
 				else
-					ShmemVariableCache->nextXid = xid;
+					ShmemVariableCache->nextFullXid = full_xid;
 			}
 			else
 			{	
 				/* Fallback to default */
 				if (!useLocalXid)
-					elog(ERROR, "Falling back to local Xid. Was = %d, now is = %d",
-						next_xid, ShmemVariableCache->nextXid);
-				xid = ShmemVariableCache->nextXid;
+					elog(ERROR, "Falling back to local Xid. Was = %lu, now is = %lu",
+						next_xid.value, ShmemVariableCache->nextFullXid.value);
+				full_xid = ShmemVariableCache->nextFullXid;
 			}
 		}
 
@@ -408,12 +408,10 @@ GetNewTransactionId(bool isSubXact)
 	 */
 	if (increment_xid || !IsPostmasterEnvironment)
 	{
-		ShmemVariableCache->nextXid = xid;
-		TransactionIdAdvance(ShmemVariableCache->nextXid);
+		ShmemVariableCache->nextFullXid = full_xid;
 	}
-#else
-	FullTransactionIdAdvance(&ShmemVariableCache->nextFullXid);
 #endif
+	FullTransactionIdAdvance(&ShmemVariableCache->nextFullXid);
 
 	/*
 	 * We must store the new XID into the shared ProcArray before releasing

@@ -28,6 +28,7 @@
 #include "gtm/libpq-int.h"
 #include "gtm/pqformat.h"
 #include "gtm/gtm_backup.h"
+#include "access/transam.h"
 
 extern bool Backup_synchronously;
 
@@ -66,7 +67,7 @@ GTM_InitTxnManager(void)
 	 *
 	 * TODO We skip this part for the prototype.
 	 */
-	GTMTransactions.gt_nextXid = FirstNormalGlobalTransactionId;
+	GTMTransactions.gt_nextXid = FullTransactionIdFromEpochAndXid(0, FirstNormalGlobalTransactionId);
 
 	/*
 	 * XXX The gt_oldestXid is the cluster level oldest Xid
@@ -137,7 +138,7 @@ GlobalTransactionIdGetStatus(GlobalTransactionId transactionId)
  * Given the GXID, find the corresponding transaction handle.
  */
 GTM_TransactionHandle
-GTM_GXIDToHandle(GlobalTransactionId gxid)
+GTM_GXIDToHandle(FullTransactionId gxid)
 {
 	gtm_ListCell *elem = NULL;
    	GTM_TransactionInfo *gtm_txninfo = NULL;
@@ -147,7 +148,7 @@ GTM_GXIDToHandle(GlobalTransactionId gxid)
 	gtm_foreach(elem, GTMTransactions.gt_open_transactions)
 	{
 		gtm_txninfo = (GTM_TransactionInfo *)gtm_lfirst(elem);
-		if (GlobalTransactionIdEquals(gtm_txninfo->gti_gxid, gxid))
+		if (FullTransactionIdEquals(gtm_txninfo->gti_gxid, gxid))
 			break;
 		gtm_txninfo = NULL;
 	}
@@ -159,8 +160,8 @@ GTM_GXIDToHandle(GlobalTransactionId gxid)
 	else
 	{
 		ereport(WARNING,
-				(ERANGE, errmsg("No transaction handle for gxid: %d",
-								gxid)));
+				(ERANGE, errmsg("No transaction handle for gxid: %ld",
+								(gxid).value )));
 		return InvalidTransactionHandle;
 	}
 }
@@ -255,13 +256,14 @@ GTM_RemoveTransInfoMulti(GTM_TransactionInfo *gtm_txninfo[], int txn_count)
 
 		GTMTransactions.gt_open_transactions = gtm_list_delete(GTMTransactions.gt_open_transactions, gtm_txninfo[ii]);
 
-		if (GlobalTransactionIdIsNormal(gtm_txninfo[ii]->gti_gxid) &&
-			GlobalTransactionIdFollowsOrEquals(gtm_txninfo[ii]->gti_gxid,
+		GlobalTransactionId xid = XidFromFullTransactionId(gtm_txninfo[ii]->gti_gxid);
+		if (GlobalTransactionIdIsNormal(xid) &&
+			GlobalTransactionIdFollowsOrEquals(xid,
 											   GTMTransactions.gt_latestCompletedXid))
-			GTMTransactions.gt_latestCompletedXid = gtm_txninfo[ii]->gti_gxid;
+			GTMTransactions.gt_latestCompletedXid = xid;
 
-		elog(DEBUG1, "GTM_RemoveTransInfoMulti: removing transaction id %u, %lu",
-				gtm_txninfo[ii]->gti_gxid, gtm_txninfo[ii]->gti_thread_id);
+		elog(DEBUG1, "GTM_RemoveTransInfoMulti: removing transaction id %lu, %lu",
+				gtm_txninfo[ii]->gti_gxid.value, gtm_txninfo[ii]->gti_thread_id);
 
 		/*
 		 * Now mark the transaction as aborted and mark the structure as not-in-use
@@ -311,13 +313,15 @@ GTM_RemoveAllTransInfos(int backend_id)
 			GTMTransactions.gt_open_transactions = gtm_list_delete_cell(GTMTransactions.gt_open_transactions, cell, prev);
 
 			/* update the latestCompletedXid */
-			if (GlobalTransactionIdIsNormal(gtm_txninfo->gti_gxid) &&
-				GlobalTransactionIdFollowsOrEquals(gtm_txninfo->gti_gxid,
+			GlobalTransactionId xid;
+			xid = XidFromFullTransactionId(gtm_txninfo->gti_gxid);
+			if (GlobalTransactionIdIsNormal(xid) &&
+				GlobalTransactionIdFollowsOrEquals(xid,
 												   GTMTransactions.gt_latestCompletedXid))
-				GTMTransactions.gt_latestCompletedXid = gtm_txninfo->gti_gxid;
+				GTMTransactions.gt_latestCompletedXid = xid;
 
-			elog(DEBUG1, "GTM_RemoveAllTransInfos: removing transaction id %u, %lu:%lu",
-					gtm_txninfo->gti_gxid, gtm_txninfo->gti_thread_id, thread_id);
+			elog(DEBUG1, "GTM_RemoveAllTransInfos: removing transaction id %lu, %lu:%lu",
+					gtm_txninfo->gti_gxid.value, gtm_txninfo->gti_thread_id, thread_id);
 			/*
 			 * Now mark the transaction as aborted and mark the structure as not-in-use
 			 */
@@ -478,17 +482,18 @@ GTM_SetDoVacuum(GTM_TransactionHandle handle)
  * The new XID is also stored into the transaction info structure of the given
  * transaction before returning.
  */
-GlobalTransactionId
+FullTransactionId
 GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count)
 {
-	GlobalTransactionId xid, start_xid = InvalidGlobalTransactionId;
+	FullTransactionId full_xid, start_xid = InvalidFullTransactionId;
+	GlobalTransactionId xid = InvalidGlobalTransactionId;
 	GTM_TransactionInfo *gtm_txninfo = NULL;
 	int ii;
 
 	if (Recovery_IsStandby())
 	{
 		ereport(ERROR, (EINVAL, errmsg("GTM is running in STANDBY mode -- can not issue new transaction ids")));
-		return InvalidGlobalTransactionId;
+		return InvalidFullTransactionId;
 	}
 
 	GTM_RWLockAcquire(&GTMTransactions.gt_XidGenLock, GTM_LOCKMODE_WRITE);
@@ -497,7 +502,7 @@ GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count)
 	{
 		GTM_RWLockRelease(&GTMTransactions.gt_XidGenLock);
 		ereport(ERROR, (EINVAL, errmsg("GTM shutting down -- can not issue new transaction ids")));
-		return InvalidGlobalTransactionId;
+		return InvalidFullTransactionId;
 	}
 
 
@@ -519,10 +524,10 @@ GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count)
 	 */
 	for (ii = 0; ii < txn_count; ii++)
 	{
-		xid = GTMTransactions.gt_nextXid;
+		full_xid = GTMTransactions.gt_nextXid;
 
-		if (!GlobalTransactionIdIsValid(start_xid))
-			start_xid = xid;
+		if (!FullTransactionIdIsValid(start_xid))
+			start_xid = full_xid;
 
 		/*----------
 		 * Check to see if it's safe to assign another XID.  This protects against
@@ -538,6 +543,9 @@ GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count)
 		 * ie, when the vac limit is set and we haven't violated it.
 		 *----------
 		 */
+		
+		xid = XidFromFullTransactionId(full_xid);
+
 		if (GlobalTransactionIdFollowsOrEquals(xid, GTMTransactions.gt_xidVacLimit) &&
 			GlobalTransactionIdIsValid(GTMTransactions.gt_xidVacLimit))
 		{
@@ -554,12 +562,12 @@ GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count)
 						GTMTransactions.gt_xidWrapLimit - xid)));
 		}
 
-		GlobalTransactionIdAdvance(GTMTransactions.gt_nextXid);
+		FullTransactionIdAdvance(&GTMTransactions.gt_nextXid);
 		gtm_txninfo = GTM_HandleToTransactionInfo(handle[ii]);
 		Assert(gtm_txninfo);
 
-		elog(DEBUG1, "Assigning new transaction ID = %d", xid);
-		gtm_txninfo->gti_gxid = xid;
+		elog(DEBUG1, "Assigning new transaction ID = %ld", full_xid.value);
+		gtm_txninfo->gti_gxid = full_xid;
 	}
 
 	if (GTM_NeedXidRestoreUpdate())
@@ -575,7 +583,7 @@ GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count)
  * The new XID is also stored into the transaction info structure of the given
  * transaction before returning.
  */
-GlobalTransactionId
+FullTransactionId
 GTM_GetGlobalTransactionId(GTM_TransactionHandle handle)
 {
 	return GTM_GetGlobalTransactionIdMulti(&handle, 1);
@@ -584,10 +592,10 @@ GTM_GetGlobalTransactionId(GTM_TransactionHandle handle)
 /*
  * Read nextXid but don't allocate it.
  */
-GlobalTransactionId
+FullTransactionId
 ReadNewGlobalTransactionId(void)
 {
-	GlobalTransactionId xid;
+	FullTransactionId xid;
 
 	GTM_RWLockAcquire(&GTMTransactions.gt_XidGenLock, GTM_LOCKMODE_READ);
 	xid = GTMTransactions.gt_nextXid;
@@ -610,7 +618,7 @@ ReadNewGlobalTransactionId(void)
  * we don't care the new value of GTMTransactions.gt_nextXid here.
  */
 void
-SetNextGlobalTransactionId(GlobalTransactionId gxid)
+SetNextGlobalTransactionId(FullTransactionId gxid)
 {
 	GTM_RWLockAcquire(&GTMTransactions.gt_XidGenLock, GTM_LOCKMODE_WRITE);
 	GTMTransactions.gt_nextXid = gxid;
@@ -720,7 +728,7 @@ init_GTM_TransactionInfo(GTM_TransactionInfo *gtm_txninfo,
 						 GTMProxy_ConnID connid,
 						 bool readonly)
 {
-	gtm_txninfo->gti_gxid = InvalidGlobalTransactionId;
+	gtm_txninfo->gti_gxid = InvalidFullTransactionId;
 	gtm_txninfo->gti_xmin = InvalidGlobalTransactionId;
 	gtm_txninfo->gti_state = GTM_TXN_STARTING;
 	gtm_txninfo->gti_coordname = (coord_name ? pstrdup(coord_name) : NULL);
@@ -818,7 +826,7 @@ GTM_BkupBeginTransaction(char *coord_name,
  * Same as GTM_RollbackTransaction, but takes GXID as input
  */
 int
-GTM_RollbackTransactionGXID(GlobalTransactionId gxid)
+GTM_RollbackTransactionGXID(FullTransactionId gxid)
 {
 	GTM_TransactionHandle txn = GTM_GXIDToHandle(gxid);
 	return GTM_RollbackTransaction(txn);
@@ -873,7 +881,7 @@ GTM_RollbackTransaction(GTM_TransactionHandle txn)
  * Same as GTM_CommitTransaction but takes GXID as input
  */
 int
-GTM_CommitTransactionGXID(GlobalTransactionId gxid)
+GTM_CommitTransactionGXID(FullTransactionId gxid)
 {
 	GTM_TransactionHandle txn = GTM_GXIDToHandle(gxid);
 	return GTM_CommitTransaction(txn);
@@ -995,7 +1003,7 @@ GTM_StartPreparedTransaction(GTM_TransactionHandle txn,
  * Same as GTM_PrepareTransaction but takes GXID as input
  */
 int
-GTM_StartPreparedTransactionGXID(GlobalTransactionId gxid,
+GTM_StartPreparedTransactionGXID(FullTransactionId gxid,
 								 char *gid,
 								 char *nodestring)
 {
@@ -1005,7 +1013,7 @@ GTM_StartPreparedTransactionGXID(GlobalTransactionId gxid,
 
 int
 GTM_GetGIDData(GTM_TransactionHandle prepared_txn,
-			   GlobalTransactionId *prepared_gxid,
+			   FullTransactionId *prepared_gxid,
 			   char **nodestring)
 {
 	GTM_TransactionInfo	*gtm_txninfo = NULL;
@@ -1047,7 +1055,7 @@ GTM_GetStatus(GTM_TransactionHandle txn)
  * Same as GTM_GetStatus but takes GXID as input
  */
 GTM_TransactionStates
-GTM_GetStatusGXID(GlobalTransactionId gxid)
+GTM_GetStatusGXID(FullTransactionId gxid)
 {
 	GTM_TransactionHandle txn = GTM_GXIDToHandle(gxid);
 	return GTM_GetStatus(txn);
@@ -1153,7 +1161,7 @@ ProcessBeginTransactionGetGXIDCommand(Port *myport, StringInfo message)
 	bool txn_read_only;
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId full_gxid;
 	GTM_Timestamp timestamp;
 	MemoryContext oldContext;
 
@@ -1176,15 +1184,15 @@ ProcessBeginTransactionGetGXIDCommand(Port *myport, StringInfo message)
 				(EINVAL,
 				 errmsg("Failed to start a new transaction")));
 
-	gxid = GTM_GetGlobalTransactionId(txn);
-	if (gxid == InvalidGlobalTransactionId)
+	full_gxid = GTM_GetGlobalTransactionId(txn);
+	if (!FullTransactionIdIsValid(full_gxid))
 		ereport(ERROR,
 				(EINVAL,
 				 errmsg("Failed to get a new transaction id")));
 
 	MemoryContextSwitchTo(oldContext);
 
-	elog(DEBUG1, "Sending transaction id %u", gxid);
+	elog(DEBUG1, "Sending transaction id %lu", full_gxid.value);
 
 	/* Backup first */
 	if (GetMyThreadInfo->thr_conn->standby)
@@ -1196,7 +1204,7 @@ ProcessBeginTransactionGetGXIDCommand(Port *myport, StringInfo message)
 
 retry:
 		bkup_begin_transaction_gxid(GetMyThreadInfo->thr_conn->standby,
-									txn, gxid, txn_isolation_level, txn_read_only, timestamp);
+									txn, full_gxid, txn_isolation_level, txn_read_only, timestamp);
 
 		if (gtm_standby_check_communication_error(&count, oldconn))
 			goto retry;
@@ -1215,7 +1223,7 @@ retry:
 		proxyhdr.ph_conid = myport->conn_id;
 		pq_sendbytes(&buf, (char *)&proxyhdr, sizeof (GTM_ProxyMsgHeader));
 	}
-	pq_sendbytes(&buf, (char *)&gxid, sizeof(gxid));
+	pq_sendbytes(&buf, (char *)&full_gxid, sizeof(full_gxid));
 	pq_sendbytes(&buf, (char *)&timestamp, sizeof (GTM_Timestamp));
 	pq_endmessage(myport, &buf);
 
@@ -1234,7 +1242,7 @@ retry:
 static void
 GTM_BkupBeginTransactionGetGXIDMulti(char *coord_name,
 									 GTM_TransactionHandle *txn,
-									 GlobalTransactionId *gxid,
+									 FullTransactionId *gxid,
 									 GTM_IsolationLevel *isolevel,
 									 bool *readonly,
 									 GTMProxy_ConnID *connid,
@@ -1265,10 +1273,16 @@ GTM_BkupBeginTransactionGetGXIDMulti(char *coord_name,
 		 * Advance next gxid -- because this is called at slave only, we don't care the restoration point
 		 * here.  Restoration point will be created at promotion.
 		 */
-		if (GlobalTransactionIdPrecedes(GTMTransactions.gt_nextXid, gxid[ii]))
-			GTMTransactions.gt_nextXid = gxid[ii] + 1;
-		if (!GlobalTransactionIdIsValid(GTMTransactions.gt_nextXid))	/* Handle wrap around too */
+		if (FullTransactionIdPrecedes(GTMTransactions.gt_nextXid, gxid[ii])) {
+			GTMTransactions.gt_nextXid = gxid[ii];
+			FullTransactionIdAdvance(&GTMTransactions.gt_nextXid);
+		}
+
+/* uint64 deactivated 
+		if (!GlobalTransactionIdIsValid(GTMTransactions.gt_nextXid))	
 			GTMTransactions.gt_nextXid = FirstNormalGlobalTransactionId;
+*/			
+
 		GTMTransactions.gt_open_transactions = gtm_lappend(GTMTransactions.gt_open_transactions, gtm_txninfo);
 	}
 
@@ -1280,7 +1294,7 @@ GTM_BkupBeginTransactionGetGXIDMulti(char *coord_name,
 static void
 GTM_BkupBeginTransactionGetGXID(char *coord_name,
 								GTM_TransactionHandle txn,
-								GlobalTransactionId gxid,
+								FullTransactionId gxid,
 								GTM_IsolationLevel isolevel,
 								bool readonly)
 {
@@ -1296,13 +1310,17 @@ void
 ProcessBkupBeginTransactionGetGXIDCommand(Port *myport, StringInfo message)
 {
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	GTM_IsolationLevel txn_isolation_level;
 	bool txn_read_only;
 	GTM_Timestamp timestamp;
+	uint32 epoch;
+	GlobalTransactionId xid;
 
 	txn = pq_getmsgint(message, sizeof(GTM_TransactionHandle));
-	gxid = pq_getmsgint(message, sizeof(GlobalTransactionId));
+	epoch = pq_getmsgint(message, sizeof(uint32));
+	xid = pq_getmsgint(message, sizeof(GlobalTransactionId));
+	gxid = FullTransactionIdFromEpochAndXid(epoch,xid);
 	txn_isolation_level = pq_getmsgint(message, sizeof(GTM_IsolationLevel));
 	txn_read_only = pq_getmsgbyte(message);
 	memcpy(&timestamp, pq_getmsgbytes(message, sizeof(GTM_Timestamp)), sizeof(GTM_Timestamp));
@@ -1318,11 +1336,14 @@ void
 ProcessBkupBeginTransactionGetGXIDAutovacuumCommand(Port *myport, StringInfo message)
 {
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	GTM_IsolationLevel txn_isolation_level;
-
+	uint32 epoch;
+	GlobalTransactionId xid;
 	txn = pq_getmsgint(message, sizeof(GTM_TransactionHandle));
-	gxid = pq_getmsgint(message, sizeof(GlobalTransactionId));
+	epoch = pq_getmsgint(message, sizeof(uint32));
+	xid = pq_getmsgint(message, sizeof(GlobalTransactionId));
+	gxid = FullTransactionIdFromEpochAndXid(epoch,xid);
 	txn_isolation_level = pq_getmsgint(message, sizeof(GTM_IsolationLevel));
 	pq_getmsgend(message);
 
@@ -1340,7 +1361,7 @@ ProcessBeginTransactionGetGXIDAutovacuumCommand(Port *myport, StringInfo message
 	bool txn_read_only;
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	MemoryContext oldContext;
 
 	elog(DEBUG1, "Inside ProcessBeginTransactionGetGXIDAutovacuumCommand");
@@ -1362,7 +1383,7 @@ ProcessBeginTransactionGetGXIDAutovacuumCommand(Port *myport, StringInfo message
 				 errmsg("Failed to start a new transaction")));
 
 	gxid = GTM_GetGlobalTransactionId(txn);
-	if (gxid == InvalidGlobalTransactionId)
+	if (!FullTransactionIdIsValid(gxid))
 		ereport(ERROR,
 				(EINVAL,
 				 errmsg("Failed to get a new transaction id")));
@@ -1372,7 +1393,7 @@ ProcessBeginTransactionGetGXIDAutovacuumCommand(Port *myport, StringInfo message
 
 	MemoryContextSwitchTo(oldContext);
 
-	elog(DEBUG1, "Sending transaction id %d", gxid);
+	elog(DEBUG1, "Sending transaction id %lu", gxid.value);
 
 	/* Backup first */
 	if (GetMyThreadInfo->thr_conn->standby)
@@ -1431,7 +1452,7 @@ ProcessBeginTransactionGetGXIDCommandMulti(Port *myport, StringInfo message)
 	int txn_count;
 	StringInfoData buf;
 	GTM_TransactionHandle txn[GTM_MAX_GLOBAL_TRANSACTIONS];
-	GlobalTransactionId start_gxid, end_gxid;
+	FullTransactionId start_gxid, end_gxid;
 	GTM_Timestamp timestamp;
 	GTMProxy_ConnID txn_connid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	MemoryContext oldContext;
@@ -1465,7 +1486,7 @@ ProcessBeginTransactionGetGXIDCommandMulti(Port *myport, StringInfo message)
 				 errmsg("Failed to start %d new transactions", txn_count)));
 
 	start_gxid = GTM_GetGlobalTransactionIdMulti(txn, txn_count);
-	if (start_gxid == InvalidGlobalTransactionId)
+	if(!FullTransactionIdIsValid(start_gxid))
 		ereport(ERROR,
 				(EINVAL,
 				 errmsg("Failed to get a new transaction id")));
@@ -1475,11 +1496,14 @@ ProcessBeginTransactionGetGXIDCommandMulti(Port *myport, StringInfo message)
 	/* GXID has been received, now it's time to get a GTM timestamp */
 	timestamp = GTM_TimestampGetCurrent();
 
-	end_gxid = start_gxid + (txn_count - 1);
+	end_gxid.value = start_gxid.value + (txn_count - 1);
+
+	/* Deactivated due to 64bit 
 	if (end_gxid < start_gxid)
 		end_gxid += FirstNormalGlobalTransactionId;
+	*/
 
-	elog(DEBUG1, "Sending transaction ids from %u to %u", start_gxid, end_gxid);
+	elog(DEBUG1, "Sending transaction ids from %lu to %lu", start_gxid.value, end_gxid.value);
 
 	/* Backup first */
 	if (GetMyThreadInfo->thr_conn->standby)
@@ -1542,11 +1566,13 @@ ProcessBkupBeginTransactionGetGXIDCommandMulti(Port *myport, StringInfo message)
 {
 	int txn_count;
 	GTM_TransactionHandle txn[GTM_MAX_GLOBAL_TRANSACTIONS];
-	GlobalTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
+	FullTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	GTM_IsolationLevel txn_isolation_level[GTM_MAX_GLOBAL_TRANSACTIONS];
 	bool txn_read_only[GTM_MAX_GLOBAL_TRANSACTIONS];
 	GTMProxy_ConnID txn_connid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	int ii;
+	uint32 epoch;
+	GlobalTransactionId xid;
 
 	txn_count = pq_getmsgint(message, sizeof(int));
 	if (txn_count <= 0)
@@ -1555,7 +1581,10 @@ ProcessBkupBeginTransactionGetGXIDCommandMulti(Port *myport, StringInfo message)
 	for (ii = 0; ii < txn_count; ii++)
 	{
 		txn[ii] = pq_getmsgint(message, sizeof(GTM_TransactionHandle));
-		gxid[ii] = pq_getmsgint(message, sizeof(GlobalTransactionId));
+		
+		epoch = pq_getmsgint(message, sizeof(uint32));
+		xid = pq_getmsgint(message, sizeof(GlobalTransactionId));
+		gxid[ii] = FullTransactionIdFromEpochAndXid(epoch,xid);
 		txn_isolation_level[ii] = pq_getmsgint(message, sizeof(GTM_IsolationLevel));
 		txn_read_only[ii] = pq_getmsgbyte(message);
 		txn_connid[ii] = pq_getmsgint(message, sizeof(GTMProxy_ConnID));
@@ -1574,7 +1603,7 @@ ProcessCommitTransactionCommand(Port *myport, StringInfo message, bool is_backup
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	int isgxid = 0;
 	MemoryContext oldContext;
 	int status = STATUS_OK;
@@ -1605,7 +1634,7 @@ ProcessCommitTransactionCommand(Port *myport, StringInfo message, bool is_backup
 
 	oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
-	elog(DEBUG1, "Committing transaction id %u", gxid);
+	elog(DEBUG1, "Committing transaction id %lu", gxid.value);
 
 	/*
 	 * Commit the transaction
@@ -1675,15 +1704,14 @@ void
 ProcessCommitPreparedTransactionCommand(Port *myport, StringInfo message, bool is_backup)
 {
 	StringInfoData buf;
-	int	txn_count = 2; /* PREPARE and COMMIT PREPARED gxid's */
-	GTM_TransactionHandle txn[txn_count];
-	GlobalTransactionId gxid[txn_count];
+	GTM_TransactionHandle txn[2]; /* PREPARE and COMMIT PREPARED gxid's */
+	FullTransactionId gxid[2];
 	MemoryContext oldContext;
-	int status[txn_count];
-	int isgxid[txn_count];
+	int status[2];
+	int isgxid[2];
 	int ii;
 
-	for (ii = 0; ii < txn_count; ii++)
+	for (ii = 0; ii < 2; ii++)
 	{
 		isgxid[ii] = pq_getmsgbyte(message);
 		if (isgxid[ii])
@@ -1695,7 +1723,7 @@ ProcessCommitPreparedTransactionCommand(Port *myport, StringInfo message, bool i
 						 errmsg("Message does not contain valid GXID")));
 			memcpy(&gxid[ii], data, sizeof (gxid[ii]));
 			txn[ii] = GTM_GXIDToHandle(gxid[ii]);
-			elog(DEBUG1, "ProcessCommitTransactionCommandMulti: gxid(%u), handle(%u)", gxid[ii], txn[ii]);
+			elog(DEBUG1, "ProcessCommitTransactionCommandMulti: gxid(%lu), handle(%u)", gxid[ii].value, txn[ii]);
 		}
 		else
 		{
@@ -1713,12 +1741,12 @@ ProcessCommitPreparedTransactionCommand(Port *myport, StringInfo message, bool i
 
 	oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
-	elog(DEBUG1, "Committing: prepared id %u and commit prepared id %u ", gxid[0], gxid[1]);
+	elog(DEBUG1, "Committing: prepared id %lu and commit prepared id %lu ", gxid[0].value, gxid[1].value);
 
 	/*
 	 * Commit the prepared transaction.
 	 */
-	GTM_CommitTransactionMulti(txn, txn_count, status);
+	GTM_CommitTransactionMulti(txn, 2, status);
 
 	MemoryContextSwitchTo(oldContext);
 
@@ -1756,7 +1784,7 @@ ProcessCommitPreparedTransactionCommand(Port *myport, StringInfo message, bool i
 			proxyhdr.ph_conid = myport->conn_id;
 			pq_sendbytes(&buf, (char *)&proxyhdr, sizeof (GTM_ProxyMsgHeader));
 		}
-		pq_sendbytes(&buf, (char *)&gxid[0], sizeof(GlobalTransactionId));
+		pq_sendbytes(&buf, (char *)&gxid[0], sizeof(FullTransactionId));
 		pq_sendint(&buf, status[0], 4);
 		pq_endmessage(myport, &buf);
 
@@ -1793,7 +1821,7 @@ ProcessGetGIDDataTransactionCommand(Port *myport, StringInfo message)
 	bool txn_read_only;
 	GTM_TransactionHandle txn, prepared_txn;
 	/* Data to be sent back to client */
-	GlobalTransactionId gxid, prepared_gxid;
+	FullTransactionId gxid, prepared_gxid;
 
 	/* take the isolation level and read_only instructions */
 	txn_isolation_level = pq_getmsgint(message, sizeof (GTM_IsolationLevel));
@@ -1821,7 +1849,7 @@ ProcessGetGIDDataTransactionCommand(Port *myport, StringInfo message)
 			 errmsg("Failed to start a new transaction")));
 
 	gxid = GTM_GetGlobalTransactionId(txn);
-	if (gxid == InvalidGlobalTransactionId)
+	if (!FullTransactionIdIsValid(gxid))
 		ereport(ERROR,
 				(EINVAL,
 				 errmsg("Failed to get a new transaction id")));
@@ -1847,8 +1875,8 @@ ProcessGetGIDDataTransactionCommand(Port *myport, StringInfo message)
 	}
 
 	/* Send the two GXIDs */
-	pq_sendbytes(&buf, (char *)&gxid, sizeof(GlobalTransactionId));
-	pq_sendbytes(&buf, (char *)&prepared_gxid, sizeof(GlobalTransactionId));
+	pq_sendbytes(&buf, (char *)&gxid, sizeof(FullTransactionId));
+	pq_sendbytes(&buf, (char *)&prepared_gxid, sizeof(FullTransactionId));
 
 	/* Node string list */
 	if (nodestring)
@@ -1865,32 +1893,6 @@ ProcessGetGIDDataTransactionCommand(Port *myport, StringInfo message)
 	/* No backup to the standby because this does not change internal status */
 	if (myport->remote_type != GTM_NODE_GTM_PROXY)
 		pq_flush(myport);
-
-	/* I don't think the following backup is needed. K.Suzuki, 27th, Dec., 2011 */
-#if 0
-	if (GetMyThreadInfo->thr_conn->standby)
-	{
-		int _rc;
-		GTM_Conn *oldconn = GetMyThreadInfo->thr_conn->standby;
-		int count = 0;
-
-		elog(DEBUG1, "calling get_gid_data() for standby GTM %p.",
-			GetMyThreadInfo->thr_conn->standby);
-
-retry:
-		_rc = get_gid_data(GetMyThreadInfo->thr_conn->standby,
-				   txn_isolation_level,
-				   gid,
-				   &gxid,
-				   &prepared_gxid,
-				   &nodestring);
-
-		if (gtm_standby_check_communication_error(&count, oldconn))
-			goto retry;
-
-		elog(DEBUG1, "get_gid_data() rc=%d done.", _rc);
-	}
-#endif
 
 	return;
 }
@@ -1971,7 +1973,7 @@ ProcessRollbackTransactionCommand(Port *myport, StringInfo message, bool is_back
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	int isgxid = 0;
 	MemoryContext oldContext;
 	int status = STATUS_OK;
@@ -2002,7 +2004,7 @@ ProcessRollbackTransactionCommand(Port *myport, StringInfo message, bool is_back
 
 	oldContext = MemoryContextSwitchTo(TopMemoryContext);
 
-	elog(DEBUG1, "Cancelling transaction id %u", gxid);
+	elog(DEBUG1, "Cancelling transaction id %lu", gxid.value);
 
 	/*
 	 * Commit the transaction
@@ -2031,7 +2033,7 @@ ProcessRollbackTransactionCommand(Port *myport, StringInfo message, bool is_back
 			if (Backup_synchronously && (myport->remote_type != GTM_NODE_GTM_PROXY))
 				gtm_sync_standby(GetMyThreadInfo->thr_conn->standby);
 
-			elog(DEBUG1, "abort_transaction() GXID=%d done.", gxid);
+			elog(DEBUG1, "abort_transaction() GXID=%lu done.", gxid.value);
 		}
 		/* Respond to the client */
 		pq_beginmessage(&buf, 'S');
@@ -2069,7 +2071,7 @@ ProcessCommitTransactionCommandMulti(Port *myport, StringInfo message, bool is_b
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn[GTM_MAX_GLOBAL_TRANSACTIONS];
-	GlobalTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
+	FullTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	int isgxid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	MemoryContext oldContext;
 	int status[GTM_MAX_GLOBAL_TRANSACTIONS];
@@ -2090,7 +2092,7 @@ ProcessCommitTransactionCommandMulti(Port *myport, StringInfo message, bool is_b
 						 errmsg("Message does not contain valid GXID")));
 			memcpy(&gxid[ii], data, sizeof (gxid[ii]));
 			txn[ii] = GTM_GXIDToHandle(gxid[ii]);
-			elog(DEBUG1, "ProcessCommitTransactionCommandMulti: gxid(%u), handle(%u)", gxid[ii], txn[ii]);
+			elog(DEBUG1, "ProcessCommitTransactionCommandMulti: gxid(%lu), handle(%u)", gxid[ii].value, txn[ii]);
 		}
 		else
 		{
@@ -2172,7 +2174,7 @@ ProcessRollbackTransactionCommandMulti(Port *myport, StringInfo message, bool is
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn[GTM_MAX_GLOBAL_TRANSACTIONS];
-	GlobalTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
+	FullTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	int isgxid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	MemoryContext oldContext;
 	int status[GTM_MAX_GLOBAL_TRANSACTIONS];
@@ -2193,7 +2195,7 @@ ProcessRollbackTransactionCommandMulti(Port *myport, StringInfo message, bool is
 						 errmsg("Message does not contain valid GXID")));
 			memcpy(&gxid[ii], data, sizeof (gxid[ii]));
 			txn[ii] = GTM_GXIDToHandle(gxid[ii]);
-			elog(DEBUG1, "ProcessRollbackTransactionCommandMulti: gxid(%u), handle(%u)", gxid[ii], txn[ii]);
+			elog(DEBUG1, "ProcessRollbackTransactionCommandMulti: gxid(%lu), handle(%u)", gxid[ii].value, txn[ii]);
 		}
 		else
 		{
@@ -2277,7 +2279,7 @@ ProcessStartPreparedTransactionCommand(Port *myport, StringInfo message, bool is
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	int isgxid = 0;
 	GTM_StrLen gidlen, nodelen;
 	char nodestring[1024];
@@ -2366,7 +2368,7 @@ ProcessStartPreparedTransactionCommand(Port *myport, StringInfo message, bool is
 			proxyhdr.ph_conid = myport->conn_id;
 			pq_sendbytes(&buf, (char *)&proxyhdr, sizeof (GTM_ProxyMsgHeader));
 		}
-		pq_sendbytes(&buf, (char *)&gxid, sizeof(GlobalTransactionId));
+		pq_sendbytes(&buf, (char *)&gxid, sizeof(FullTransactionId));
 		pq_endmessage(myport, &buf);
 
 		if (myport->remote_type != GTM_NODE_GTM_PROXY)
@@ -2391,7 +2393,7 @@ ProcessPrepareTransactionCommand(Port *myport, StringInfo message, bool is_backu
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	int isgxid = 0;
 	MemoryContext oldContext;
 
@@ -2428,7 +2430,7 @@ ProcessPrepareTransactionCommand(Port *myport, StringInfo message, bool is_backu
 
 	MemoryContextSwitchTo(oldContext);
 
-	elog(DEBUG1, "Preparing transaction id %u", gxid);
+	elog(DEBUG1, "Preparing transaction id %ld", gxid.value);
 
 	if (!is_backup)
 	{
@@ -2450,7 +2452,7 @@ ProcessPrepareTransactionCommand(Port *myport, StringInfo message, bool is_backu
 			if (Backup_synchronously && (myport->remote_type != GTM_NODE_GTM_PROXY))
 				gtm_sync_standby(GetMyThreadInfo->thr_conn->standby);
 
-			elog(DEBUG1, "prepare_transaction() GXID=%d done.", gxid);
+			elog(DEBUG1, "prepare_transaction() GXID=%ld done.", (gxid).value );
 		}
 		/* Respond to the client */
 		pq_beginmessage(&buf, 'S');
@@ -2490,7 +2492,7 @@ ProcessGetGXIDTransactionCommand(Port *myport, StringInfo message)
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	const char *data;
 	MemoryContext oldContext;
 
@@ -2511,14 +2513,14 @@ ProcessGetGXIDTransactionCommand(Port *myport, StringInfo message)
 	 * Get the transaction id for the given global transaction
 	 */
 	gxid = GTM_GetGlobalTransactionId(txn);
-	if (GlobalTransactionIdIsValid(gxid))
+	if (!FullTransactionIdIsValid(gxid))
 		ereport(ERROR,
 				(EINVAL,
 				 errmsg("Failed to get the transaction id")));
 
 	MemoryContextSwitchTo(oldContext);
 
-	elog(DEBUG3, "Sending transaction id %d", gxid);
+	elog(DEBUG3, "Sending transaction id %lu", gxid.value);
 
 	pq_beginmessage(&buf, 'S');
 	pq_sendint(&buf, TXN_GET_GXID_RESULT, 4);
@@ -2547,7 +2549,7 @@ void
 ProcessGetNextGXIDTransactionCommand(Port *myport, StringInfo message)
 {
 	StringInfoData buf;
-	GlobalTransactionId next_gxid;
+	FullTransactionId next_gxid;
 	MemoryContext oldContext;
 
 	elog(DEBUG3, "Inside ProcessGetNextGXIDTransactionCommand");
@@ -2566,7 +2568,7 @@ ProcessGetNextGXIDTransactionCommand(Port *myport, StringInfo message)
 
 	MemoryContextSwitchTo(oldContext);
 
-	elog(DEBUG3, "Sending next gxid %d", next_gxid);
+	elog(DEBUG3, "Sending next gxid %lu", next_gxid.value);
 
 	pq_beginmessage(&buf, 'S');
 	pq_sendint(&buf, TXN_GET_NEXT_GXID_RESULT, 4);
@@ -2576,7 +2578,7 @@ ProcessGetNextGXIDTransactionCommand(Port *myport, StringInfo message)
 		proxyhdr.ph_conid = myport->conn_id;
 		pq_sendbytes(&buf, (char *)&proxyhdr, sizeof (GTM_ProxyMsgHeader));
 	}
-	pq_sendint(&buf, next_gxid, sizeof(GlobalTransactionId));
+	pq_sendint64(&buf, next_gxid.value);
 	pq_endmessage(myport, &buf);
 
 	if (myport->remote_type != GTM_NODE_GTM_PROXY)
@@ -2598,56 +2600,62 @@ GTM_SetShuttingDown(void)
 }
 
 void
-GTM_RestoreTxnInfo(FILE *ctlf, GlobalTransactionId next_gxid)
+GTM_RestoreTxnInfo(FILE *ctlf, FullTransactionId next_gxid)
 {
-	GlobalTransactionId saved_gxid;
+	FullTransactionId saved_gxid;
 
 	if (ctlf)
 	{
-		if ((fscanf(ctlf, "%u", &saved_gxid) != 1) &&
-			(!GlobalTransactionIdIsValid(next_gxid)))
-			next_gxid = InitialGXIDValue_Default;
-		else if (!GlobalTransactionIdIsValid(next_gxid))
+		if ((fscanf(ctlf, "%lu", &saved_gxid.value) != 1) &&
+			(!FullTransactionIdIsValid(next_gxid)))
+			next_gxid = FullTransactionIdFromEpochAndXid(0, InitialGXIDValue_Default);
+		else if (!FullTransactionIdIsValid(next_gxid))
 			next_gxid = saved_gxid;
 	}
-	else if (!GlobalTransactionIdIsValid(next_gxid))
-		next_gxid = InitialGXIDValue_Default;
+	else if (!FullTransactionIdIsValid(next_gxid))
+		next_gxid = FullTransactionIdFromEpochAndXid(0, InitialGXIDValue_Default);
 
-	elog(DEBUG1, "Restoring last GXID to %u\n", next_gxid);
+	elog(DEBUG1, "Restoring last GXID to %lu\n", next_gxid.value);
 
-	if (GlobalTransactionIdIsValid(next_gxid))
+	if (FullTransactionIdIsValid(next_gxid))
 		SetNextGlobalTransactionId(next_gxid);
+
 	/* Set this otherwise a strange snapshot might be returned for the first one */
-	GTMTransactions.gt_latestCompletedXid = next_gxid - 1;
+	GTMTransactions.gt_latestCompletedXid = XidFromFullTransactionId(next_gxid) - 1;
 	return;
 }
 
 void
 GTM_SaveTxnInfo(FILE *ctlf)
 {
-	GlobalTransactionId next_gxid;
+	FullTransactionId next_gxid;
 
 	next_gxid = ReadNewGlobalTransactionId();
 
-	elog(LOG, "Saving transaction info - next_gxid: %u", next_gxid);
+	elog(LOG, "Saving transaction info - next_gxid: %lu", next_gxid.value);
 
-	fprintf(ctlf, "%u\n", next_gxid);
+	fprintf(ctlf, "%lu\n", next_gxid.value);
 }
 
 bool GTM_NeedXidRestoreUpdate(void)
 {
-	return(GlobalTransactionIdPrecedesOrEquals(GTMTransactions.gt_backedUpXid, GTMTransactions.gt_nextXid));
+	return(FullTransactionIdPrecedesOrEquals(GTMTransactions.gt_backedUpXid, GTMTransactions.gt_nextXid));
 }
 
 void GTM_WriteRestorePointXid(FILE *f)
 {
+/* uint64 deactivated
 	if ((MaxGlobalTransactionId - GTMTransactions.gt_nextXid) >= RestoreDuration)
 		GTMTransactions.gt_backedUpXid = GTMTransactions.gt_nextXid + RestoreDuration;
 	else
 		GTMTransactions.gt_backedUpXid = FirstNormalGlobalTransactionId + (RestoreDuration - (MaxGlobalTransactionId - GTMTransactions.gt_nextXid));
-	
-	elog(LOG, "Saving transaction restoration info, backed-up gxid: %u", GTMTransactions.gt_backedUpXid);
-	fprintf(f, "%u\n", GTMTransactions.gt_backedUpXid);
+*/	
+
+	GTMTransactions.gt_backedUpXid = GTMTransactions.gt_nextXid;
+	GTMTransactions.gt_backedUpXid.value += RestoreDuration;
+
+	elog(LOG, "Saving transaction restoration info, backed-up gxid: %lu", GTMTransactions.gt_backedUpXid.value);
+	fprintf(f, "%lu\n", GTMTransactions.gt_backedUpXid.value);
 }
 
 /*

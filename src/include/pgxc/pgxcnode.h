@@ -21,7 +21,7 @@
 #include "nodes/pg_list.h"
 #include "utils/snapshot.h"
 #include <unistd.h>
-
+#include "access/transam.h"
 #define NO_SOCKET -1
 
 
@@ -171,7 +171,7 @@ extern int	pgxc_node_send_query_extended(PGXCNodeHandle *handle, const char *que
 							  int num_params, Oid *param_types,
 							  int paramlen, char *params,
 							  bool send_describe, int fetch_size);
-extern int	pgxc_node_send_gxid(PGXCNodeHandle * handle, GlobalTransactionId gxid);
+extern int	pgxc_node_send_gxid(PGXCNodeHandle * handle, FullTransactionId gxid);
 extern int	pgxc_node_send_cmd_id(PGXCNodeHandle *handle, CommandId cid);
 extern int	pgxc_node_send_snapshot(PGXCNodeHandle * handle, Snapshot snapshot);
 extern int	pgxc_node_send_timestamp(PGXCNodeHandle * handle, TimestampTz timestamp);

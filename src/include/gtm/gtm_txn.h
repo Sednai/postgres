@@ -19,6 +19,7 @@
 #include "gtm/gtm_lock.h"
 #include "gtm/gtm_list.h"
 #include "gtm/stringinfo.h"
+#include "access/transam.h"
 
 /* ----------------
  *		Special transaction ID values
@@ -77,11 +78,10 @@ extern bool GlobalTransactionIdFollows(GlobalTransactionId id1, GlobalTransactio
 extern bool GlobalTransactionIdFollowsOrEquals(GlobalTransactionId id1, GlobalTransactionId id2);
 
 /* in transam/varsup.c */
-extern GlobalTransactionId GTM_GetGlobalTransactionId(GTM_TransactionHandle handle);
-extern GlobalTransactionId GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count);
-extern GlobalTransactionId ReadNewGlobalTransactionId(void);
-extern void SetGlobalTransactionIdLimit(GlobalTransactionId oldest_datfrozenxid);
-extern void SetNextGlobalTransactionId(GlobalTransactionId gxid);
+extern FullTransactionId GTM_GetGlobalTransactionId(GTM_TransactionHandle handle);
+extern FullTransactionId GTM_GetGlobalTransactionIdMulti(GTM_TransactionHandle handle[], int txn_count);
+extern FullTransactionId ReadNewGlobalTransactionId(void);
+extern void SetNextGlobalTransactionId(FullTransactionId gxid);
 extern void GTM_SetShuttingDown(void);
 
 /* For restoration point backup */
@@ -114,7 +114,7 @@ typedef struct GTM_TransactionInfo
 	GTM_ThreadID			gti_thread_id;
 
 	bool					gti_in_use;
-	GlobalTransactionId		gti_gxid;
+	FullTransactionId		gti_gxid;
 	GTM_TransactionStates	gti_state;
 	char					*gti_coordname;
 	GlobalTransactionId		gti_xmin;
@@ -148,8 +148,8 @@ typedef struct GTM_Transactions
 	/*
 	 * These fields are protected by XidGenLock
 	 */
-	GlobalTransactionId gt_nextXid;		/* next XID to assign */
-	GlobalTransactionId gt_backedUpXid;	/* backed up, restoration point */
+	FullTransactionId gt_nextXid;		/* next XID to assign */
+	FullTransactionId gt_backedUpXid;	/* backed up, restoration point */
 
 	GlobalTransactionId gt_oldestXid;	/* cluster-wide minimum datfrozenxid */
 	GlobalTransactionId gt_xidVacLimit;	/* start forcing autovacuums here */
@@ -187,7 +187,7 @@ extern GTM_Transactions	GTMTransactions;
  */
 
 GTM_TransactionInfo *GTM_HandleToTransactionInfo(GTM_TransactionHandle handle);
-GTM_TransactionHandle GTM_GXIDToHandle(GlobalTransactionId gxid);
+GTM_TransactionHandle GTM_GXIDToHandle(FullTransactionId gxid);
 GTM_TransactionHandle GTM_GIDToHandle(char *gid);
 
 /* Transaction Control */
@@ -203,23 +203,23 @@ int GTM_BeginTransactionMulti(char *coord_name,
 										   GTM_TransactionHandle txns[]);
 int GTM_RollbackTransaction(GTM_TransactionHandle txn);
 int GTM_RollbackTransactionMulti(GTM_TransactionHandle txn[], int txn_count, int status[]);
-int GTM_RollbackTransactionGXID(GlobalTransactionId gxid);
+int GTM_RollbackTransactionGXID(FullTransactionId gxid);
 int GTM_CommitTransaction(GTM_TransactionHandle txn);
 int GTM_CommitTransactionMulti(GTM_TransactionHandle txn[], int txn_count, int status[]);
-int GTM_CommitTransactionGXID(GlobalTransactionId gxid);
+int GTM_CommitTransactionGXID(FullTransactionId gxid);
 int GTM_PrepareTransaction(GTM_TransactionHandle txn);
 int GTM_StartPreparedTransaction(GTM_TransactionHandle txn,
 								 char *gid,
 								 char *nodestring);
-int GTM_StartPreparedTransactionGXID(GlobalTransactionId gxid,
+int GTM_StartPreparedTransactionGXID(FullTransactionId gxid,
 									 char *gid,
 									 char *nodestring);
 int GTM_GetGIDData(GTM_TransactionHandle prepared_txn,
-				   GlobalTransactionId *prepared_gxid,
+				   FullTransactionId *prepared_gxid,
 				   char **nodestring);
 uint32 GTM_GetAllPrepared(GlobalTransactionId gxids[], uint32 gxidcnt);
 GTM_TransactionStates GTM_GetStatus(GTM_TransactionHandle txn);
-GTM_TransactionStates GTM_GetStatusGXID(GlobalTransactionId gxid);
+GTM_TransactionStates GTM_GetStatusGXID(FullTransactionId gxid);
 int GTM_GetAllTransactions(GTM_TransactionInfo txninfo[], uint32 txncnt);
 void GTM_RemoveAllTransInfos(int backend_id);
 
@@ -258,7 +258,7 @@ void ProcessCommitTransactionCommandMulti(Port *myport, StringInfo message, bool
 void ProcessRollbackTransactionCommandMulti(Port *myport, StringInfo message, bool is_backup) ;
 
 void GTM_SaveTxnInfo(FILE *ctlf);
-void GTM_RestoreTxnInfo(FILE *ctlf, GlobalTransactionId next_gxid);
+void GTM_RestoreTxnInfo(FILE *ctlf, FullTransactionId next_gxid);
 void GTM_BkupBeginTransaction(char *coord_name,
 							  GTM_TransactionHandle txn,
 							  GTM_IsolationLevel isolevel,

@@ -1283,8 +1283,6 @@ heap_modify_tuple(HeapTuple tuple,
 #ifdef PGXC
 	newTuple->t_xc_node_id = tuple->t_xc_node_id;
 #endif
-	if (tupleDesc->tdhasoid)
-		HeapTupleSetOid(newTuple, HeapTupleGetOid(tuple));
 
 	return newTuple;
 }

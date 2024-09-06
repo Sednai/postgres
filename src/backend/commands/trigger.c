@@ -3004,7 +3004,7 @@ ExecARDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 			if (!fdw_trigtuple)
 				return;
 			//trigtuple = pgxc_get_trigger_tuple(trigtuphead);
-			trigtuple = fdw_trigtuple;
+			//trigtuple = fdw_trigtuple;
 		}
 		else /* Do the usual PG-way for datanode */
 		{
@@ -3238,7 +3238,7 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 	{
 		/* No OLD tuple means triggers are to be run on datanode */
 		if (!fdw_trigtuple)
-			return slot;
+			return newslot;
 		//trigtuple = pgxc_get_trigger_tuple(datanode_tuphead);
 		trigtuple = fdw_trigtuple;
 	}
@@ -3350,7 +3350,7 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 #ifdef PGXC
 			/* Make sure trigger did not modify distrib column */
 			if (rel_locinfo && IsRelationDistributedByValue(rel_locinfo))
-				pgxc_check_distcol_update(slottuple, newtuple, tupdesc, rel_locinfo);
+				pgxc_check_distcol_update(oldtuple, newtuple, RelationGetDescr(relinfo->ri_RelationDesc), rel_locinfo);
 #endif
 			if (should_free_new)
 				heap_freetuple(oldtuple);
@@ -3390,7 +3390,7 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 			if (!fdw_trigtuple)
 				return;
 			//trigtuple = pgxc_get_trigger_tuple(trigtuphead);
-			trigtuple = fdw_trigtuple;
+			//trigtuple = fdw_trigtuple;
 		}
 		else
 		{
@@ -4647,9 +4647,6 @@ AfterTriggerExecute(EState *estate,
 			LocTriggerData.tg_trigtuple = NULL;
 			LocTriggerData.tg_newtuple = NULL;
 		}
-		/* Buffers are only meant for local table tuples */
-		LocTriggerData.tg_trigtuplebuf = InvalidBuffer;
-		LocTriggerData.tg_newtuplebuf = InvalidBuffer;
 	}
 	else
 	{
@@ -6648,7 +6645,7 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 	 * OLD and NEW row into the tuplestore.
 	 */
 	if (is_remote_relation && event_added)
-		pgxc_ARAddRow(oldtup, newtup, is_deferred);
+		pgxc_ARAddRow(oldslot, newslot, is_deferred);
 #endif
 
 	}
@@ -6959,7 +6956,7 @@ pgxc_ar_dofetch(Relation rel, ARTupInfo *rs_tupinfo, TsOffset fetchpos, HeapTupl
 	Assert(rs_tupinfo->ti_curpos >= 0);
 
 	/* Build table slot for this relation */
-	slot = MakeSingleTupleTableSlot(RelationGetDescr(rel));
+	slot = MakeSingleTupleTableSlot(RelationGetDescr(rel), &TTSOpsMinimalTuple);
 
 	if (!tuplestore_gettupleslot(rs_tupinfo->tupstate,
 								 true /* forward */, false /* copy */ ,
@@ -6975,7 +6972,7 @@ pgxc_ar_dofetch(Relation rel, ARTupInfo *rs_tupinfo, TsOffset fetchpos, HeapTupl
 
 
 	/* Return a complete tuple. Tuplestore has fetched us a minimal tuple. */
-	*rs_tuple = ExecCopySlotTuple(slot);
+	*rs_tuple = ExecCopySlotHeapTuple(slot);
 
 	ExecDropSingleTupleTableSlot(slot);
 }

@@ -10130,8 +10130,7 @@ xlog_redo(XLogReaderState *record)
 	{
 		/* nothing to do here */
 	}
-	else if (info == XLOG_FPI || info == XLOG_FPI_FOR_HINT ||
-			 info == XLOG_FPI_MULTI)
+	else if (info == XLOG_FPI || info == XLOG_FPI_FOR_HINT)
 	{
 		/*
 		 * Full-page image (FPI) records contain nothing else but a backup

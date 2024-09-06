@@ -3182,9 +3182,6 @@ CopyFrom(CopyState cstate)
 			enlargeStringInfo(&cstate->line_buf, 19);
 			appendBinaryStringInfo(&cstate->line_buf, BinarySignature, 11);
 			tmp = 0;
-
-			if (cstate->oids)
-				tmp |= (1 << 16);
 			tmp = htonl(tmp);
 
 			appendBinaryStringInfo(&cstate->line_buf, (char *) &tmp, 4);
@@ -3257,7 +3254,7 @@ CopyFrom(CopyState cstate)
 		 */
 		if (IS_PGXC_COORDINATOR && cstate->remoteCopyState->rel_loc)
 		{
-			Form_pg_attribute attr = tupDesc->attrs;
+			Form_pg_attribute attr = myslot->tts_tupleDescriptor->attrs;
 			Datum	dist_col_value;
 			bool	dist_col_is_null;
 			Oid		dist_col_type;
@@ -3265,8 +3262,8 @@ CopyFrom(CopyState cstate)
 
 			if (remoteCopyState->idx_dist_by_col >= 0)
 			{
-				dist_col_value = values[remoteCopyState->idx_dist_by_col];
-				dist_col_is_null =  nulls[remoteCopyState->idx_dist_by_col];
+				dist_col_value = myslot->tts_values[remoteCopyState->idx_dist_by_col];
+				dist_col_is_null =  myslot->tts_isnull[remoteCopyState->idx_dist_by_col];
 				dist_col_type = attr[remoteCopyState->idx_dist_by_col].atttypid;
 			}
 			else
@@ -5712,7 +5709,6 @@ GetRemoteCopyOptions(CopyState cstate)
 
 	/* Then fill in structure */
 	res->rco_binary = cstate->binary;
-	res->rco_oids = cstate->oids;
 	res->rco_csv_mode = cstate->csv_mode;
 	if (cstate->delim)
 		res->rco_delim = pstrdup(cstate->delim);

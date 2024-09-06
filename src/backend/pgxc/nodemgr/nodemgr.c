@@ -23,13 +23,13 @@
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/lsyscache.h"
-#include "utils/tqual.h"
 #include "pgxc/locator.h"
 #include "pgxc/nodemgr.h"
 #include "pgxc/pgxc.h"
 #include "access/htup_details.h"
 #include "pg_config.h"
 #include "storage/shmem.h"
+#include "catalog/indexing.h"
 
 /*
  * How many times should we try to find a unique indetifier
@@ -325,7 +325,7 @@ PgxcNodeListAndCount(void)
 	 * 3) Complete primary/preferred node information
 	 */
 	rel = heap_open(PgxcNodeRelationId, AccessShareLock);
-	scan = heap_beginscan(rel, SnapshotSelf, 0, NULL);
+	scan = heap_beginscan(rel, SnapshotSelf, 0, NULL, NULL, NULL);
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		Form_pgxc_node  nodeForm = (Form_pgxc_node) GETSTRUCT(tuple);
@@ -344,7 +344,7 @@ PgxcNodeListAndCount(void)
 		}
 
 		/* Populate the definition */
-		node->nodeoid = HeapTupleGetOid(tuple);
+		node->nodeoid = &nodeForm->oid;
 		memcpy(&node->nodename, &nodeForm->node_name, NAMEDATALEN);
 		memcpy(&node->nodehost, &nodeForm->node_host, NAMEDATALEN);
 		node->nodeport = nodeForm->node_port;
@@ -572,6 +572,9 @@ PgxcNodeCreate(CreateNodeStmt *stmt)
 	pgxcnodesrel = heap_open(PgxcNodeRelationId, RowExclusiveLock);
 
 	/* Build entry tuple */
+	nodeOid = GetNewOidWithIndex(pgxcnodesrel, PgxcNodeOidIndexId, Anum_pgxc_node_oid);
+
+	values[Anum_pgxc_node_oid - 1] = ObjectIdGetDatum(nodeOid);
 	values[Anum_pgxc_node_name - 1] = DirectFunctionCall1(namein, CStringGetDatum(node_name));
 	values[Anum_pgxc_node_type - 1] = CharGetDatum(node_type);
 	values[Anum_pgxc_node_port - 1] = Int32GetDatum(node_port);
@@ -583,8 +586,8 @@ PgxcNodeCreate(CreateNodeStmt *stmt)
 	htup = heap_form_tuple(pgxcnodesrel->rd_att, values, nulls);
 
 	/* Insert tuple in catalog */
-	nodeOid = simple_heap_insert(pgxcnodesrel, htup);
-
+	simple_heap_insert(pgxcnodesrel, htup);
+	
 	CatalogIndexState indstate;
 
 	indstate = CatalogOpenIndexes(pgxcnodesrel);

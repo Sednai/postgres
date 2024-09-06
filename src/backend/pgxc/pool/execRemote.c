@@ -37,7 +37,6 @@
 #include "pgxc/execRemote.h"
 #include "nodes/nodes.h"
 #include "nodes/nodeFuncs.h"
-#include "optimizer/var.h"
 #include "pgxc/copyops.h"
 #include "pgxc/nodemgr.h"
 #include "pgxc/poolmgr.h"
@@ -55,6 +54,7 @@
 #include "parser/parsetree.h"
 #include "pgxc/xc_maintenance_mode.h"
 #include "utils/rel.h"
+#include "access/table.h"
 
 /* Enforce the use of two-phase commit when temporary objects are used */
 bool EnforceTwoPhaseCommit = true;
@@ -112,7 +112,7 @@ typedef struct RemoteXactState
 	PGXCNodeHandle			**remoteNodeHandles;
 	RemoteXactNodeStatus	*remoteNodeStatus;
 
-	GlobalTransactionId		commitXid;
+	FullTransactionId		commitXid;
 
 	bool					preparedLocalNode;
 
@@ -155,7 +155,7 @@ static abort_callback_type dbcleanup_info = { NULL, NULL };
 #endif
 
 static int	pgxc_node_begin(int conn_count, PGXCNodeHandle ** connections,
-				GlobalTransactionId gxid, bool need_tran_block,
+				FullTransactionId gxid, bool need_tran_block,
 				bool readOnly, char node_type);
 static PGXCNodeAllHandles * get_exec_connections(RemoteQueryState *planstate,
 					 ExecNodes *exec_nodes,
@@ -278,7 +278,7 @@ create_tuple_desc(char *msg_body, size_t len)
 	nattr = ntohs(n16);
 	msg_body += 2;
 
-	result = CreateTemplateTupleDesc(nattr, false);
+	result = CreateTemplateTupleDesc(nattr);
 
 	/* decode attributes */
 	for (i = 1; i <= nattr; i++)
@@ -1465,7 +1465,7 @@ generate_begin_command(void)
  */
 static int
 pgxc_node_begin(int conn_count, PGXCNodeHandle **connections,
-				GlobalTransactionId gxid, bool need_tran_block,
+				FullTransactionId gxid, bool need_tran_block,
 				bool readOnly, char node_type)
 {
 	int			i;
@@ -1510,7 +1510,7 @@ pgxc_node_begin(int conn_count, PGXCNodeHandle **connections,
 			BufferConnection(connections[i]);
 
 		/* Send GXID and check for errors */
-		if (GlobalTransactionIdIsValid(gxid) && pgxc_node_send_gxid(connections[i], gxid))
+		if (FullTransactionIdIsValid(gxid) && pgxc_node_send_gxid(connections[i], gxid))
 			return EOF;
 
 		/* Send timestamp and check for errors */
@@ -1799,10 +1799,10 @@ pgxc_node_remote_commit(void)
 		 * So get an auxilliary GXID only if the local node is not involved
 		 */
 
-		if (!GlobalTransactionIdIsValid(remoteXactState.commitXid))
+		if (!FullTransactionIdIsValid(remoteXactState.commitXid))
 			remoteXactState.commitXid = GetAuxilliaryTransactionId();
 
-		if(!GlobalTransactionIdIsValid(remoteXactState.commitXid))
+		if(!FullTransactionIdIsValid(remoteXactState.commitXid))
 		{
 			remoteXactState.status = RXACT_COMMIT_FAILED;
 			ereport(ERROR, (errcode(ERRCODE_INTERNAL_ERROR),
@@ -1993,11 +1993,11 @@ pgxc_node_remote_abort(void)
 		{
 			sprintf(rollbackPrepCmd, "ROLLBACK PREPARED '%s'", remoteXactState.prepareGID);
 
-			if (!GlobalTransactionIdIsValid(remoteXactState.commitXid))
+			if (!FullTransactionIdIsValid(remoteXactState.commitXid))
 				remoteXactState.commitXid = GetAuxilliaryTransactionId();
 
 			/* Do not report error to avoid infinite loop of errors */
-			if (!GlobalTransactionIdIsValid(remoteXactState.commitXid))
+			if (!FullTransactionIdIsValid(remoteXactState.commitXid))
 			{
 				ereport(WARNING, (errcode(ERRCODE_INTERNAL_ERROR),
 					errmsg("failed to set commitXid for ROLLBACK PREPARED command")));
@@ -2124,7 +2124,7 @@ pgxcNodeCopyBegin(const char *query, List *nodelist, Snapshot snapshot, char nod
 	PGXCNodeHandle **copy_connections;
 	ListCell *nodeitem;
 	bool need_tran_block;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	RemoteQueryState *combiner;
 
 	Assert(node_type == PGXC_NODE_DATANODE || node_type == PGXC_NODE_COORDINATOR);
@@ -2166,9 +2166,9 @@ pgxcNodeCopyBegin(const char *query, List *nodelist, Snapshot snapshot, char nod
 	foreach(nodeitem, nodelist)
 		copy_connections[lfirst_int(nodeitem)] = connections[i++];
 
-	gxid = GetCurrentTransactionId();
+	gxid = GetCurrentFullTransactionId();
 
-	if (!GlobalTransactionIdIsValid(gxid))
+	if (!FullTransactionIdIsValid(gxid))
 	{
 		pfree_pgxc_all_handles(pgxc_handles);
 		pfree(copy_connections);
@@ -2604,8 +2604,8 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	remotestate->eof_underlying = false;
 	remotestate->tuplestorestate = NULL;
 
-	ExecInitScanTupleSlot(estate, &remotestate->ss, NULL);
-	scan_type = ExecTypeFromTL(node->base_tlist, false);
+	ExecInitScanTupleSlot(estate, &remotestate->ss, NULL, &TTSOpsMinimalTuple);
+	scan_type = ExecTypeFromTL(node->base_tlist);
 	ExecAssignScanType(&remotestate->ss, scan_type);
 
 	/*
@@ -2927,7 +2927,7 @@ do_query(RemoteQueryState *node)
 	TupleTableSlot		*scanslot = node->ss.ss_ScanTupleSlot;
 	bool			force_autocommit = step->force_autocommit;
 	bool			is_read_only = step->read_only;
-	GlobalTransactionId	gxid = InvalidGlobalTransactionId;
+	FullTransactionId	gxid = InvalidFullTransactionId;
 	Snapshot		snapshot = GetActiveSnapshot();
 	PGXCNodeHandle		**connections = NULL;
 	PGXCNodeHandle		*primaryconnection = NULL;
@@ -3026,9 +3026,9 @@ do_query(RemoteQueryState *node)
 				 "need_tran_block = %s", primaryconnection ? "true" : "false",
 				 regular_conn_count, need_tran_block ? "true" : "false");
 
-	gxid = GetCurrentTransactionId();
+	gxid = GetCurrentFullTransactionId();
 
-	if (!GlobalTransactionIdIsValid(gxid))
+	if (!FullTransactionIdIsValid(gxid))
 	{
 		if (primaryconnection)
 			pfree(primaryconnection);
@@ -3536,8 +3536,8 @@ ExecEndRemoteQuery(RemoteQueryState *node)
 	}
 
 	if (node->ss.ss_currentRelation)
-		ExecCloseScanRelation(node->ss.ss_currentRelation);
-
+		heap_close(node->ss.ss_currentRelation, NoLock);
+	
 	CloseCombiner(node);
 }
 
@@ -3782,7 +3782,7 @@ ExecRemoteUtility(RemoteQuery *node)
 	RemoteQueryState *remotestate;
 	bool		force_autocommit = node->force_autocommit;
 	RemoteQueryExecType exec_type = node->exec_type;
-	GlobalTransactionId gxid = InvalidGlobalTransactionId;
+	FullTransactionId gxid = InvalidFullTransactionId;
 	Snapshot snapshot = GetActiveSnapshot();
 	PGXCNodeAllHandles *pgxc_connections;
 	int			co_conn_count;
@@ -3825,8 +3825,8 @@ ExecRemoteUtility(RemoteQuery *node)
 					 errmsg("cannot run EXECUTE DIRECT with utility inside a transaction block")));
 	}
 
-	gxid = GetCurrentTransactionId();
-	if (!GlobalTransactionIdIsValid(gxid))
+	gxid = GetCurrentFullTransactionId();
+	if (!FullTransactionIdIsValid(gxid))
 		ereport(ERROR,
 				(errcode(ERRCODE_INTERNAL_ERROR),
 				 errmsg("Failed to get next transaction ID")));
@@ -4287,7 +4287,7 @@ ExecProcNodeDMLInXC(EState *estate,
 			if (returningResultSlot == NULL)
 			{
 				/* Copy the received tuple to be returned later */
-				returningResultSlot = MakeSingleTupleTableSlot(temp_slot->tts_tupleDescriptor);
+				returningResultSlot = MakeSingleTupleTableSlot(temp_slot->tts_tupleDescriptor, &TTSOpsMinimalTuple);
 				returningResultSlot = ExecCopySlot(returningResultSlot, temp_slot);
 			}
 			/* Clear the received tuple, the copy required has already been saved */
@@ -4624,7 +4624,7 @@ clear_RemoteXactState(void)
 	remoteXactState.numWriteRemoteNodes = 0;
 	remoteXactState.numReadRemoteNodes = 0;
 	remoteXactState.status = RXACT_NONE;
-	remoteXactState.commitXid = InvalidGlobalTransactionId;
+	remoteXactState.commitXid = InvalidFullTransactionId;
 	remoteXactState.prepareGID[0] = '\0';
 
 	if ((remoteXactState.remoteNodeHandles == NULL) ||
@@ -4687,7 +4687,7 @@ FinishRemotePreparedTransaction(char *prepareGID, bool commit)
 {
 	char					*nodename, *nodestring;
 	List					*nodelist = NIL, *coordlist = NIL;
-	GlobalTransactionId		gxid, prepare_gxid;
+	FullTransactionId		gxid, prepare_gxid;
 	PGXCNodeAllHandles 		*pgxc_handles;
 	bool					prepared_local = false;
 	int						i;

@@ -11,33 +11,34 @@
 #define ACCESS_GTM_H
 
 #include "gtm/gtm_c.h"
+#include "access/transam.h"
 
 /* Configuration variables */
 extern char *GtmHost;
 extern int GtmPort;
 extern bool gtm_backup_barrier;
 
-extern GlobalTransactionId currentGxid;
+extern FullTransactionId currentGxid;
 
 extern bool IsGTMConnected(void);
 extern void InitGTM(void);
 extern void CloseGTM(void);
-extern GlobalTransactionId BeginTranGTM(GTM_Timestamp *timestamp);
-extern GlobalTransactionId BeginTranAutovacuumGTM(void);
-extern int CommitTranGTM(GlobalTransactionId gxid);
-extern int RollbackTranGTM(GlobalTransactionId gxid);
-extern int StartPreparedTranGTM(GlobalTransactionId gxid,
+extern FullTransactionId BeginTranGTM(GTM_Timestamp *timestamp);
+extern FullTransactionId BeginTranAutovacuumGTM(void);
+extern int CommitTranGTM(FullTransactionId gxid);
+extern int RollbackTranGTM(FullTransactionId gxid);
+extern int StartPreparedTranGTM(FullTransactionId gxid,
 								char *gid,
 								char *nodestring);
-extern int PrepareTranGTM(GlobalTransactionId gxid);
+extern int PrepareTranGTM(FullTransactionId gxid);
 extern int GetGIDDataGTM(char *gid,
-						 GlobalTransactionId *gxid,
-						 GlobalTransactionId *prepared_gxid,
+						 FullTransactionId *gxid,
+						 FullTransactionId *prepared_gxid,
 						 char **nodestring);
-extern int CommitPreparedTranGTM(GlobalTransactionId gxid,
-								 GlobalTransactionId prepared_gxid);
+extern int CommitPreparedTranGTM(FullTransactionId gxid,
+								 FullTransactionId prepared_gxid);
 
-extern GTM_Snapshot GetSnapshotGTM(GlobalTransactionId gxid, bool canbe_grouped);
+extern GTM_Snapshot GetSnapshotGTM(FullTransactionId gxid, bool canbe_grouped);
 
 /* Node registration APIs with GTM */
 extern int RegisterGTM(GTM_PGXCNodeType type, GTM_PGXCNodePort port, const char *datafolder);

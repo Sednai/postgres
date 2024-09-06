@@ -346,7 +346,7 @@ RenameSchema(const char *oldname, const char *newname)
 		/* Check object dependency and see if there is a sequence. If yes rename it */
 		namespaceId = GetSysCacheOid(NAMESPACENAME,
 									 CStringGetDatum(oldname),
-									 0, 0, 0);
+									 0, 0, 0, 0);
 		/* Create the object that will be checked for the dependencies */
 		object.classId = NamespaceRelationId;
 		object.objectId = namespaceId;

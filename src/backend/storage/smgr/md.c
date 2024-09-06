@@ -1009,39 +1009,6 @@ ForgetDatabaseSyncRequests(Oid dbid)
  * DropRelationFiles -- drop files of all given relations
  */
 void
-ForgetRelationFsyncRequests(RelFileNode rnode, ForkNumber forknum)
-{
-	if (pendingOpsTable)
-	{
-		/* standalone backend or startup process: fsync state is local */
-		RememberFsyncRequest(rnode, forknum, FORGET_RELATION_FSYNC);
-	}
-	else if (IsUnderPostmaster)
-	{
-		/*
-		 * Notify the checkpointer about it.  If we fail to queue the cancel
-		 * message, we have to sleep and try again ... ugly, but hopefully
-		 * won't happen often.
-		 *
-		 * XXX should we CHECK_FOR_INTERRUPTS in this loop?  Escaping with an
-		 * error would leave the no-longer-used file still present on disk,
-		 * which would be bad, so I'm inclined to assume that the checkpointer
-		 * will always empty the queue soon.
-		 */
-		while (!ForwardFsyncRequest(rnode, forknum, FORGET_RELATION_FSYNC))
-			pg_usleep(10000L);	/* 10 msec seems a good number */
-
-		/*
-		 * Note we don't wait for the checkpointer to actually absorb the
-		 * cancel message; see mdsync() for the implications.
-		 */
-	}
-}
-
-/*
- * DropRelationFiles -- drop files of all given relations
- */
-void
 DropRelationFiles(RelFileNode *delrels, int ndelrels, bool isRedo)
 {
 	SMgrRelation *srels;
@@ -1068,33 +1035,6 @@ DropRelationFiles(RelFileNode *delrels, int ndelrels, bool isRedo)
 		smgrclose(srels[i]);
 	pfree(srels);
 }
-
-/*
- * ForgetDatabaseFsyncRequests -- forget any fsyncs and unlinks for a DB
- */
-void
-ForgetDatabaseFsyncRequests(Oid dbid)
-{
-	RelFileNode rnode;
-
-	rnode.dbNode = dbid;
-	rnode.spcNode = 0;
-	rnode.relNode = 0;
-
-	if (pendingOpsTable)
-	{
-		/* standalone backend or startup process: fsync state is local */
-		RememberFsyncRequest(rnode, InvalidForkNumber, FORGET_DATABASE_FSYNC);
-	}
-	else if (IsUnderPostmaster)
-	{
-		/* see notes in ForgetRelationFsyncRequests */
-		while (!ForwardFsyncRequest(rnode, InvalidForkNumber,
-									FORGET_DATABASE_FSYNC))
-			pg_usleep(10000L);	/* 10 msec seems a good number */
-	}
-}
-
 
 /*
  *	_fdvec_resize() -- Resize the fork's open segments array

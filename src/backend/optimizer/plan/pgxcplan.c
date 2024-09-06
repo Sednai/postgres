@@ -36,7 +36,6 @@
 #include "optimizer/planner.h"
 #include "optimizer/restrictinfo.h"
 #include "optimizer/tlist.h"
-#include "optimizer/var.h"
 #include "optimizer/pathnode.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_relation.h"
@@ -54,10 +53,10 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "utils/fmgroids.h"
-#include "utils/tqual.h"
 #include "utils/ruleutils.h"
 #include "access/htup_details.h"
-#include "nodes/relation.h"
+#include "nodes/pathnodes.h"
+#include "optimizer/optimizer.h"
 
 /* Context for collecting range tables in a Query tree */
 typedef struct

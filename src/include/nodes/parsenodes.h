@@ -984,7 +984,7 @@ typedef enum RTEKind
 	RTE_CTE,					/* common table expr (WITH list element) */
 	RTE_NAMEDTUPLESTORE,		/* tuplestore, e.g. for AFTER triggers */
 #ifdef PGXC
-	,RTE_REMOTE_DUMMY			/* RTEs created by remote plan reduction */
+	RTE_REMOTE_DUMMY,			/* RTEs created by remote plan reduction */
 #endif /* PGXC */
 	RTE_RESULT					/* RTE represents an empty FROM clause; such
 								 * RTEs are added by the planner, they're not

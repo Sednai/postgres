@@ -1146,29 +1146,6 @@ typedef struct PartitionPruneInfo
  * it is -1 if the partition is a leaf or has been pruned.  Note that subplan
  * indexes, as stored in 'subplan_map', are global across the parent plan
  * node, but partition indexes are valid only within a particular hierarchy.
- */
-typedef struct PartitionedRelPruneInfo
-{
-	NodeTag		type;
-	List	   *prune_infos;
-	Bitmapset  *other_subplans;
-} PartitionPruneInfo;
-
-/*
- * PartitionedRelPruneInfo - Details required to allow the executor to prune
- * partitions for a single partitioned table.
- *
- * subplan_map[] and subpart_map[] are indexed by partition index of the
- * partitioned table referenced by 'rtindex', the partition index being the
- * order that the partitions are defined in the table's PartitionDesc.  For a
- * leaf partition p, subplan_map[p] contains the zero-based index of the
- * partition's subplan in the parent plan's subplan list; it is -1 if the
- * partition is non-leaf or has been pruned.  For a non-leaf partition p,
- * subpart_map[p] contains the zero-based index of that sub-partition's
- * PartitionedRelPruneInfo in the hierarchy's PartitionedRelPruneInfo list;
- * it is -1 if the partition is a leaf or has been pruned.  Note that subplan
- * indexes, as stored in 'subplan_map', are global across the parent plan
- * node, but partition indexes are valid only within a particular hierarchy.
  * relid_map[p] contains the partition's OID, or 0 if the partition was pruned.
  */
 typedef struct PartitionedRelPruneInfo

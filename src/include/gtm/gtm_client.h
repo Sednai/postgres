@@ -20,6 +20,7 @@
 #include "gtm/gtm_msg.h"
 #include "gtm/register.h"
 #include "gtm/libpq-fe.h"
+#include "access/transam.h"
 
 typedef union GTM_ResultData
 {
@@ -27,18 +28,18 @@ typedef union GTM_ResultData
 
 	struct
 	{
-		GlobalTransactionId		gxid;
+		FullTransactionId		gxid;
 		GTM_Timestamp			timestamp;
 	} grd_gxid_tp;								/* TXN_BEGIN_GETGXID */
 
-	GlobalTransactionId			grd_gxid;		/* TXN_PREPARE
+	FullTransactionId			grd_gxid;		/* TXN_PREPARE
 												 * TXN_START_PREPARED
 												 * TXN_COMMIT
 												 * TXN_COMMIT_PREPARED
 												 * TXN_ROLLBACK
 												 */
 
-	GlobalTransactionId			grd_next_gxid;
+	FullTransactionId			grd_next_gxid;
 
 	struct
 	{
@@ -84,8 +85,8 @@ typedef union GTM_ResultData
 
 	struct
 	{
-		GlobalTransactionId		gxid;
-		GlobalTransactionId		prepared_gxid;
+		FullTransactionId		gxid;
+		FullTransactionId		prepared_gxid;
 		int				nodelen;
 		char			*nodestring;
 	} grd_txn_get_gid_data;					/* TXN_GET_GID_DATA_RESULT */
@@ -158,37 +159,37 @@ int begin_replication_initial_sync(GTM_Conn *);
 int end_replication_initial_sync(GTM_Conn *);
 
 size_t get_node_list(GTM_Conn *, GTM_PGXCNodeInfo *, size_t);
-GlobalTransactionId get_next_gxid(GTM_Conn *);
+FullTransactionId get_next_gxid(GTM_Conn *);
 uint32 get_txn_gxid_list(GTM_Conn *, GTM_Transactions *);
 size_t get_sequence_list(GTM_Conn *, GTM_SeqInfo **);
 
 /*
  * Transaction Management API
  */
-GlobalTransactionId begin_transaction(GTM_Conn *conn, GTM_IsolationLevel isolevel, GTM_Timestamp *timestamp);
+FullTransactionId begin_transaction(GTM_Conn *conn, GTM_IsolationLevel isolevel, GTM_Timestamp *timestamp);
 int bkup_begin_transaction(GTM_Conn *conn, GTM_TransactionHandle txn, GTM_IsolationLevel isolevel,
 						   bool read_only, GTM_Timestamp timestamp);
-int bkup_begin_transaction_gxid(GTM_Conn *conn, GTM_TransactionHandle txn, GlobalTransactionId gxid,
+int bkup_begin_transaction_gxid(GTM_Conn *conn, GTM_TransactionHandle txn, FullTransactionId gxid,
 								GTM_IsolationLevel isolevel, bool read_only, GTM_Timestamp timestamp);
 
-GlobalTransactionId begin_transaction_autovacuum(GTM_Conn *conn, GTM_IsolationLevel isolevel);
-int bkup_begin_transaction_autovacuum(GTM_Conn *conn, GTM_TransactionHandle txn, GlobalTransactionId gxid,
+FullTransactionId begin_transaction_autovacuum(GTM_Conn *conn, GTM_IsolationLevel isolevel);
+int bkup_begin_transaction_autovacuum(GTM_Conn *conn, GTM_TransactionHandle txn, FullTransactionId gxid,
 									  GTM_IsolationLevel isolevel);
-int commit_transaction(GTM_Conn *conn, GlobalTransactionId gxid);
-int bkup_commit_transaction(GTM_Conn *conn, GlobalTransactionId gxid);
-int commit_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, GlobalTransactionId prepared_gxid);
-int bkup_commit_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, GlobalTransactionId prepared_gxid);
-int abort_transaction(GTM_Conn *conn, GlobalTransactionId gxid);
-int bkup_abort_transaction(GTM_Conn *conn, GlobalTransactionId gxid);
-int start_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, char *gid,
+int commit_transaction(GTM_Conn *conn, FullTransactionId gxid);
+int bkup_commit_transaction(GTM_Conn *conn, FullTransactionId gxid);
+int commit_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, FullTransactionId prepared_gxid);
+int bkup_commit_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, FullTransactionId prepared_gxid);
+int abort_transaction(GTM_Conn *conn, FullTransactionId gxid);
+int bkup_abort_transaction(GTM_Conn *conn, FullTransactionId gxid);
+int start_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, char *gid,
 							   char *nodestring);
-int backup_start_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, char *gid,
+int backup_start_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, char *gid,
 									  char *nodestring);
-int prepare_transaction(GTM_Conn *conn, GlobalTransactionId gxid);
-int bkup_prepare_transaction(GTM_Conn *conn, GlobalTransactionId gxid);
+int prepare_transaction(GTM_Conn *conn, FullTransactionId gxid);
+int bkup_prepare_transaction(GTM_Conn *conn, FullTransactionId gxid);
 int get_gid_data(GTM_Conn *conn, GTM_IsolationLevel isolevel, char *gid,
-				 GlobalTransactionId *gxid,
-				 GlobalTransactionId *prepared_gxid,
+				 FullTransactionId *gxid,
+				 FullTransactionId *prepared_gxid,
 				 char **nodestring);
 
 /*
@@ -200,7 +201,7 @@ begin_transaction_multi(GTM_Conn *conn, int txn_count, GTM_IsolationLevel *txn_i
 			int *txn_count_out, GlobalTransactionId *gxid_out, GTM_Timestamp *ts_out);
 int
 bkup_begin_transaction_multi(GTM_Conn *conn, int txn_count,
-							 GTM_TransactionHandle *txn, GlobalTransactionId start_gxid, GTM_IsolationLevel *isolevel,
+							 GTM_TransactionHandle *txn, FullTransactionId start_gxid, GTM_IsolationLevel *isolevel,
 							 bool *read_only, GTMProxy_ConnID *txn_connid);
 int
 commit_transaction_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid,
@@ -208,10 +209,10 @@ commit_transaction_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxi
 int
 bkup_commit_transaction_multi(GTM_Conn *conn, int txn_count, GTM_TransactionHandle *txn);
 int
-abort_transaction_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid,
+abort_transaction_multi(GTM_Conn *conn, int txn_count, FullTransactionId *gxid,
 			int *txn_count_out, int *status_out);
 int
-bkup_abort_transaction_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid);
+bkup_abort_transaction_multi(GTM_Conn *conn, int txn_count, FullTransactionId *gxid);
 int
 snapshot_get_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid,
 		   int *txn_count_out, int *status_out,
@@ -221,7 +222,7 @@ snapshot_get_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid,
 /*
  * Snapshot Management API
  */
-GTM_SnapshotData *get_snapshot(GTM_Conn *conn, GlobalTransactionId gxid,
+GTM_SnapshotData *get_snapshot(GTM_Conn *conn, FullTransactionId gxid,
 		bool canbe_grouped);
 
 /*

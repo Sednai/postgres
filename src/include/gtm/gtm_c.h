@@ -34,7 +34,8 @@
 #include <pthread.h>
 #include "c.h"
 
-typedef uint32	GlobalTransactionId;		/* 32-bit global transaction ids */
+typedef uint32 GlobalTransactionId; /* 32-bit global transaction ids */
+
 typedef int16	GTMProxy_ConnID;
 typedef uint32	GTM_StrLen;
 
@@ -136,6 +137,7 @@ typedef enum GTM_PortLastCall
 } GTM_PortLastCall;
 
 #define InvalidGlobalTransactionId		((GlobalTransactionId) 0)
+#define InvalidGlobalFullTransactionId		GlobalFullTransactionIdFromEpochAndXid(0, InvalidGlobalTransactionId)
 
 /*
  * Initial GXID value to start with, when -x option is not specified at the first run.

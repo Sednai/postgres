@@ -17,7 +17,6 @@
 #define PGXCSHIP_H
 
 #include "nodes/parsenodes.h"
-#include "nodes/relation.h"
 #include "pgxc/locator.h"
 
 

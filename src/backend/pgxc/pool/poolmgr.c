@@ -2131,8 +2131,8 @@ retry:
 				    goto retry;
 			     }
 
-
-				elog(WARNING, "Error in checking connection, errno = %d", errno);
+				int errn = errno;
+				elog(WARNING, "Error in checking connection, errno = %d", errn);
 			}
 			else
 				elog(WARNING, "Unexpected data on connection, cleaning.");

@@ -809,7 +809,7 @@ XLogRecPtr
 gistXLogUpdate(Buffer buffer,
 			   OffsetNumber *todelete, int ntodelete,
 			   IndexTuple *itup, int ituplen,
-			   Buffer leftchildbuf, RelFileNode *hnode)
+			   Buffer leftchildbuf)
 {
 	gistxlogPageUpdate xlrec;
 	int			i;
@@ -820,16 +820,6 @@ gistXLogUpdate(Buffer buffer,
 
 	XLogBeginInsert();
 	XLogRegisterData((char *) &xlrec, sizeof(gistxlogPageUpdate));
-
-	/*
-	 * Append the information required for standby conflict processing if it
-	 * is provided by caller.
-	 */
-	if (hnode)
-	{
-		XLogRegisterData((char *) hnode, sizeof(RelFileNode));
-		XLogRegisterData((char *) todelete, sizeof(OffsetNumber) * ntodelete);
-	}
 
 	XLogRegisterBuffer(0, buffer, REGBUF_STANDARD);
 	XLogRegisterBufData(0, (char *) todelete, sizeof(OffsetNumber) * ntodelete);

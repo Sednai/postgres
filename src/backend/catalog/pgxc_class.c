@@ -23,6 +23,7 @@
 #include "utils/syscache.h"
 #include "pgxc/locator.h"
 #include "utils/array.h"
+#include "access/table.h"
 
 /*
  * PgxcClassCreate

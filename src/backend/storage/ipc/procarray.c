@@ -3433,8 +3433,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 	{
 		GTM_Snapshot gtm_snapshot;
 		bool canbe_grouped = (!FirstSnapshotSet) || (!IsolationUsesXactSnapshot());
-		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %d", GetCurrentTransactionId());
-		gtm_snapshot = GetSnapshotGTM(GetCurrentTransactionId(), canbe_grouped);
+		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %lu", GetCurrentFullTransactionId().value);
+		gtm_snapshot = GetSnapshotGTM(GetCurrentFullTransactionId(), canbe_grouped);
 
 		if (!gtm_snapshot)
 			ereport(ERROR,
@@ -3598,17 +3598,17 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 
 	/* Log some information about snapshot obtention */
 	if (IsAutoVacuumWorkerProcess())
-		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %d", GetCurrentTransactionId());
+		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %lu", GetCurrentFullTransactionId().value);
 	else
-		elog(DEBUG1, "Getting snapshot. Current XID = %d", GetCurrentTransactionId());
+		elog(DEBUG1, "Getting snapshot. Current XID = %lu", GetCurrentFullTransactionId().value);
 
-	gtm_snapshot = GetSnapshotGTM(GetCurrentTransactionId(), canbe_grouped);
+	gtm_snapshot = GetSnapshotGTM(GetCurrentFullTransactionId(), canbe_grouped);
 
 	if (!gtm_snapshot)
 			ereport(ERROR,
 				(errcode(ERRCODE_CONNECTION_FAILURE),
-				errmsg("GTM error, could not obtain snapshot XID = %d",
-					   GetCurrentTransactionId())));
+				errmsg("GTM error, could not obtain snapshot XID = %lu",
+					   GetCurrentFullTransactionId().value)));
 	else
 	{
 		snapshot->xmin = gtm_snapshot->sn_xmin;
@@ -3877,8 +3877,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 	{
 		GTM_Snapshot gtm_snapshot;
 		bool canbe_grouped = (!FirstSnapshotSet) || (!IsolationUsesXactSnapshot());
-		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %d", GetCurrentTransactionId());
-		gtm_snapshot = GetSnapshotGTM(GetCurrentTransactionId(), canbe_grouped);
+		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %lu", GetCurrentFullTransactionId().value);
+		gtm_snapshot = GetSnapshotGTM(GetCurrentFullTransactionId(), canbe_grouped);
 
 		if (!gtm_snapshot)
 			ereport(ERROR,
@@ -4042,17 +4042,17 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 
 	/* Log some information about snapshot obtention */
 	if (IsAutoVacuumWorkerProcess())
-		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %d", GetCurrentTransactionId());
+		elog(DEBUG1, "Getting snapshot for autovacuum. Current XID = %lu", GetCurrentFullTransactionId().value);
 	else
-		elog(DEBUG1, "Getting snapshot. Current XID = %d", GetCurrentTransactionId());
+		elog(DEBUG1, "Getting snapshot. Current XID = %lu", GetCurrentFullTransactionId().value);
 
-	gtm_snapshot = GetSnapshotGTM(GetCurrentTransactionId(), canbe_grouped);
+	gtm_snapshot = GetSnapshotGTM(GetCurrentFullTransactionId(), canbe_grouped);
 
 	if (!gtm_snapshot)
 			ereport(ERROR,
 				(errcode(ERRCODE_CONNECTION_FAILURE),
-				errmsg("GTM error, could not obtain snapshot XID = %d",
-					   GetCurrentTransactionId())));
+				errmsg("GTM error, could not obtain snapshot XID = %lu",
+					   GetCurrentFullTransactionId().value)));
 	else
 	{
 		snapshot->xmin = gtm_snapshot->sn_xmin;

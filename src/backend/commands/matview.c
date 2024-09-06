@@ -58,10 +58,6 @@
 #include "utils/rel.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-#ifdef PGXC
-#include "utils/tqual.h"
-#endif /* PGXC */
-
 
 typedef struct
 {
@@ -995,7 +991,7 @@ pgxc_fill_matview_by_copy(DestReceiver *mv_dest, bool skipdata, int operation,
 	TupleDesc	tupDesc;
 	Datum		*values;
 	bool		*isnulls;
-	TupleTableSlot	*slot = MakeTupleTableSlot(NULL);
+	TupleTableSlot	*slot = MakeTupleTableSlot(NULL,&TTSOpsMinimalTuple);
 	ParseState *pstate;
 	
 	Assert(IS_PGXC_COORDINATOR && IsConnFromCoord());
@@ -1042,12 +1038,12 @@ pgxc_fill_matview_by_copy(DestReceiver *mv_dest, bool skipdata, int operation,
 			 * are no default expressions expected. Tuple OID too is not expected
 			 * for materialized view.
 			 */
-			if (!NextCopyFrom(cstate, NULL, values, isnulls, &tupleOid))
+			if (!NextCopyFrom(cstate, NULL, values, isnulls))
 				break;
 
 			/* Create the tuple and slot out of the values read */
 			tuple = heap_form_tuple(tupDesc, values, isnulls);
-			ExecStoreTuple(tuple, slot, 0, false);
+			ExecStoreHeapTuple(tuple, slot, false);
 
 			/* Insert the row in the materialized view */
 			mv_dest->receiveSlot(slot, mv_dest);
@@ -1119,7 +1115,7 @@ pgxc_send_matview_data(RangeVar *matview_rv, const char *query_string)
 	tupdesc = RelationGetDescr(matviewRel);
 	values = (Datum *) palloc(tupdesc->natts * sizeof(Datum));
 	nulls = (bool *) palloc(tupdesc->natts * sizeof(bool));
-	scandesc = heap_beginscan(matviewRel, SnapshotAny, 0, NULL);
+	scandesc = heap_beginscan(matviewRel, SnapshotAny, 0, NULL, NULL, NULL);
 
 	/* Send each tuple to the other coordinators in COPY format */
 	while ((tuple = heap_getnext(scandesc, ForwardScanDirection)) != NULL)

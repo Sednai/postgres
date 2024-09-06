@@ -15,19 +15,17 @@
  */
 
 #include "postgres.h"
+#include "access/relation.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
 #include "catalog/pg_proc.h"
-#ifdef PGXC
 #include "catalog/pg_trigger.h"
 #include "catalog/pg_inherits.h"
-#endif
 #include "catalog/pg_type.h"
 #include "catalog/pgxc_node.h"
 #include "commands/trigger.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
-#include "nodes/relation.h"
 #include "optimizer/clauses.h"
 #include "optimizer/pgxcplan.h"
 #include "optimizer/pgxcship.h"
@@ -708,12 +706,6 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		case T_RangeTblRef:
 			break;
 
-		case T_ArrayRef:
-			/*
-			 * When multiple values of of an array are updated at once
-			 * FQS planner cannot yet handle SQL representation correctly.
-			 * So disable FQS in this case and let standard planner manage it.
-			 */
 		case T_FieldStore:
 			/*
 			 * PostgreSQL deparsing logic does not handle the FieldStore

@@ -30,7 +30,7 @@ extern bool FirstSnapshotSet;
 static GTM_Conn *conn;
 
 /* Used to check if needed to commit/abort at datanodes */
-GlobalTransactionId currentGxid = InvalidGlobalTransactionId;
+FullTransactionId currentGxid = {InvalidTransactionId};
 
 bool
 IsGTMConnected()
@@ -121,10 +121,10 @@ CloseGTM(void)
 		elog(DEBUG1, "Postmaster child: connection to GTM closed");
 }
 
-GlobalTransactionId
+FullTransactionId
 BeginTranGTM(GTM_Timestamp *timestamp)
 {
-	GlobalTransactionId  xid = InvalidGlobalTransactionId;
+	FullTransactionId  xid = InvalidFullTransactionId;
 
 	CheckConnection();
 	// TODO Isolation level
@@ -134,7 +134,7 @@ BeginTranGTM(GTM_Timestamp *timestamp)
 	/* If something went wrong (timeout), try and reset GTM connection
 	 * and retry. This is safe at the beginning of a transaction.
 	 */
-	if (!TransactionIdIsValid(xid))
+	if (!FullTransactionIdIsValid(xid))
 	{
 		CloseGTM();
 		InitGTM();
@@ -145,10 +145,10 @@ BeginTranGTM(GTM_Timestamp *timestamp)
 	return xid;
 }
 
-GlobalTransactionId
+FullTransactionId
 BeginTranAutovacuumGTM(void)
 {
-	GlobalTransactionId  xid = InvalidGlobalTransactionId;
+	FullTransactionId  xid = InvalidFullTransactionId;
 
 	CheckConnection();
 	// TODO Isolation level
@@ -159,7 +159,7 @@ BeginTranAutovacuumGTM(void)
 	 * If something went wrong (timeout), try and reset GTM connection and retry.
 	 * This is safe at the beginning of a transaction.
 	 */
-	if (!TransactionIdIsValid(xid))
+	if (!FullTransactionIdIsValid(xid))
 	{
 		CloseGTM();
 		InitGTM();
@@ -171,11 +171,11 @@ BeginTranAutovacuumGTM(void)
 }
 
 int
-CommitTranGTM(GlobalTransactionId gxid)
+CommitTranGTM(FullTransactionId gxid)
 {
 	int ret = -1;
 
-	if (!GlobalTransactionIdIsValid(gxid))
+	if (!FullTransactionIdIsValid(gxid))
 		return 0;
 	CheckConnection();
 	if (conn)
@@ -196,7 +196,7 @@ CommitTranGTM(GlobalTransactionId gxid)
 	if (IsAutoVacuumWorkerProcess() || IsAutoVacuumLauncherProcess())
 		CloseGTM();
 
-	currentGxid = InvalidGlobalTransactionId;
+	currentGxid = InvalidFullTransactionId;
 	return ret;
 }
 
@@ -205,11 +205,11 @@ CommitTranGTM(GlobalTransactionId gxid)
  * and for COMMIT PREPARED.
  */
 int
-CommitPreparedTranGTM(GlobalTransactionId gxid, GlobalTransactionId prepared_gxid)
+CommitPreparedTranGTM(FullTransactionId gxid, FullTransactionId prepared_gxid)
 {
 	int ret = -1;
 
-	if (!GlobalTransactionIdIsValid(gxid) || !GlobalTransactionIdIsValid(prepared_gxid))
+	if (!FullTransactionIdIsValid(gxid) || !FullTransactionIdIsValid(prepared_gxid))
 		return ret;
 	CheckConnection();
 	if (conn)
@@ -226,16 +226,16 @@ CommitPreparedTranGTM(GlobalTransactionId gxid, GlobalTransactionId prepared_gxi
 		CloseGTM();
 		InitGTM();
 	}
-	currentGxid = InvalidGlobalTransactionId;
+	currentGxid = InvalidFullTransactionId;
 	return ret;
 }
 
 int
-RollbackTranGTM(GlobalTransactionId gxid)
+RollbackTranGTM(FullTransactionId gxid)
 {
 	int ret = -1;
 
-	if (!GlobalTransactionIdIsValid(gxid))
+	if (!FullTransactionIdIsValid(gxid))
 		return 0;
 	CheckConnection();
 
@@ -253,18 +253,18 @@ RollbackTranGTM(GlobalTransactionId gxid)
 		InitGTM();
 	}
 
-	currentGxid = InvalidGlobalTransactionId;
+	currentGxid = InvalidFullTransactionId;
 	return ret;
 }
 
 int
-StartPreparedTranGTM(GlobalTransactionId gxid,
+StartPreparedTranGTM(FullTransactionId gxid,
 					 char *gid,
 					 char *nodestring)
 {
 	int ret = -1;
 
-	if (!GlobalTransactionIdIsValid(gxid))
+	if (!FullTransactionIdIsValid(gxid))
 		return 0;
 	CheckConnection();
 
@@ -286,11 +286,11 @@ StartPreparedTranGTM(GlobalTransactionId gxid,
 }
 
 int
-PrepareTranGTM(GlobalTransactionId gxid)
+PrepareTranGTM(FullTransactionId gxid)
 {
 	int ret = -1;
 
-	if (!GlobalTransactionIdIsValid(gxid))
+	if (!FullTransactionIdIsValid(gxid))
 		return 0;
 	CheckConnection();
 	if (conn)
@@ -306,15 +306,15 @@ PrepareTranGTM(GlobalTransactionId gxid)
 		CloseGTM();
 		InitGTM();
 	}
-	currentGxid = InvalidGlobalTransactionId;
+	currentGxid = InvalidFullTransactionId;
 	return ret;
 }
 
 
 int
 GetGIDDataGTM(char *gid,
-			  GlobalTransactionId *gxid,
-			  GlobalTransactionId *prepared_gxid,
+			  FullTransactionId *gxid,
+			  FullTransactionId *prepared_gxid,
 			  char **nodestring)
 {
 	int ret = -1;
@@ -339,7 +339,7 @@ GetGIDDataGTM(char *gid,
 }
 
 GTM_Snapshot
-GetSnapshotGTM(GlobalTransactionId gxid, bool canbe_grouped)
+GetSnapshotGTM(FullTransactionId gxid, bool canbe_grouped)
 {
 	GTM_Snapshot ret_snapshot = NULL;
 	CheckConnection();

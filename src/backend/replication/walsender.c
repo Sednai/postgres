@@ -2849,7 +2849,6 @@ XLogSendLogical(void)
 {
 	XLogRecord *record;
 	char	   *errm;
-	XLogRecPtr	flushPtr;
 
 	/*
 	 * We'll use the current flush point to determine whether we've caught up.
@@ -2873,11 +2872,6 @@ XLogSendLogical(void)
 	/* xlog record was invalid */
 	if (errm != NULL)
 		elog(ERROR, "%s", errm);
-
-	/*
-	 * We'll use the current flush point to determine whether we've caught up.
-	 */
-	flushPtr = GetFlushRecPtr();
 
 	if (record != NULL)
 	{

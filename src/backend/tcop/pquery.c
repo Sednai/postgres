@@ -27,6 +27,7 @@
 #include "optimizer/pgxcplan.h"
 #include "pgxc/execRemote.h"
 #include "access/relscan.h"
+#include "access/heapam.h"
 #endif
 #include "tcop/pquery.h"
 #include "tcop/utility.h"
@@ -1015,11 +1016,11 @@ PortalRunSelect(Portal portal,
 				 * a fetch) to the corresponding remote node with the command
 				 * id of the command that created the cursor.
 				 */
-				HeapScanDesc scan;
+				TableScanDesc scan;
 				RemoteQueryState *rqs = (RemoteQueryState *)queryDesc->planstate;
 
 				/* Allocate and initialize scan descriptor */
-				scan = (HeapScanDesc) palloc0(sizeof(HeapScanDescData));
+				scan = (TableScanDesc) palloc0(sizeof(TableScanDescData));
 				/* Copy snap shot into the scan descriptor */
 				scan->rs_snapshot = queryDesc->snapshot;
 				/* Copy scan descriptor in remote query state */

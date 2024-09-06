@@ -521,10 +521,6 @@ struct pg_conn
 
 	/* Buffer for receiving various parts of messages */
 	PQExpBufferData workBuffer; /* expansible string */
-
-	/* Placed at the end, in this branch, to minimize ABI breakage */
-	struct addrinfo *addrlist;	/* list of addresses for current connhost */
-	int			addrlist_family;	/* needed to know how to free addrlist */
 };
 
 /* PGcancel stores all data necessary to cancel a connection. A copy of this

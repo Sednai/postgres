@@ -403,58 +403,6 @@ changeDependencyOnTablespace(Oid classId, Oid objectId, Oid newTablespaceId)
 }
 
 /*
- * recordDependencyOnTablespace
- *
- * A convenient wrapper of recordSharedDependencyOn -- register the specified
- * tablespace as default for the given object.
- *
- * Note: it's the caller's responsibility to ensure that there isn't a
- * tablespace entry for the object already.
- */
-void
-recordDependencyOnTablespace(Oid classId, Oid objectId, Oid tablespace)
-{
-	ObjectAddress myself,
-				  referenced;
-
-	ObjectAddressSet(myself, classId, objectId);
-	ObjectAddressSet(referenced, TableSpaceRelationId, tablespace);
-
-	recordSharedDependencyOn(&myself, &referenced,
-							 SHARED_DEPENDENCY_TABLESPACE);
-}
-
-/*
- * changeDependencyOnTablespace
- *
- * Update the shared dependencies to account for the new tablespace.
- *
- * Note: we don't need an objsubid argument because only whole objects
- * have tablespaces.
- */
-void
-changeDependencyOnTablespace(Oid classId, Oid objectId, Oid newTablespaceId)
-{
-	Relation	sdepRel;
-
-	sdepRel = heap_open(SharedDependRelationId, RowExclusiveLock);
-
-	if (newTablespaceId != DEFAULTTABLESPACE_OID &&
-		newTablespaceId != InvalidOid)
-		shdepChangeDep(sdepRel,
-					   classId, objectId, 0,
-					   TableSpaceRelationId, newTablespaceId,
-					   SHARED_DEPENDENCY_TABLESPACE);
-	else
-		shdepDropDependency(sdepRel,
-							classId, objectId, 0, true,
-							InvalidOid, InvalidOid,
-							SHARED_DEPENDENCY_INVALID);
-
-	heap_close(sdepRel, RowExclusiveLock);
-}
-
-/*
  * getOidListDiff
  *		Helper for updateAclDependencies.
  *

@@ -30,7 +30,6 @@
 #ifdef PGXC
 #include "pgxc/pgxc.h"
 #include "optimizer/pgxcplan.h"
-#include "optimizer/var.h"
 #endif
 
 

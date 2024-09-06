@@ -8785,6 +8785,29 @@ ATAddForeignKeyConstraint(List **wqueue, AlteredTableInfo *tab, Relation rel,
 		ffeqoperators[i] = ffeqop;
 	}
 
+#ifdef PGXC
+	/* Check the shippability of this foreign key */
+	if (IS_PGXC_COORDINATOR)
+	{
+		List *childRefs = NIL, *parentRefs = NIL;
+
+		/* Prepare call for shippability check */
+		for (i = 0; i < numfks; i++)
+			childRefs = lappend_int(childRefs, fkattnum[i]);
+		for (i = 0; i < numpks; i++)
+			parentRefs = lappend_int(parentRefs, pkattnum[i]);
+
+		/* Now check shippability for this foreign key */
+		if (!pgxc_check_fk_shippability(GetRelationLocInfo(RelationGetRelid(pkrel)),
+										GetRelationLocInfo(RelationGetRelid(rel)),
+										parentRefs,
+										childRefs))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("Cannot create foreign key whose evaluation cannot be enforced to remote nodes")));
+	}
+#endif
+
 	/*
 	 * Create all the constraint and trigger objects, recursing to partitions
 	 * as necessary.  First handle the referenced side.
@@ -8901,29 +8924,6 @@ addFkRecurseReferenced(List **wqueue, Constraint *fkconstraint, Relation rel,
 		 */
 		connoinherit = rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE;
 	}
-
-#ifdef PGXC
-	/* Check the shippability of this foreign key */
-	if (IS_PGXC_COORDINATOR)
-	{
-		List *childRefs = NIL, *parentRefs = NIL;
-
-		/* Prepare call for shippability check */
-		for (i = 0; i < numfks; i++)
-			childRefs = lappend_int(childRefs, fkattnum[i]);
-		for (i = 0; i < numpks; i++)
-			parentRefs = lappend_int(parentRefs, pkattnum[i]);
-
-		/* Now check shippability for this foreign key */
-		if (!pgxc_check_fk_shippability(GetRelationLocInfo(RelationGetRelid(pkrel)),
-										GetRelationLocInfo(RelationGetRelid(rel)),
-										parentRefs,
-										childRefs))
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("Cannot create foreign key whose evaluation cannot be enforced to remote nodes")));
-	}
-#endif
 
 	/*
 	 * Record the FK constraint in pg_constraint.

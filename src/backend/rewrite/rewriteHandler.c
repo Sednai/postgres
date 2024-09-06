@@ -51,7 +51,6 @@
 #include "pgxc/pgxc.h"
 #include "nodes/nodes.h"
 #include "optimizer/planner.h"
-#include "optimizer/var.h"
 #include "tcop/tcopprot.h"
 #include "tcop/utility.h"
 #include "utils/syscache.h"
@@ -1526,10 +1525,6 @@ rewriteValuesRTEToNulls(Query *parsetree, RangeTblEntry *rte)
 		newValues = lappend(newValues, newList);
 	}
 	rte->values_lists = newValues;
-
-	pfree(attrnos);
-
-	return allReplaced;
 }
 
 #ifdef PGXC
@@ -1846,42 +1841,6 @@ rewriteTargetListUD(Query *parsetree, RangeTblEntry *target_rte,
 	}
 #endif
 
-	}
-}
-
-/*
- * Record in target_rte->extraUpdatedCols the indexes of any generated columns
- * that depend on any columns mentioned in target_rte->updatedCols.
- */
-void
-fill_extraUpdatedCols(RangeTblEntry *target_rte, Relation target_relation)
-{
-	TupleDesc	tupdesc = RelationGetDescr(target_relation);
-	TupleConstr *constr = tupdesc->constr;
-
-	target_rte->extraUpdatedCols = NULL;
-
-	if (constr && constr->has_generated_stored)
-	{
-		for (int i = 0; i < constr->num_defval; i++)
-		{
-			AttrDefault *defval = &constr->defval[i];
-			Node	   *expr;
-			Bitmapset  *attrs_used = NULL;
-
-			/* skip if not generated column */
-			if (!TupleDescAttr(tupdesc, defval->adnum - 1)->attgenerated)
-				continue;
-
-			/* identify columns this generated column depends on */
-			expr = stringToNode(defval->adbin);
-			pull_varattnos(expr, 1, &attrs_used);
-
-			if (bms_overlap(target_rte->updatedCols, attrs_used))
-				target_rte->extraUpdatedCols =
-					bms_add_member(target_rte->extraUpdatedCols,
-								   defval->adnum - FirstLowInvalidHeapAttributeNumber);
-		}
 	}
 }
 

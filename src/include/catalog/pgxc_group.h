@@ -25,6 +25,8 @@
 
 CATALOG(pgxc_group,9014,PgxcGroupRelationId) BKI_SHARED_RELATION
 {
+	Oid			oid;			/* oid */
+
 	NameData	group_name;			/* Group name */
 
 	/* VARIABLE LENGTH FIELDS: */
@@ -33,9 +35,10 @@ CATALOG(pgxc_group,9014,PgxcGroupRelationId) BKI_SHARED_RELATION
 
 typedef FormData_pgxc_group *Form_pgxc_group;
 
-#define Natts_pgxc_group		2
+#define Natts_pgxc_group			3
 
-#define Anum_pgxc_group_name		1
-#define Anum_pgxc_group_members		2
+#define Anum_pgxc_group_oid			1
+#define Anum_pgxc_group_name		2
+#define Anum_pgxc_group_members		3
 
 #endif   /* PGXC_GROUP_H */

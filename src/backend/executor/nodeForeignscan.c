@@ -67,7 +67,7 @@ ForeignNext(ForeignScanState *node)
 	if (plan->fsSystemCol && !TupIsNull(slot))
 		slot->tts_tableOid = RelationGetRelid(node->ss.ss_currentRelation);
 #ifdef PGXC
-		tup->t_xc_node_id = PGXCNodeIdentifier;
+		slot->tts_xcnodeoid = PGXCNodeIdentifier;
 #endif
 
 	return slot;

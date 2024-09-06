@@ -4869,9 +4869,9 @@ PostgresMain(int argc, char *argv[],
 			case 'g':			/* gxid */
 				{
 					/* Set the GXID we were passed down */
-					TransactionId gxid = (TransactionId) pq_getmsgint(&input_message, 4);
-					elog(DEBUG1, "Received new gxid %u", gxid);
-					SetNextTransactionId(gxid);
+					uint32 epoch = pq_getmsgint(&input_message, 4);
+					TransactionId xid = (TransactionId) pq_getmsgint(&input_message, 4);
+					SetNextFullTransactionId(FullTransactionIdFromEpochAndXid(epoch,xid));
 					pq_getmsgend(&input_message);
 				}
 				break;

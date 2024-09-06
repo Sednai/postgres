@@ -17,6 +17,7 @@
 
 #include "access/hash.h"
 #include "access/htup.h"
+#include "access/relation.h"
 #include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "catalog/pgxc_node.h"
@@ -511,7 +512,7 @@ distrib_copy_from(RedistribState *distribState, ExecNodes *exec_nodes)
 		ExecNodes   *local_execnodes;
 
 		/* Build table slot for this relation */
-		slot = MakeSingleTupleTableSlot(tupdesc);
+		slot = MakeSingleTupleTableSlot(tupdesc, &TTSOpsMinimalTuple);
 
 		/* Get tuple slot from the tuplestore */
 		contains_tuple = tuplestore_gettupleslot(store, true, false, slot);

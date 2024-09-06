@@ -186,9 +186,6 @@ RemoteCopy_BuildStatement(RemoteCopyData *state,
 	if (options->rco_binary)
 		appendStringInfoString(&state->query_buf, " BINARY");
 
-	if (options->rco_oids)
-		appendStringInfoString(&state->query_buf, " OIDS");
-
 	if (options->rco_delim)
 	{
 		if ((!options->rco_csv_mode && options->rco_delim[0] != '\t')
@@ -268,7 +265,6 @@ makeRemoteCopyOptions(void)
 {
 	RemoteCopyOptions *res = (RemoteCopyOptions *) palloc(sizeof(RemoteCopyOptions));
 	res->rco_binary = false;
-	res->rco_oids = false;
 	res->rco_csv_mode = false;
 	res->rco_delim = NULL;
 	res->rco_null_print = NULL;

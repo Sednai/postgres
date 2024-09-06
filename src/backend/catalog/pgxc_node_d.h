@@ -3,7 +3,7 @@
  * pgxc_node_d.h
  *    Macro definitions for pgxc_node
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -20,15 +20,16 @@
 
 #define PgxcNodeRelationId 9015
 
-#define Anum_pgxc_node_node_name 1
-#define Anum_pgxc_node_node_type 2
-#define Anum_pgxc_node_node_port 3
-#define Anum_pgxc_node_node_host 4
-#define Anum_pgxc_node_nodeis_primary 5
-#define Anum_pgxc_node_nodeis_preferred 6
-#define Anum_pgxc_node_node_id 7
+#define Anum_pgxc_node_oid 1
+#define Anum_pgxc_node_node_name 2
+#define Anum_pgxc_node_node_type 3
+#define Anum_pgxc_node_node_port 4
+#define Anum_pgxc_node_node_host 5
+#define Anum_pgxc_node_nodeis_primary 6
+#define Anum_pgxc_node_nodeis_preferred 7
+#define Anum_pgxc_node_node_id 8
 
-#define Natts_pgxc_node 7
+#define Natts_pgxc_node 8
 
 
 #endif							/* PGXC_NODE_D_H */

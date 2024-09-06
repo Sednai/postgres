@@ -53,6 +53,11 @@
 #define FullTransactionIdPrecedes(a, b)	((a).value < (b).value)
 #define FullTransactionIdIsValid(x)		TransactionIdIsValid(XidFromFullTransactionId(x))
 #define InvalidFullTransactionId		FullTransactionIdFromEpochAndXid(0, InvalidTransactionId)
+#ifdef PGXC
+#define FullTransactionIdEquals(id1, id2)	((id1).value == (id2).value)
+#define FullTransactionIdPrecedesOrEquals(a, b)	((a).value <= (b).value)
+#define FullTransactionIdFollowsOrEquals(a, b)	((a).value >= (b).value)
+#endif
 
 /*
  * A 64 bit value that contains an epoch and a TransactionId.  This is
@@ -226,10 +231,10 @@ extern XLogRecPtr TransactionIdGetCommitLSN(TransactionId xid);
 
 /* in transam/varsup.c */
 #ifdef PGXC  /* PGXC_DATANODE */
-extern void SetNextTransactionId(TransactionId xid);
+extern void SetNextFullTransactionId(FullTransactionId xid);
 extern void SetForceXidFromGTM(bool value);
 extern bool GetForceXidFromGTM(void);
-extern TransactionId GetNewTransactionId(bool isSubXact, bool *timestamp_received, GTM_Timestamp *timestamp);
+extern FullTransactionId GetNewTransactionId(bool isSubXact, bool *timestamp_received, GTM_Timestamp *timestamp);
 #else
 extern FullTransactionId GetNewTransactionId(bool isSubXact);
 #endif /* PGXC */

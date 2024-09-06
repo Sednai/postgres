@@ -42,13 +42,13 @@ void GTM_FreeResult(GTM_Result *result, GTM_PGXCNodeType remote_type);
 
 static GTM_Result *makeEmptyResultIfIsNull(GTM_Result *oldres);
 static int commit_prepared_transaction_internal(GTM_Conn *conn,
-												GlobalTransactionId gxid, GlobalTransactionId prepared_gxid,
+												FullTransactionId gxid, FullTransactionId prepared_gxid,
 												bool is_backup);
-static int start_prepared_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, char *gid,
+static int start_prepared_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, char *gid,
 											   char *nodestring, bool is_backup);
-static int prepare_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_backup);
-static int abort_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_backup);
-static int abort_transaction_multi_internal(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid,
+static int prepare_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, bool is_backup);
+static int abort_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, bool is_backup);
+static int abort_transaction_multi_internal(GTM_Conn *conn, int txn_count, FullTransactionId *gxid,
 											int *txn_count_out, int *status_out, bool is_backup);
 static int open_sequence_internal(GTM_Conn *conn, GTM_SequenceKey key, GTM_Sequence increment,
 								  GTM_Sequence minval, GTM_Sequence maxval,
@@ -57,7 +57,7 @@ static int get_next_internal(GTM_Conn *conn, GTM_SequenceKey key,
 									  GTM_Sequence *result, bool is_backup);
 static int set_val_internal(GTM_Conn *conn, GTM_SequenceKey key, GTM_Sequence nextval, bool iscalled, bool is_backup);
 static int reset_sequence_internal(GTM_Conn *conn, GTM_SequenceKey key, bool is_backup);
-static int commit_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_backup);
+static int commit_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, bool is_backup);
 static int close_sequence_internal(GTM_Conn *conn, GTM_SequenceKey key, bool is_backup);
 static int rename_sequence_internal(GTM_Conn *conn, GTM_SequenceKey key, GTM_SequenceKey newkey, bool is_backup);
 static int alter_sequence_internal(GTM_Conn *conn, GTM_SequenceKey key, GTM_Sequence increment,
@@ -255,11 +255,11 @@ send_failed:
  *
  * returns the next gxid on success, InvalidGlobalTransactionId on failure.
  */
-GlobalTransactionId
+FullTransactionId
 get_next_gxid(GTM_Conn *conn)
 {
 	GTM_Result *res = NULL;
-	GlobalTransactionId next_gxid;
+	FullTransactionId next_gxid;
 	time_t finish_time;
 
 	 /* Start the message. */
@@ -297,7 +297,7 @@ get_next_gxid(GTM_Conn *conn)
 receive_failed:
 send_failed:
 	conn->result->gr_status = GTM_RESULT_COMM_ERROR;
-	return InvalidGlobalTransactionId;
+	return InvalidFullTransactionId;
 }
 
 /*
@@ -428,14 +428,15 @@ send_failed:
 }
 
 int
-bkup_begin_transaction_gxid(GTM_Conn *conn, GTM_TransactionHandle txn, GlobalTransactionId gxid,
+bkup_begin_transaction_gxid(GTM_Conn *conn, GTM_TransactionHandle txn, FullTransactionId gxid,
 							GTM_IsolationLevel isolevel, bool read_only, GTM_Timestamp timestamp)
 {
 	 /* Start the message. */
 	if (gtmpqPutMsgStart('C', true, conn) ||
 		gtmpqPutInt(MSG_BKUP_TXN_BEGIN_GETGXID, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutInt(txn, sizeof(GTM_TransactionHandle), conn) ||
-		gtmpqPutInt(gxid, sizeof(GlobalTransactionId), conn) ||
+		gtmpqPutInt(EpochFromFullTransactionId(gxid), sizeof(uint32), conn) ||
+		gtmpqPutInt(XidFromFullTransactionId(gxid), sizeof(GlobalTransactionId), conn) ||
 		gtmpqPutInt(isolevel, sizeof (GTM_IsolationLevel), conn) ||
 		gtmpqPutc(read_only, conn) ||
 		gtmpqPutnchar((char *)&timestamp, sizeof(GTM_Timestamp), conn))
@@ -455,7 +456,7 @@ send_failed:
 	return -1;
 }
 
-GlobalTransactionId
+FullTransactionId
 begin_transaction(GTM_Conn *conn, GTM_IsolationLevel isolevel, GTM_Timestamp *timestamp)
 {
 	bool txn_read_only = false;
@@ -493,25 +494,26 @@ begin_transaction(GTM_Conn *conn, GTM_IsolationLevel isolevel, GTM_Timestamp *ti
 		return res->gr_resdata.grd_gxid_tp.gxid;
 	}
 	else
-		return InvalidGlobalTransactionId;
+		return InvalidFullTransactionId;
 
 receive_failed:
 send_failed:
 	conn->result = makeEmptyResultIfIsNull(conn->result);
 	conn->result->gr_status = GTM_RESULT_COMM_ERROR;
-	return InvalidGlobalTransactionId;
+	return InvalidFullTransactionId;
 }
 
 
 int
-bkup_begin_transaction_autovacuum(GTM_Conn *conn, GTM_TransactionHandle txn, GlobalTransactionId gxid,
+bkup_begin_transaction_autovacuum(GTM_Conn *conn, GTM_TransactionHandle txn, FullTransactionId gxid,
 								  GTM_IsolationLevel isolevel)
 {
 	 /* Start the message. */
 	if (gtmpqPutMsgStart('C', true, conn) ||
 		gtmpqPutInt(MSG_BKUP_TXN_BEGIN_GETGXID_AUTOVACUUM, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutInt(txn, sizeof(GTM_TransactionHandle), conn) ||
-		gtmpqPutInt(gxid, sizeof(GlobalTransactionId), conn) ||
+		gtmpqPutInt(EpochFromFullTransactionId(gxid), sizeof(uint32), conn) ||
+		gtmpqPutInt(XidFromFullTransactionId(gxid), sizeof(uint32), conn) ||
 		gtmpqPutInt(isolevel, sizeof (GTM_IsolationLevel), conn))
 		goto send_failed;
 
@@ -532,7 +534,7 @@ send_failed:
  * Transaction Management API
  * Begin a transaction for an autovacuum worker process
  */
-GlobalTransactionId
+FullTransactionId
 begin_transaction_autovacuum(GTM_Conn *conn, GTM_IsolationLevel isolevel)
 {
 	bool txn_read_only = false;
@@ -565,31 +567,31 @@ begin_transaction_autovacuum(GTM_Conn *conn, GTM_IsolationLevel isolevel)
 	if (res->gr_status == GTM_RESULT_OK)
 		return res->gr_resdata.grd_gxid;
 	else
-		return InvalidGlobalTransactionId;
+		return InvalidFullTransactionId;
 
 receive_failed:
 send_failed:
 	conn->result = makeEmptyResultIfIsNull(conn->result);
 	conn->result->gr_status = GTM_RESULT_COMM_ERROR;
-	return InvalidGlobalTransactionId;
+	return InvalidFullTransactionId;
 }
 
 int
-bkup_commit_transaction(GTM_Conn *conn, GlobalTransactionId gxid)
+bkup_commit_transaction(GTM_Conn *conn, FullTransactionId gxid)
 {
 	return commit_transaction_internal(conn, gxid, true);
 }
 
 
 int
-commit_transaction(GTM_Conn *conn, GlobalTransactionId gxid)
+commit_transaction(GTM_Conn *conn, FullTransactionId gxid)
 {
 	return commit_transaction_internal(conn, gxid, false);
 }
 
 
 static int
-commit_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_backup)
+commit_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, bool is_backup)
 {
 	GTM_Result *res = NULL;
 	time_t finish_time;
@@ -598,7 +600,7 @@ commit_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_ba
 	if (gtmpqPutMsgStart('C', true, conn) ||
 		gtmpqPutInt(is_backup ? MSG_BKUP_TXN_COMMIT : MSG_TXN_COMMIT, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutc(true, conn) ||
-		gtmpqPutnchar((char *)&gxid, sizeof (GlobalTransactionId), conn))
+		gtmpqPutnchar((char *)&gxid, sizeof (FullTransactionId), conn))
 		goto send_failed;
 
 	/* Finish the message. */
@@ -637,19 +639,19 @@ send_failed:
 }
 
 int
-commit_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, GlobalTransactionId prepared_gxid)
+commit_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, FullTransactionId prepared_gxid)
 {
 	return commit_prepared_transaction_internal(conn, gxid, prepared_gxid, false);
 }
 
 int
-bkup_commit_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, GlobalTransactionId prepared_gxid)
+bkup_commit_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, FullTransactionId prepared_gxid)
 {
 	return commit_prepared_transaction_internal(conn, gxid, prepared_gxid, true);
 }
 
 static int
-commit_prepared_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, GlobalTransactionId prepared_gxid, bool is_backup)
+commit_prepared_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, FullTransactionId prepared_gxid, bool is_backup)
 {
 	GTM_Result *res = NULL;
 	time_t finish_time;
@@ -658,9 +660,9 @@ commit_prepared_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, G
 	if (gtmpqPutMsgStart('C', true, conn) ||
 		gtmpqPutInt(is_backup ? MSG_BKUP_TXN_COMMIT_PREPARED : MSG_TXN_COMMIT_PREPARED, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutc(true, conn) ||
-		gtmpqPutnchar((char *)&gxid, sizeof (GlobalTransactionId), conn) ||
+		gtmpqPutnchar((char *)&gxid, sizeof (FullTransactionId), conn) ||
 		gtmpqPutc(true, conn) ||
-		gtmpqPutnchar((char *)&prepared_gxid, sizeof (GlobalTransactionId), conn))
+		gtmpqPutnchar((char *)&prepared_gxid, sizeof(FullTransactionId), conn))
 		goto send_failed;
 
 	/* Finish the message */
@@ -699,19 +701,19 @@ receive_failed:
 }
 
 int
-abort_transaction(GTM_Conn *conn, GlobalTransactionId gxid)
+abort_transaction(GTM_Conn *conn, FullTransactionId gxid)
 {
 	return abort_transaction_internal(conn, gxid, false);
 }
 
 int
-bkup_abort_transaction(GTM_Conn *conn, GlobalTransactionId gxid)
+bkup_abort_transaction(GTM_Conn *conn, FullTransactionId gxid)
 {
 	return abort_transaction_internal(conn, gxid, true);
 }
 
 static int
-abort_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_backup)
+abort_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, bool is_backup)
 {
 	GTM_Result *res = NULL;
 	time_t finish_time;
@@ -720,7 +722,7 @@ abort_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_bac
 	if (gtmpqPutMsgStart('C', true, conn) ||
 		gtmpqPutInt(is_backup ? MSG_BKUP_TXN_ROLLBACK : MSG_TXN_ROLLBACK, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutc(true, conn) ||
-		gtmpqPutnchar((char *)&gxid, sizeof (GlobalTransactionId), conn))
+		gtmpqPutnchar((char *)&gxid, sizeof (FullTransactionId), conn))
 		goto send_failed;
 
 	/* Finish the message. */
@@ -760,7 +762,7 @@ send_failed:
 }
 
 int
-backup_start_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, char *gid,
+backup_start_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, char *gid,
 								  char *nodestring)
 {
 	Assert(nodestring && gid && conn);
@@ -769,14 +771,14 @@ backup_start_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, char
 }
 
 int
-start_prepared_transaction(GTM_Conn *conn, GlobalTransactionId gxid, char *gid,
+start_prepared_transaction(GTM_Conn *conn, FullTransactionId gxid, char *gid,
 						   char *nodestring)
 {
 	return start_prepared_transaction_internal(conn, gxid, gid, nodestring, false);
 }
 
 static int
-start_prepared_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, char *gid,
+start_prepared_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, char *gid,
 						   char *nodestring, bool is_backup)
 {
 	GTM_Result *res = NULL;
@@ -788,7 +790,7 @@ start_prepared_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, ch
 	if (gtmpqPutMsgStart('C', true, conn) ||
 		gtmpqPutInt(is_backup ? MSG_BKUP_TXN_START_PREPARED : MSG_TXN_START_PREPARED, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutc(true, conn) ||
-		gtmpqPutnchar((char *)&gxid, sizeof (GlobalTransactionId), conn) ||
+		gtmpqPutnchar((char *)&gxid, sizeof (FullTransactionId), conn) ||
 		/* Send also GID for an explicit prepared transaction */
 		gtmpqPutInt(strlen(gid), sizeof (GTM_StrLen), conn) ||
 		gtmpqPutnchar((char *) gid, strlen(gid), conn) ||
@@ -831,19 +833,19 @@ send_failed:
 }
 
 int
-prepare_transaction(GTM_Conn *conn, GlobalTransactionId gxid)
+prepare_transaction(GTM_Conn *conn, FullTransactionId gxid)
 {
 	return prepare_transaction_internal(conn, gxid, false);
 }
 
 int
-bkup_prepare_transaction(GTM_Conn *conn, GlobalTransactionId gxid)
+bkup_prepare_transaction(GTM_Conn *conn, FullTransactionId gxid)
 {
 	return prepare_transaction_internal(conn, gxid, true);
 }
 
 static int
-prepare_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_backup)
+prepare_transaction_internal(GTM_Conn *conn, FullTransactionId gxid, bool is_backup)
 {
 	GTM_Result *res = NULL;
 	time_t finish_time;
@@ -852,7 +854,7 @@ prepare_transaction_internal(GTM_Conn *conn, GlobalTransactionId gxid, bool is_b
 	if (gtmpqPutMsgStart('C', true, conn) ||
 		gtmpqPutInt(is_backup ? MSG_BKUP_TXN_PREPARE : MSG_TXN_PREPARE, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutc(true, conn) ||
-		gtmpqPutnchar((char *)&gxid, sizeof (GlobalTransactionId), conn))
+		gtmpqPutnchar((char *)&gxid, sizeof (FullTransactionId), conn))
 		goto send_failed;
 
 	/* Finish the message. */
@@ -894,8 +896,8 @@ int
 get_gid_data(GTM_Conn *conn,
 			 GTM_IsolationLevel isolevel,
 			 char *gid,
-			 GlobalTransactionId *gxid,
-			 GlobalTransactionId *prepared_gxid,
+			 FullTransactionId *gxid,
+			 FullTransactionId *prepared_gxid,
 			 char **nodestring)
 {
 	bool txn_read_only = false;
@@ -948,7 +950,7 @@ send_failed:
  * Snapshot Management API
  */
 GTM_SnapshotData *
-get_snapshot(GTM_Conn *conn, GlobalTransactionId gxid, bool canbe_grouped)
+get_snapshot(GTM_Conn *conn, FullTransactionId gxid, bool canbe_grouped)
 {
 	GTM_Result *res = NULL;
 	time_t finish_time;
@@ -958,7 +960,7 @@ get_snapshot(GTM_Conn *conn, GlobalTransactionId gxid, bool canbe_grouped)
 		gtmpqPutInt(MSG_SNAPSHOT_GET, sizeof (GTM_MessageType), conn) ||
 		gtmpqPutc(canbe_grouped, conn) ||
 		gtmpqPutc(true, conn) ||
-		gtmpqPutnchar((char *)&gxid, sizeof (GlobalTransactionId), conn))
+		gtmpqPutnchar((char *)&gxid, sizeof (FullTransactionId), conn))
 		goto send_failed;
 
 	/* Finish the message. */
@@ -1769,11 +1771,11 @@ send_failed:
 
 int
 bkup_begin_transaction_multi(GTM_Conn *conn, int txn_count,
-							 GTM_TransactionHandle *txn, GlobalTransactionId start_gxid, GTM_IsolationLevel *isolevel,
+							 GTM_TransactionHandle *txn, FullTransactionId start_gxid, GTM_IsolationLevel *isolevel,
 							 bool *read_only, GTMProxy_ConnID *txn_connid)
 {
 	int ii;
-	GlobalTransactionId gxid = start_gxid;
+	FullTransactionId gxid = start_gxid;
 
 	/* Start the message. */
 	if (gtmpqPutMsgStart('C', true, conn)) /* FIXME: no proxy header */
@@ -1783,12 +1785,13 @@ bkup_begin_transaction_multi(GTM_Conn *conn, int txn_count,
 	    gtmpqPutInt(txn_count, sizeof(int), conn))
 		goto send_failed;
 
-	for (ii = 0; ii < txn_count; ii++, gxid++)
+	for (ii = 0; ii < txn_count; ii++, gxid.value++)
 	{
-		if (gxid == InvalidGlobalTransactionId)
-			gxid = FirstNormalGlobalTransactionId;
+
+		if (!FullTransactionIdIsValid(gxid))
+			gxid.value = FirstNormalGlobalTransactionId;
 		if (gtmpqPutInt(txn[ii], sizeof(GTM_TransactionHandle), conn) ||
-			gtmpqPutInt(gxid, sizeof(GlobalTransactionId), conn) ||
+			gtmpqPutInt(gxid.value, sizeof(FullTransactionId), conn) ||
 			gtmpqPutInt(isolevel[ii], sizeof(GTM_IsolationLevel), conn) ||
 			gtmpqPutc(read_only[ii], conn) ||
 			gtmpqPutInt(txn_connid[ii], sizeof(GTMProxy_ConnID), conn))
@@ -1900,14 +1903,14 @@ send_failed:
 }
 
 int
-abort_transaction_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid,
+abort_transaction_multi(GTM_Conn *conn, int txn_count, FullTransactionId *gxid,
 						int *txn_count_out, int *status_out)
 {
 	return abort_transaction_multi_internal(conn, txn_count, gxid, txn_count_out, status_out, false);
 }
 
 int
-bkup_abort_transaction_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid)
+bkup_abort_transaction_multi(GTM_Conn *conn, int txn_count, FullTransactionId *gxid)
 {
 	int txn_count_out;
 	int status_out[GTM_MAX_GLOBAL_TRANSACTIONS];
@@ -1916,7 +1919,7 @@ bkup_abort_transaction_multi(GTM_Conn *conn, int txn_count, GlobalTransactionId 
 }
 
 static int
-abort_transaction_multi_internal(GTM_Conn *conn, int txn_count, GlobalTransactionId *gxid,
+abort_transaction_multi_internal(GTM_Conn *conn, int txn_count, FullTransactionId *gxid,
 								 int *txn_count_out, int *status_out, bool is_backup)
 {
 	GTM_Result *res = NULL;
@@ -1935,7 +1938,7 @@ abort_transaction_multi_internal(GTM_Conn *conn, int txn_count, GlobalTransactio
 	{
 		if (gtmpqPutc(true, conn) ||
 		    gtmpqPutnchar((char *)&gxid[i],
-				  sizeof (GlobalTransactionId), conn))
+				  sizeof (FullTransactionId), conn))
 			  goto send_failed;
 	}
 

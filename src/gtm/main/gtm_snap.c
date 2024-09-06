@@ -140,7 +140,7 @@ GTM_GetTransactionSnapshot(GTM_TransactionHandle handle[], int txn_count, int *s
 			globalxmin = xid;
 
 		/* Fetch xid just once - see GetNewTransactionId */
-		xid = gtm_txninfo->gti_gxid;
+		xid = XidFromFullTransactionId(gtm_txninfo->gti_gxid);
 
 		/*
 		 * If the transaction has been assigned an xid < xmax we add it to the
@@ -278,7 +278,7 @@ ProcessGetSnapshotCommand(Port *myport, StringInfo message, bool get_gxid)
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn;
-	GlobalTransactionId gxid;
+	FullTransactionId gxid;
 	int isgxid = 0;
 	GTM_Snapshot snapshot;
 	MemoryContext oldContext;
@@ -304,7 +304,7 @@ ProcessGetSnapshotCommand(Port *myport, StringInfo message, bool get_gxid)
 					(EPROTO,
 					 errmsg("Message does not contain valid GXID")));
 		memcpy(&gxid, data, sizeof(gxid));
-		elog(DEBUG1, "Received transaction ID %d for snapshot obtention", gxid);
+		elog(DEBUG1, "Received transaction ID %lu for snapshot obtention", gxid.value);
 		txn = GTM_GXIDToHandle(gxid);
 	}
 	else
@@ -322,7 +322,7 @@ ProcessGetSnapshotCommand(Port *myport, StringInfo message, bool get_gxid)
 	{
 		Assert(!isgxid);
 		gxid = GTM_GetGlobalTransactionId(txn);
-		if (gxid == InvalidGlobalTransactionId)
+		if (!FullTransactionIdIsValid(gxid))
 			ereport(ERROR,
 					(EINVAL,
 					 errmsg("Failed to get a new transaction id")));
@@ -373,7 +373,7 @@ ProcessGetSnapshotCommandMulti(Port *myport, StringInfo message)
 {
 	StringInfoData buf;
 	GTM_TransactionHandle txn[GTM_MAX_GLOBAL_TRANSACTIONS];
-	GlobalTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
+	FullTransactionId gxid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	int isgxid[GTM_MAX_GLOBAL_TRANSACTIONS];
 	GTM_Snapshot snapshot;
 	MemoryContext oldContext;
@@ -441,37 +441,6 @@ ProcessGetSnapshotCommandMulti(Port *myport, StringInfo message)
 
 	if (myport->remote_type != GTM_NODE_GTM_PROXY)
 		pq_flush(myport);
-
-#if 0
-	/* Do not need this portion because this command does not change
-	 * internal status.
-	 */
-	if (GetMyThreadInfo->thr_conn->standby)
-	{
-		int _rc;
-		int txn_count_out;
-		int status_out[GTM_MAX_GLOBAL_TRANSACTIONS];
-		GlobalTransactionId xmin_out;
-		GlobalTransactionId xmax_out;
-		GlobalTransactionId recent_global_xmin_out;
-		int32 xcnt_out;
-
-		GTM_Conn *oldconn = GetMyThreadInfo->thr_conn->standby;
-		int count = 0;
-retry:
-		elog(DEBUG1, "calling snapshot_get_multi() for standby GTM %p.",
-		     GetMyThreadInfo->thr_conn->standby);
-
-		_rc = snapshot_get_multi(GetMyThreadInfo->thr_conn->standby,
-					 txn_count, gxid, &txn_count_out, status_out,
-					 &xmin_out, &xmax_out, &recent_global_xmin_out, &xcnt_out);
-
-		if (gtm_standby_check_communication_error(&count, oldconn))
-			goto retry;
-
-		elog(DEBUG1, "snapshot_get_multi() rc=%d done.", _rc);
-	}
-#endif
 
 	return;
 }

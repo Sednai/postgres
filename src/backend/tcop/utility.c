@@ -91,6 +91,7 @@
 #include "utils/snapmgr.h"
 #include "utils/builtins.h"
 #include "pgxc/xc_maintenance_mode.h"
+#include "access/relation.h"
 
 static void ExecUtilityStmtOnNodes(const char *queryString, ExecNodes *nodes, bool sentToRemote,
 								   bool force_autocommit, RemoteQueryExecType exec_type,
@@ -2242,7 +2243,7 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_AlterEnumStmt:	/* ALTER TYPE (enum) */
-				address = AlterEnum((AlterEnumStmt *) parsetree, isTopLevel);
+				address = AlterEnum((AlterEnumStmt *) parsetree);
 #ifdef PGXC
 				/*
 				 * In this case force autocommit, this transaction cannot be launched

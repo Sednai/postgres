@@ -3,7 +3,7 @@
  * pgxc_group_d.h
  *    Macro definitions for pgxc_group
  *
- * Portions Copyright (c) 1996-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * NOTES
@@ -20,10 +20,11 @@
 
 #define PgxcGroupRelationId 9014
 
-#define Anum_pgxc_group_group_name 1
-#define Anum_pgxc_group_group_members 2
+#define Anum_pgxc_group_oid 1
+#define Anum_pgxc_group_group_name 2
+#define Anum_pgxc_group_group_members 3
 
-#define Natts_pgxc_group 2
+#define Natts_pgxc_group 3
 
 
 #endif							/* PGXC_GROUP_D_H */

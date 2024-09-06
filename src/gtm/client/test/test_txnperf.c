@@ -74,7 +74,7 @@ main(int argc, char *argv[])
 
 #define TXN_COUNT		1000
 
-	GlobalTransactionId gxid[TXN_COUNT];
+	FullTransactionId gxid[TXN_COUNT];
 	GTM_Conn *conn;
 	char test_output[256], test_end[256], test_output_csv[256];
 	char system_cmd[1024];
@@ -199,8 +199,8 @@ main(int argc, char *argv[])
 				break;
 
 			gxid[ii] = begin_transaction(conn, GTM_ISOLATION_RC);
-			if (gxid[ii] != InvalidGlobalTransactionId)
-				client_log(("Started a new transaction (GXID:%u)\n", gxid[ii]));
+			if (FullTransactionIdIsValid(gxid[ii]))
+				client_log(("Started a new transaction (GXID:%lu)\n", gxid[ii].value));
 			else
 				client_log(("BEGIN transaction failed for ii=%d\n", ii));
 

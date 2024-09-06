@@ -38,6 +38,7 @@
 #include "catalog/pgxc_class.h"
 #include "catalog/pgxc_node.h"
 #include "catalog/pgxc_group.h"
+#include "utils/syscache.h"
 #endif
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
@@ -2412,7 +2413,7 @@ get_typename(Oid typid)
 Oid
 get_pgxc_nodeoid(const char *nodename)
 {
-	return GetSysCacheOid1(PGXCNODENAME,
+	return GetSysCacheOid1(PGXCNODENAME, Anum_pgxc_node_name,
 						   PointerGetDatum(nodename));
 }
 
@@ -2587,7 +2588,7 @@ is_pgxc_nodeprimary(Oid nodeid)
 Oid
 get_pgxc_groupoid(const char *groupname)
 {
-	return GetSysCacheOid1(PGXCGROUPNAME,
+	return GetSysCacheOid1(PGXCGROUPNAME, Anum_pgxc_group_name,
 						   PointerGetDatum(groupname));
 }
 

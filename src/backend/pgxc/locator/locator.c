@@ -35,7 +35,6 @@
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/relcache.h"
-#include "utils/tqual.h"
 #include "utils/syscache.h"
 #include "nodes/nodes.h"
 #include "optimizer/clauses.h"
@@ -49,6 +48,7 @@
 #include "catalog/pgxc_node.h"
 #include "catalog/namespace.h"
 #include "access/hash.h"
+#include "access/table.h"
 
 static Expr *pgxc_find_distcol_expr(Index varno, AttrNumber attrNum,
 												Node *quals);
@@ -282,8 +282,6 @@ IsTypeDistributable(Oid col_type)
 	|| col_type == OIDVECTOROID
 	|| col_type == FLOAT4OID
 	|| col_type == FLOAT8OID
-	|| col_type == ABSTIMEOID
-	|| col_type == RELTIMEOID
 	|| col_type == CASHOID
 	|| col_type == BPCHAROID
 	|| col_type == BYTEAOID
@@ -537,7 +535,12 @@ GetRelationNodesByQuals(Oid reloid, Index varno, Node *quals,
 	if (IsRelationDistributedByValue(rel_loc_info))
 	{
 		Oid		disttype = get_atttype(reloid, rel_loc_info->partAttrNum);
-		int32	disttypmod = get_atttypmod(reloid, rel_loc_info->partAttrNum);
+		int32	disttypmod;
+		Oid 	dt;
+		Oid		dcol;
+
+		get_atttypetypmodcoll(reloid, rel_loc_info->partAttrNum, &dt, &disttypmod,&dcol);
+
 		distcol_expr = pgxc_find_distcol_expr(varno, rel_loc_info->partAttrNum,
 													quals);
 		/*

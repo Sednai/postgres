@@ -2380,10 +2380,7 @@ ExecStoreDataRowTuple(char *msg, size_t len, Oid msgnode_oid, TupleTableSlot *sl
 	/*
 	 * Free any old physical tuple belonging to the slot.
 	 */
-	if (slot->tts_shouldFree)
-		heap_freetuple(slot->tts_tuple);
-	if (slot->tts_shouldFreeMin)
-		heap_free_minimal_tuple(slot->tts_mintuple);
+	slot->tts_ops->clear(slot);
 	/*
 	 * if msg == slot->tts_dataRow then we would
 	 * free the dataRow in the slot loosing the contents in msg. It is safe
@@ -2395,22 +2392,13 @@ ExecStoreDataRowTuple(char *msg, size_t len, Oid msgnode_oid, TupleTableSlot *sl
 		pfree(slot->tts_dataRow);
 
 	/*
-	 * Drop the pin on the referenced buffer, if there is one.
-	 */
-	if (BufferIsValid(slot->tts_buffer))
-		ReleaseBuffer(slot->tts_buffer);
-
-	slot->tts_buffer = InvalidBuffer;
-
-	/*
 	 * Store the new tuple into the specified slot.
 	 */
-	slot->tts_isempty = false;
-	slot->tts_shouldFree = false;
-	slot->tts_shouldFreeMin = false;
+	
+	slot->tts_flags |= TTS_FLAG_EMPTY;
+
 	slot->tts_shouldFreeRow = shouldFree;
-	slot->tts_tuple = NULL;
-	slot->tts_mintuple = NULL;
+	
 	slot->tts_dataRow = msg;
 	slot->tts_dataLen = len;
 	slot->tts_xcnodeoid = msgnode_oid;

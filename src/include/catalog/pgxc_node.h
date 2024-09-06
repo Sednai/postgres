@@ -25,6 +25,8 @@
 
 CATALOG(pgxc_node,9015,PgxcNodeRelationId) BKI_SHARED_RELATION
 {
+	Oid			oid;			/* oid */
+
 	NameData	node_name;
 
 	/*
@@ -61,15 +63,15 @@ CATALOG(pgxc_node,9015,PgxcNodeRelationId) BKI_SHARED_RELATION
 
 typedef FormData_pgxc_node *Form_pgxc_node;
 
-#define Natts_pgxc_node				7
-
-#define Anum_pgxc_node_name			1
-#define Anum_pgxc_node_type			2
-#define Anum_pgxc_node_port			3
-#define Anum_pgxc_node_host			4
-#define Anum_pgxc_node_is_primary	5
-#define Anum_pgxc_node_is_preferred	6
-#define Anum_pgxc_node_id		7
+#define Natts_pgxc_node				8
+#define Anum_pgxc_node_oid			1
+#define Anum_pgxc_node_name			2
+#define Anum_pgxc_node_type			3
+#define Anum_pgxc_node_port			4
+#define Anum_pgxc_node_host			5
+#define Anum_pgxc_node_is_primary	6
+#define Anum_pgxc_node_is_preferred	7
+#define Anum_pgxc_node_id			8
 
 /* Possible types of nodes */
 #define PGXC_NODE_COORDINATOR		'C'

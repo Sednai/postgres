@@ -38,7 +38,7 @@ dump_transactioninfo_elog(GTM_TransactionInfo *txn)
 	elog(DEBUG1, "gti_handle: %d", txn->gti_handle);
 	elog(DEBUG1, "gti_thread_id: %ld", txn->gti_thread_id);
 	elog(DEBUG1, "gti_in_use: %d", txn->gti_in_use);
-	elog(DEBUG1, "gti_gxid: %d", txn->gti_gxid);
+	elog(DEBUG1, "gti_gxid: %ld", txn->gti_gxid.value);
 	elog(DEBUG1, "gti_state: %d", txn->gti_state);
 	elog(DEBUG1, "gti_coordname: %s", txn->gti_coordname);
 	elog(DEBUG1, "gti_xmin: %d", txn->gti_xmin);
@@ -72,7 +72,7 @@ dump_transactions_elog(GTM_Transactions *txn, int num_txn)
 	elog(DEBUG1, "============ GTM_Transactions ============");
 	elog(DEBUG1, "  gt_txn_count: %d", txn->gt_txn_count);
 	elog(DEBUG1, "  gt_XidGenLock: %p", &txn->gt_XidGenLock);
-	elog(DEBUG1, "  gt_nextXid: %d", txn->gt_nextXid);
+	elog(DEBUG1, "  gt_nextXid: %ld", txn->gt_nextXid.value);
 	elog(DEBUG1, "  gt_oldestXid: %d", txn->gt_oldestXid);
 	elog(DEBUG1, "  gt_xidVacLimit: %d", txn->gt_xidVacLimit);
 	elog(DEBUG1, "  gt_xidWarnLimit: %d", txn->gt_xidWarnLimit);
@@ -84,7 +84,7 @@ dump_transactions_elog(GTM_Transactions *txn, int num_txn)
 
 	for (i = 0; i < num_txn; i++)
 	{
-		if (txn->gt_transactions_array[i].gti_gxid != InvalidGlobalTransactionId)
+		if (!FullTransactionIdIsValid(txn->gt_transactions_array[i].gti_gxid))
 			dump_transactioninfo_elog(&txn->gt_transactions_array[i]);
 	}
 

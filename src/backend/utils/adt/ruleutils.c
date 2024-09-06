@@ -5334,7 +5334,7 @@ deparse_query(Query *query, StringInfo buf, List *parentnamespace,
  */
 static void
 get_query_def(Query *query, StringInfo buf, List *parentnamespace,
-			  TupleDesc resultDesc, bool colNamesVisible, bool colNamesVisible,
+			  TupleDesc resultDesc, bool colNamesVisible,
 			  int prettyFlags, int wrapColumn, int startIndent
 #ifdef PGXC
 				, bool finalise_aggs, bool sortgroup_colno

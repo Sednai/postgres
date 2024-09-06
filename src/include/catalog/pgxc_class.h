@@ -11,9 +11,9 @@
 
 #define PgxcClassRelationId  9001
 
-CATALOG(pgxc_class,9001,PgxcClassRelationId) BKI_WITHOUT_OIDS
+CATALOG(pgxc_class,9001,PgxcClassRelationId)
 {
-	Oid		pcrelid;		/* Table Oid */
+	Oid			pcrelid;		/* Table Oid */
 	char		pclocatortype;		/* Type of distribution */
 	int16		pcattnum;		/* Column number of distribution */
 	int16		pchashalgorithm;	/* Hashing algorithm */

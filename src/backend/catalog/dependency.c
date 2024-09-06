@@ -73,6 +73,7 @@
 #include "commands/tablecmds.h"
 #include "gtm/gtm_c.h"
 #include "access/gtm.h"
+#include "access/relation.h"
 #endif
 #include "commands/comment.h"
 #include "commands/defrem.h"

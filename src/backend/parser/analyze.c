@@ -29,7 +29,6 @@
 #include "catalog/pg_inherits.h"
 #include "catalog/indexing.h"
 #include "utils/fmgroids.h"
-#include "utils/tqual.h"
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
@@ -66,6 +65,7 @@
 #include "catalog/pgxc_node.h"
 #include "pgxc/xc_maintenance_mode.h"
 #include "access/xact.h"
+#include "utils/snapmgr.h"
 #endif
 #include "utils/rel.h"
 

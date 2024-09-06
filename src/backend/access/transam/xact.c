@@ -187,15 +187,12 @@ typedef enum TBlockState
  */
 typedef struct TransactionStateData
 {
+	FullTransactionId fullTransactionId;	/* my FullTransactionId */
 #ifdef PGXC  /* PGXC_COORD */
-	/* my GXID, or Invalid if none */
-	GlobalTransactionId transactionId;
-	GlobalTransactionId	topGlobalTransansactionId;
-	GlobalTransactionId	auxilliaryTransactionId;
+	FullTransactionId	topTransactionId;
+	FullTransactionId	auxilliaryTransactionId;
 	bool				isLocalParameterUsed;		/* Check if a local parameter is active
 													 * in transaction block (SET LOCAL, DEFERRED) */
-#else
-	FullTransactionId fullTransactionId;	/* my FullTransactionId */
 #endif
 	SubTransactionId subTransactionId;	/* my subxact ID */
 	char	   *name;			/* savepoint name, if any */
@@ -443,7 +440,7 @@ int	xc_gtm_sync_timeout = 100;
 bool xc_gtm_commit_sync_test = false;
 static GTM_Snapshot latestGTMSnapshot = NULL;
 /* XC need this to obtain the snapshot from GTM. XL doesn't. */
-static GlobalTransactionId dummyGxid = InvalidGlobalTransactionId;
+FullTransactionId dummyGxid = {InvalidTransactionId};
 
 static void refreshLatestGTMSnapshot(void);
 static bool gtmSnapshotIncludes(GTM_Snapshot snapshot, GlobalTransactionId gxid);
@@ -506,6 +503,17 @@ GetTopTransactionId(void)
 		AssignTransactionId(&TopTransactionStateData);
 	return XidFromFullTransactionId(XactTopFullTransactionId);
 }
+
+#ifdef PGXC
+FullTransactionId
+GetFullTopTransactionId(void)
+{
+	if (!FullTransactionIdIsValid(XactTopFullTransactionId))
+		AssignTransactionId(&TopTransactionStateData);
+	return XactTopFullTransactionId;
+}
+
+#endif
 
 /*
  *	GetTopTransactionIdIfAny
@@ -759,7 +767,7 @@ AssignTransactionId(TransactionState s)
 		GTM_Timestamp	gtm_timestamp;
 		bool			received_tp;
 
-		s->transactionId = GetNewTransactionId(isSubXact, &received_tp, &gtm_timestamp);
+		s->fullTransactionId = GetNewTransactionId(isSubXact, &received_tp, &gtm_timestamp);
 		if (received_tp)
 		{
 			GTMxactStartTimestamp = (TimestampTz) gtm_timestamp;
@@ -851,31 +859,31 @@ AssignTransactionId(TransactionState s)
 }
 
 #ifdef PGXC
-GlobalTransactionId
+FullTransactionId
 GetTopGlobalTransactionId()
 {
 	TransactionState s = CurrentTransactionState;
-	return s->topGlobalTransansactionId;
+	return s->topTransactionId;
 }
 
-GlobalTransactionId
+FullTransactionId
 GetAuxilliaryTransactionId()
 {
 	TransactionState s = CurrentTransactionState;
-	if (!GlobalTransactionIdIsValid(s->auxilliaryTransactionId))
+	if (!FullTransactionIdIsValid(s->auxilliaryTransactionId))
 		s->auxilliaryTransactionId = BeginTranGTM(NULL);
 	return s->auxilliaryTransactionId;
 }
 
 void
-SetTopGlobalTransactionId(GlobalTransactionId gxid)
+SetTopGlobalTransactionId(FullTransactionId gxid)
 {
 	TransactionState s = CurrentTransactionState;
-	s->topGlobalTransansactionId = gxid;
+	s->topTransactionId = gxid;
 }
 
 void
-SetAuxilliaryTransactionId(GlobalTransactionId gxid)
+SetAuxilliaryTransactionId(FullTransactionId gxid)
 {
 	TransactionState s = CurrentTransactionState;
 	s->auxilliaryTransactionId = gxid;
@@ -2401,7 +2409,7 @@ CommitTransaction(void)
 	 * by PrepareTransaction below. We must not reset topGlobalTransansactionId
 	 * until we are done with finishing the transaction
 	 */
-	s->topGlobalTransansactionId = s->transactionId;
+	s->topTransactionId = s->fullTransactionId;
 	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
 	{
 		XactLocalNodePrepared = false;
@@ -2446,7 +2454,7 @@ CommitTransaction(void)
 				 * local transaction now. Errors will be reported via ereport
 				 * and that will lead to transaction abortion.
 				 */
-				Assert(GlobalTransactionIdIsValid(s->topGlobalTransansactionId));
+				Assert(FullTransactionIdIsValid(s->topTransansactionId));
 
 				PrepareTransaction();
 				s->blockState = TBLOCK_DEFAULT;
@@ -2460,10 +2468,10 @@ CommitTransaction(void)
 				 */
 				StartTransaction();
 				XactLocalNodePrepared = true;
-				s->auxilliaryTransactionId = GetTopTransactionId();
+				s->auxilliaryTransactionId = GetFullTopTransactionId();
 			}
 			else
-				s->auxilliaryTransactionId = InvalidGlobalTransactionId;
+				s->auxilliaryTransactionId = InvalidFullTransactionId;
 		}
 	}
 #endif
@@ -2783,13 +2791,13 @@ AtEOXact_GlobalTxn(bool commit)
 	{
 		if (commit)
 		{
-			if (GlobalTransactionIdIsValid(s->auxilliaryTransactionId) &&
-				GlobalTransactionIdIsValid(s->topGlobalTransansactionId))
-				CommitPreparedTranGTM(s->topGlobalTransansactionId,
+			if (FullTransactionIdIsValid(s->auxilliaryTransactionId) &&
+				FullTransactionIdIsValid(s->topTransactionId))
+				CommitPreparedTranGTM(s->topTransactionId,
 						s->auxilliaryTransactionId);
-			else if (GlobalTransactionIdIsValid(s->topGlobalTransansactionId))
-				CommitTranGTM(s->topGlobalTransansactionId);
-			else if (GlobalTransactionIdIsValid(s->auxilliaryTransactionId))
+			else if (FullTransactionIdIsValid(s->topTransactionId))
+				CommitTranGTM(s->topTransactionId);
+			else if (FullTransactionIdIsValid(s->auxilliaryTransactionId))
 				CommitTranGTM(s->auxilliaryTransactionId);
 		}
 		else
@@ -2798,10 +2806,10 @@ AtEOXact_GlobalTxn(bool commit)
 			 * XXX Why don't we have a single API to abort both the GXIDs
 			 * together ?
 			 */
-			if (GlobalTransactionIdIsValid(s->auxilliaryTransactionId))
+			if (FullTransactionIdIsValid(s->auxilliaryTransactionId))
 				RollbackTranGTM(s->auxilliaryTransactionId);
-			if (GlobalTransactionIdIsValid(s->topGlobalTransansactionId))
-				RollbackTranGTM(s->topGlobalTransansactionId);
+			if (FullTransactionIdIsValid(s->topTransactionId))
+				RollbackTranGTM(s->topTransactionId);
 		}
 	}
 	else if (IS_PGXC_DATANODE || IsConnFromCoord())
@@ -2811,11 +2819,11 @@ AtEOXact_GlobalTxn(bool commit)
 				&& IsGTMConnected())
 		{
 			if (commit)
-				CommitTranGTM(s->topGlobalTransansactionId);
+				CommitTranGTM(s->topTransactionId);
 			else
-				RollbackTranGTM(s->topGlobalTransansactionId);
+				RollbackTranGTM(s->topTransactionId);
 		}
-		else if (GlobalTransactionIdIsValid(currentGxid))
+		else if (FullTransactionIdIsValid(currentGxid))
 		{
 			if (commit)
 				CommitTranGTM(currentGxid);
@@ -2824,10 +2832,10 @@ AtEOXact_GlobalTxn(bool commit)
 		}
 	}
 
-	s->topGlobalTransansactionId = InvalidGlobalTransactionId;
-	s->auxilliaryTransactionId = InvalidGlobalTransactionId;
+	s->topTransactionId = InvalidFullTransactionId;
+	s->auxilliaryTransactionId = InvalidFullTransactionId;
 
-	SetNextTransactionId(InvalidTransactionId);
+	SetNextFullTransactionId(InvalidFullTransactionId);
 }
 #endif
 
@@ -2867,7 +2875,7 @@ PrepareTransaction(void)
 			pfree(savePrepareGID);
 		savePrepareGID = MemoryContextStrdup(TopMemoryContext, prepareGID);
 		nodestring = PrePrepare_Remote(savePrepareGID, XactWriteLocalNode, isImplicit);
-		s->topGlobalTransansactionId = s->transactionId;
+		s->topTransactionId = s->fullTransactionId;
 
 		/*
 		 * Callback on GTM if necessary, this needs to be done before HOLD_INTERRUPTS
@@ -2949,7 +2957,7 @@ PrepareTransaction(void)
 	 * transaction.  That seems to require much more bookkeeping though.
 	 */
 #ifdef PGXC
-	if ((MyXactFlags & XACT_FLAGS_ACCESSEDTEMPREL) && !isImplicit)
+	if ((MyXactFlags & XACT_FLAGS_ACCESSEDTEMPNAMESPACE) && !isImplicit)
 #else
 	if ((MyXactFlags & XACT_FLAGS_ACCESSEDTEMPNAMESPACE))
 #endif
@@ -3159,10 +3167,10 @@ PrepareTransaction(void)
 	{
 		PostPrepare_Remote(savePrepareGID, nodestring, isImplicit);
 		if (!isImplicit)
-			s->topGlobalTransansactionId = InvalidGlobalTransactionId;
+			s->topTransactionId = InvalidFullTransactionId;
 		ForgetTransactionLocalNode();
 	}
-	SetNextTransactionId(InvalidTransactionId);
+	SetNextFullTransactionId(InvalidFullTransactionId);
 
 	/*
 	 * Set the command ID of Coordinator to be sent to the remote nodes
@@ -3200,7 +3208,7 @@ AbortTransaction(void)
 	 * Save the current top transaction ID. We need this to close the
 	 * transaction at the GTM at thr end
 	 */
-	s->topGlobalTransansactionId = s->transactionId;
+	s->topTransactionId = s->fullTransactionId;
 	/*
 	 * Handle remote abort first.
 	 */
@@ -3214,7 +3222,7 @@ AbortTransaction(void)
 		}
 	}
 	else
-		s->topGlobalTransansactionId = InvalidTransactionId;
+		s->topTransactionId = InvalidFullTransactionId;
 
 	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
 	{
@@ -7092,7 +7100,7 @@ refreshLatestGTMSnapshot(void)
 {
 	GTM_Timestamp timestamp;
 
-	if (dummyGxid == InvalidGlobalTransactionId)
+	if (!FullTransactionIdIsValid(dummyGxid))
 	{
 		dummyGxid = BeginTranGTM(&timestamp);
 	}
@@ -7120,13 +7128,13 @@ gtmSnapshotIncludes(GTM_Snapshot snapshot, GlobalTransactionId gxid)
 static void
 resetDummyGxid(bool commit)
 {
-	if (dummyGxid == InvalidGlobalTransactionId)
+	if (!FullTransactionIdIsValid(dummyGxid))
 		return;
 	if (commit)
 		CommitTranGTM(dummyGxid);
 	else
 		RollbackTranGTM(dummyGxid);
-	dummyGxid = InvalidGlobalTransactionId;
+	dummyGxid = InvalidFullTransactionId;
 	return;
 }
 

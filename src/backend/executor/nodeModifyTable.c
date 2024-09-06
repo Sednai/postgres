@@ -532,13 +532,6 @@ ExecInsert(ModifyTableState *mtstate,
 		if (IS_PGXC_COORDINATOR && resultRemoteRel)
 		{
 			slot = ExecProcNodeDMLInXC(estate, planSlot, slot);
-			/*
-			 * PGXCTODO: If target table uses WITH OIDS, this should be set to the Oid inserted
-			 * but Oids are not consistent among nodes in Postgres-XC, so this is set to the
-			 * default value InvalidOid for the time being. It corrects at least tags for all
-			 * the other INSERT commands.
-			 */
-			newId = InvalidOid;
 		}
 		else
 #endif		
@@ -811,7 +804,7 @@ ExecDelete(ModifyTableState *mtstate,
 		   bool canSetTag,
 		   bool changingPart,
 		   bool *tupleDeleted,
-		   TupleTableSlot **epqslot
+		   TupleTableSlot **epqreturnslot
 #ifdef PGXC
 ,	TupleTableSlot *pslot
 #endif
@@ -921,12 +914,14 @@ ldelete:;
 		else
 		{
 #endif
-		result = heap_delete(resultRelationDesc, tupleid,
-							 estate->es_output_cid,
-							 estate->es_crosscheck_snapshot,
-							 true /* wait for commit */ ,
-							 &hufd,
-							 changingPart);
+		result = table_tuple_delete(resultRelationDesc, tupleid,
+									estate->es_output_cid,
+									estate->es_snapshot,
+									estate->es_crosscheck_snapshot,
+									true /* wait for commit */ ,
+									&tmfd,
+									changingPart);
+									
 		switch (result)
 		{
 			case TM_SelfModified:
@@ -1410,8 +1405,11 @@ lreplace:
 			 */
 			ExecDelete(mtstate, tupleid, oldtuple, planSlot, epqstate,
 					   estate, false, false /* canSetTag */ ,
+#ifdef PGXC
+					   true /* changingPart */ , &tuple_deleted, &epqslot, slot);
+#else
 					   true /* changingPart */ , &tuple_deleted, &epqslot);
-
+#endif
 			/*
 			 * For some reason if DELETE didn't happen (e.g. trigger prevented
 			 * it, or it was already deleted by self, or it was concurrently
@@ -3195,6 +3193,6 @@ fill_slot_with_oldvals(TupleTableSlot *replace_slot, HeapTupleHeader oldtuphd, B
 	 * Ultimately store the tuple in the same slot from where we retrieved
 	 * values to be replaced.
 	 */
-	return ExecStoreTuple(newtuple, replace_slot, InvalidBuffer, false);
+	return ExecStoreHeapTuple(newtuple, replace_slot, false);
 }
 #endif

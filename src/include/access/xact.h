@@ -385,6 +385,9 @@ typedef struct xl_xact_parsed_abort
 extern bool IsTransactionState(void);
 extern bool IsAbortedTransactionBlockState(void);
 extern TransactionId GetTopTransactionId(void);
+#ifdef PGXC
+extern FullTransactionId GetFullTopTransactionId(void);
+#endif
 extern TransactionId GetTopTransactionIdIfAny(void);
 extern TransactionId GetCurrentTransactionId(void);
 extern TransactionId GetCurrentTransactionIdIfAny(void);
@@ -393,10 +396,10 @@ extern SubTransactionId GetCurrentSubTransactionId(void);
 #ifdef PGXC  /* PGXC_COORD */
 extern bool GetCurrentLocalParamStatus(void);
 extern void SetCurrentLocalParamStatus(bool status);
-extern GlobalTransactionId GetAuxilliaryTransactionId(void);
-extern GlobalTransactionId GetTopGlobalTransactionId(void);
-extern void SetAuxilliaryTransactionId(GlobalTransactionId gxid);
-extern void SetTopGlobalTransactionId(GlobalTransactionId gxid);
+extern FullTransactionId GetAuxilliaryTransactionId(void);
+extern FullTransactionId GetTopGlobalTransactionId(void);
+extern void SetAuxilliaryTransactionId(FullTransactionId gxid);
+extern void SetTopGlobalTransactionId(FullTransactionId gxid);
 #endif
 extern FullTransactionId GetTopFullTransactionId(void);
 extern FullTransactionId GetTopFullTransactionIdIfAny(void);

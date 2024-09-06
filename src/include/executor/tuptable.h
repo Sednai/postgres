@@ -442,6 +442,16 @@ ExecClearTuple(TupleTableSlot *slot)
 {
 	slot->tts_ops->clear(slot);
 
+#ifdef PGXC
+	if (slot->tts_shouldFreeRow)
+		pfree(slot->tts_dataRow);
+
+	slot->tts_shouldFreeRow = false;
+	slot->tts_dataRow = NULL;
+	slot->tts_dataLen = -1;
+	slot->tts_xcnodeoid = 0;
+#endif
+
 	return slot;
 }
 

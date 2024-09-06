@@ -64,7 +64,6 @@
 #include "utils/pg_locale.h"
 #include "utils/snapmgr.h"
 #include "utils/syscache.h"
-#include "utils/tqual.h"
 #ifdef PGXC
 #include "pgxc/execRemote.h"
 #include "pgxc/pgxc.h"
