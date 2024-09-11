@@ -2617,7 +2617,7 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	/*
 	 * Initialize result tuple type and projection info.
 	 */
-	ExecInitResultTupleSlotTL(estate,&remotestate->ss.ps);
+	ExecInitResultTupleSlotTL(&remotestate->ss.ps, &TTSOpsMinimalTuple);
 	ExecAssignScanProjectionInfo(&remotestate->ss);
 
 	if (node->rq_save_command_id)

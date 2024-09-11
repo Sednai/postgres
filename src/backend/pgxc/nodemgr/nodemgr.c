@@ -30,6 +30,7 @@
 #include "pg_config.h"
 #include "storage/shmem.h"
 #include "catalog/indexing.h"
+#include "utils/syscache.h"
 
 /*
  * How many times should we try to find a unique indetifier
@@ -344,7 +345,7 @@ PgxcNodeListAndCount(void)
 		}
 
 		/* Populate the definition */
-		node->nodeoid = &nodeForm->oid;
+		node->nodeoid = nodeForm->oid;
 		memcpy(&node->nodename, &nodeForm->node_name, NAMEDATALEN);
 		memcpy(&node->nodehost, &nodeForm->node_host, NAMEDATALEN);
 		node->nodeport = nodeForm->node_port;
@@ -569,11 +570,10 @@ PgxcNodeCreate(CreateNodeStmt *stmt)
 	 * There could be a relation race here if a similar Oid
 	 * being created before the heap is inserted.
 	 */
-	pgxcnodesrel = heap_open(PgxcNodeRelationId, RowExclusiveLock);
+	pgxcnodesrel = table_open(PgxcNodeRelationId, RowExclusiveLock);
 
 	/* Build entry tuple */
 	nodeOid = GetNewOidWithIndex(pgxcnodesrel, PgxcNodeOidIndexId, Anum_pgxc_node_oid);
-
 	values[Anum_pgxc_node_oid - 1] = ObjectIdGetDatum(nodeOid);
 	values[Anum_pgxc_node_name - 1] = DirectFunctionCall1(namein, CStringGetDatum(node_name));
 	values[Anum_pgxc_node_type - 1] = CharGetDatum(node_type);
@@ -586,15 +586,11 @@ PgxcNodeCreate(CreateNodeStmt *stmt)
 	htup = heap_form_tuple(pgxcnodesrel->rd_att, values, nulls);
 
 	/* Insert tuple in catalog */
-	simple_heap_insert(pgxcnodesrel, htup);
+	CatalogTupleInsert(pgxcnodesrel, htup);
 	
-	CatalogIndexState indstate;
+	heap_freetuple(htup);
 
-	indstate = CatalogOpenIndexes(pgxcnodesrel);
-	CatalogIndexInsert(indstate, htup);
-	CatalogCloseIndexes(indstate);
-
-	heap_close(pgxcnodesrel, RowExclusiveLock);
+	table_close(pgxcnodesrel, RowExclusiveLock);
 
 	if (is_primary)
 		primary_data_node = nodeOid;

@@ -49,6 +49,8 @@
 #include "catalog/namespace.h"
 #include "access/hash.h"
 #include "access/table.h"
+#include "access/relation.h"
+#include "nodes/makefuncs.h"
 
 static Expr *pgxc_find_distcol_expr(Index varno, AttrNumber attrNum,
 												Node *quals);

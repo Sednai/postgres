@@ -332,12 +332,12 @@ void make_sgml(int writeflag)
 				if (*curr == '\n' || *curr == 0)
 					format_err(inf_lno);
 
-					if (*curr == ' ' || *curr == '\t')
-						continue;
-					else if (*curr == '>')
-						break;
-					else
-						format_err(inf_lno);
+				if (*curr == ' ' || *curr == '\t')
+					continue;
+				else if (*curr == '>')
+					break;
+				else
+					format_err(inf_lno);
 			}
 
 			/* You can write anything after clsing '>' */

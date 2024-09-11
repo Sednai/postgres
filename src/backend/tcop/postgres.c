@@ -372,7 +372,6 @@ static int
 SocketBackend(StringInfo inBuf)
 {
 	int			qtype;
-
 	/*
 	 * Get message type code from the frontend.
 	 */

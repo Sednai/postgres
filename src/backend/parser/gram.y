@@ -3254,8 +3254,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $13;
 					n->if_not_exists = false;
 /* PGXC_BEGIN */
-					n->distributeby = $13;
-					n->subcluster = $14;
+					n->distributeby = $14;
+					n->subcluster = $15;
 /* PGXC_END */
 					$$ = (Node *)n;
 				}
@@ -3280,8 +3280,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $16;
 					n->if_not_exists = true;
 /* PGXC_BEGIN */
-					n->distributeby = $16;
-					n->subcluster = $17;
+					n->distributeby = $17;
+					n->subcluster = $18;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
@@ -3313,8 +3313,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $12;
 					n->if_not_exists = false;
 /* PGXC_BEGIN */
-					n->distributeby = $12;
-					n->subcluster = $13;
+					n->distributeby = $13;
+					n->subcluster = $14;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
@@ -3345,8 +3345,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $15;
 					n->if_not_exists = true;
 /* PGXC_BEGIN */
-					n->distributeby = $15;
-					n->subcluster = $16;
+					n->distributeby = $16;
+					n->subcluster = $17;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
@@ -3377,8 +3377,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $14;
 					n->if_not_exists = false;
 /* PGXC_BEGIN */
-					n->distributeby = $14;
-					n->subcluster = $15;
+					n->distributeby = $15;
+					n->subcluster = $16;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),
@@ -3409,8 +3409,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $17;
 					n->if_not_exists = true;
 /* PGXC_BEGIN */
-					n->distributeby = $17;
-					n->subcluster = $18;
+					n->distributeby = $18;
+					n->subcluster = $19;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
 						ereport(ERROR,
 								(errcode(ERRCODE_SYNTAX_ERROR),

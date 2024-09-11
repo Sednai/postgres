@@ -18,6 +18,7 @@
 #include "lib/stringinfo.h"
 #include "optimizer/pgxcship.h"
 #include "optimizer/planner.h"
+#include "optimizer/optimizer.h"
 #include "pgxc/pgxcnode.h"
 #include "pgxc/remotecopy.h"
 #include "rewrite/rewriteHandler.h"

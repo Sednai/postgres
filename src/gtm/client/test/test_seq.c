@@ -19,8 +19,9 @@ main(int argc, char *argv[])
 	char connect_string[100];
 
 	//FIXME This statement is wrong
+	/* Deactivated as broken
 	sprintf(connect_string, "host=%s port=%d node_name=one remote_type=%d", GTM_NODE_COORDINATOR);
-
+	*/
 	conn = PQconnectGTM(connect_string);
 	if (conn == NULL)
 	{
@@ -78,14 +79,15 @@ main(int argc, char *argv[])
 		if ((seqval = get_current(conn, &seqkey)) == InvalidSequenceValue)
 			client_log(("get_current seq failed for sequene %s\n", seqkey.gsk_key));
 		else
-			client_log(("CURRENT SEQVAL(%s): %lld\n", seqkey.gsk_key, seqval));
+			client_log(("CURRENT SEQVAL(%s): %ld\n", seqkey.gsk_key, seqval));
 		
 		for (jj = 0; jj < 5; jj++)
 		{
-			if ((seqval = get_next(conn, &seqkey)) == InvalidSequenceValue)
+			get_next(conn, &seqkey,&seqval);
+			if (seqval == InvalidSequenceValue)
 				client_log(("get_current seq failed for sequence %s\n", seqkey.gsk_key));
 			else
-				client_log(("NEXT SEQVAL(%s): %lld ", seqkey.gsk_key, seqval));
+				client_log(("NEXT SEQVAL(%s): %ld ", seqkey.gsk_key, seqval));
 		}
 		client_log(("\n"));
 	}

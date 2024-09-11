@@ -41,6 +41,7 @@
 #ifdef PGXC
 #include "catalog/pgxc_node.h"
 #include "optimizer/pgxcplan.h"
+#include "pgxc/pgxcnode.h"
 #endif
 
 

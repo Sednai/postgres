@@ -1122,7 +1122,7 @@ pgxc_tablespace_size(Oid tsOid)
 
 	if (!tsname)
 		ereport(ERROR,
-			(ERRCODE_UNDEFINED_OBJECT,
+			(errcode(ERRCODE_UNDEFINED_OBJECT),
 			 errmsg("tablespace with OID %u does not exist", tsOid)));
 
 	initStringInfo(&buf);
@@ -1147,7 +1147,7 @@ pgxc_database_size(Oid dbOid)
 
 	if (!dbname)
 		ereport(ERROR,
-			(ERRCODE_UNDEFINED_DATABASE,
+			(errcode(ERRCODE_UNDEFINED_DATABASE),
 			 errmsg("database with OID %u does not exist", dbOid)));
 
 	initStringInfo(&buf);

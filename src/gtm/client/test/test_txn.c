@@ -15,7 +15,7 @@ int
 main(int argc, char *argv[])
 {
 	int ii;
-	GlobalTransactionId gxid[4000];
+	FullTransactionId gxid[4000];
 	GTM_Conn *conn;
 	char connect_string[100];
 	GTM_Timestamp *timestamp;
@@ -35,8 +35,8 @@ main(int argc, char *argv[])
 	for (ii = 0; ii < 20; ii++)
 	{
 		gxid[ii] = begin_transaction(conn, GTM_ISOLATION_SERIALIZABLE, timestamp);
-		if (gxid[ii] != InvalidGlobalTransactionId)
-			client_log(("Started a new transaction (GXID:%u)\n", gxid[ii]));
+		if (!FullTransactionIdIsValid(gxid[ii]))
+			client_log(("Started a new transaction (GXID:%lu)\n", gxid[ii].value));
 		else
 			client_log(("BEGIN transaction failed for ii=%d\n", ii));
 	}
@@ -44,9 +44,9 @@ main(int argc, char *argv[])
 	for (ii = 0; ii < 20; ii++)
 	{
 		if (!prepare_transaction(conn, gxid[ii]))
-			client_log(("PREPARE successful (GXID:%u)\n", gxid[ii]));
+			client_log(("PREPARE successful (GXID:%lu)\n", gxid[ii].value));
 		else
-			client_log(("PREPARE failed (GXID:%u)\n", gxid[ii]));
+			client_log(("PREPARE failed (GXID:%lu)\n", gxid[ii].value));
 	}
 
 	for (ii = 0; ii < 20; ii++)
@@ -54,16 +54,16 @@ main(int argc, char *argv[])
 		if (ii % 2 == 0)
 		{
 			if (!abort_transaction(conn, gxid[ii]))
-				client_log(("ROLLBACK successful (GXID:%u)\n", gxid[ii]));
+				client_log(("ROLLBACK successful (GXID:%lu)\n", gxid[ii].value));
 			else
-				client_log(("ROLLBACK failed (GXID:%u)\n", gxid[ii]));
+				client_log(("ROLLBACK failed (GXID:%lu)\n", gxid[ii].value));
 		}
 		else
 		{
 			if (!commit_transaction(conn, gxid[ii]))
-				client_log(("COMMIT successful (GXID:%u)\n", gxid[ii]));
+				client_log(("COMMIT successful (GXID:%lu)\n", gxid[ii].value));
 			else
-				client_log(("COMMIT failed (GXID:%u)\n", gxid[ii]));
+				client_log(("COMMIT failed (GXID:%lu)\n", gxid[ii].value));
 		}
 	}
 

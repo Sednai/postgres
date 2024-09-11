@@ -1607,7 +1607,7 @@ pgxc_node_send_query(PGXCNodeHandle * handle, const char *query)
 int
 pgxc_node_send_gxid(PGXCNodeHandle *handle, FullTransactionId gxid)
 {
-	int			msglen = 8;
+	int			msglen = 12;
 	int			i32;
 
 	/* Invalid connection state, return error */
@@ -1965,7 +1965,7 @@ get_handles(List *datanodelist, List *coordlist, bool is_coord_only_query)
 	{
 		int	j = 0;
 		int	*fds = PoolManagerGetConnections(dn_allocate, co_allocate);
-
+		
 		if (!fds)
 		{
 			if (coordlist)

@@ -374,7 +374,7 @@ gtmpqParseSuccess(GTM_Conn *conn, GTM_Result *result)
 
 		case TXN_BEGIN_GETGXID_RESULT:
 			if (gtmpqGetnchar((char *)&result->gr_resdata.grd_gxid_tp.gxid,
-							  sizeof (GlobalTransactionId), conn))
+							  sizeof (FullTransactionId), conn))
 			{
 				result->gr_status = GTM_RESULT_ERROR;
 				break;
@@ -387,7 +387,7 @@ gtmpqParseSuccess(GTM_Conn *conn, GTM_Result *result)
 		case TXN_PREPARE_RESULT:
 		case TXN_START_PREPARED_RESULT:
 			if (gtmpqGetnchar((char *)&result->gr_resdata.grd_gxid,
-						   sizeof (GlobalTransactionId), conn))
+						   sizeof (FullTransactionId), conn))
 				result->gr_status = GTM_RESULT_ERROR;
 			break;
 
@@ -395,7 +395,7 @@ gtmpqParseSuccess(GTM_Conn *conn, GTM_Result *result)
 		case TXN_COMMIT_PREPARED_RESULT:
 		case TXN_ROLLBACK_RESULT:
 			if (gtmpqGetnchar((char *)&result->gr_resdata.grd_gxid,
-						   sizeof (GlobalTransactionId), conn))
+						   sizeof (FullTransactionId), conn))
 				result->gr_status = GTM_RESULT_ERROR;
 			break;
 
@@ -408,13 +408,13 @@ gtmpqParseSuccess(GTM_Conn *conn, GTM_Result *result)
 			}
 
 			if (gtmpqGetnchar((char *)&result->gr_resdata.grd_txn.gxid,
-						   sizeof (GlobalTransactionId), conn))
+						   sizeof (FullTransactionId), conn))
 				result->gr_status = GTM_RESULT_ERROR;
 			break;
 
 		case TXN_GET_NEXT_GXID_RESULT:
 			if (gtmpqGetInt((int *)&result->gr_resdata.grd_next_gxid,
-					sizeof (int32), conn))
+					sizeof (int64), conn))
 			{
 				result->gr_status = GTM_RESULT_ERROR;
 				break;
@@ -608,13 +608,13 @@ gtmpqParseSuccess(GTM_Conn *conn, GTM_Result *result)
 
 		case TXN_GET_GID_DATA_RESULT:
 			if (gtmpqGetnchar((char *)&result->gr_resdata.grd_txn_get_gid_data.gxid,
-							  sizeof (GlobalTransactionId), conn))
+							  sizeof (FullTransactionId), conn))
 			{
 				result->gr_status = GTM_RESULT_ERROR;
 				break;
 			}
 			if (gtmpqGetnchar((char *)&result->gr_resdata.grd_txn_get_gid_data.prepared_gxid,
-							  sizeof (GlobalTransactionId), conn))
+							  sizeof (FullTransactionId), conn))
 			{
 				result->gr_status = GTM_RESULT_ERROR;
 				break;

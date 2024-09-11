@@ -257,12 +257,20 @@ static const FormData_pg_attribute a6 = {
  * at the Coordinator
  */
 static FormData_pg_attribute a7 = {
-	0, {"xc_node_id"}, INT4OID, 0, sizeof(int32),
-	XC_NodeIdAttributeNumber, 0, -1, -1,
-	true, 'p', 'i', true, false, false, true, 0
+	.attname = {"xc_node_id"},
+	.atttypid = INT4OID,
+	.attlen = sizeof(int32),
+	.attnum = XC_NodeIdAttributeNumber,
+	.attcacheoff = -1 ,
+	.atttypmod = -1,
+	.attbyval = true,
+	.attstorage = 'p',
+	.attalign = 'i',
+	.attnotnull = true,
+	.attislocal = true,
 };
 
-static const Form_pg_attribute SysAtt[] = {&a1, &a2, &a3, &a4, &a5, &a6, &a7};
+static const FormData_pg_attribute *SysAtt[] = {&a1, &a2, &a3, &a4, &a5, &a6, &a7};
 #else
 static const FormData_pg_attribute *SysAtt[] = {&a1, &a2, &a3, &a4, &a5, &a6};
 #endif

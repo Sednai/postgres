@@ -44,7 +44,7 @@ typedef union GTM_ResultData
 	struct
 	{
 		GTM_TransactionHandle	txnhandle;
-		GlobalTransactionId		gxid;
+		FullTransactionId		gxid;
 	} grd_txn;									/* TXN_GET_GXID */
 
 	GTM_SequenceKeyData			grd_seqkey;		/* SEQUENCE_INIT

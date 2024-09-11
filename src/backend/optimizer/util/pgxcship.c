@@ -30,6 +30,7 @@
 #include "optimizer/pgxcplan.h"
 #include "optimizer/pgxcship.h"
 #include "optimizer/tlist.h"
+#include "optimizer/optimizer.h"
 #include "parser/parsetree.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_type.h"

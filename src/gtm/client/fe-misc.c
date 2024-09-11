@@ -46,6 +46,7 @@
 
 #include "gtm/libpq-fe.h"
 #include "gtm/libpq-int.h"
+#include "port.h"
 
 static int	gtmpqPutMsgBytes(const void *buf, size_t len, GTM_Conn *conn);
 static int	gtmpqSendSome(GTM_Conn *conn, int len);

@@ -20,6 +20,7 @@
 #define PGXC_NODE_H
 
 #include "catalog/genbki.h"
+#include "c.h"
 
 #define PgxcNodeRelationId  9015
 

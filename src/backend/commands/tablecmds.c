@@ -4293,15 +4293,15 @@ ATController(AlterTableStmt *parsetree,
 					list_length(tab->subcmds[AT_PASS_ADD_INDEX]) > 0 ||
 					list_length(tab->subcmds[AT_PASS_ADD_CONSTR]) > 0 ||
 					list_length(tab->subcmds[AT_PASS_MISC]) > 0)
-					ereport(ERROR,
-							(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
-							 errmsg("Incompatible operation with data redistribution")));
+						ereport(ERROR,
+								(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
+								errmsg("Incompatible operation with data redistribution")));
 
 
-					/* Scan redistribution commands and improve operation */
-					redistribState = BuildRedistribCommands(RelationGetRelid(rel),
-														tab->subcmds[AT_PASS_DISTRIB]);
-					break;
+				/* Scan redistribution commands and improve operation */
+				redistribState = BuildRedistribCommands(RelationGetRelid(rel),
+													tab->subcmds[AT_PASS_DISTRIB]);
+				break;
 			}
 		}
 	}

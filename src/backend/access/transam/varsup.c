@@ -146,8 +146,11 @@ GetNewTransactionId(bool isSubXact)
 			 */
 			if (IsAutoVacuumWorkerProcess() && (MyPgXact->vacuumFlags & PROC_IN_VACUUM))
 				full_xid = BeginTranAutovacuumGTM();
+				
 			else
 				full_xid = BeginTranGTM(timestamp);
+
+			xid = XidFromFullTransactionId(full_xid);
 			*timestamp_received = true;
 		}
 #endif
@@ -166,7 +169,7 @@ GetNewTransactionId(bool isSubXact)
 				else
 					elog(DEBUG1, "Assigned new FullTransaction ID from GTM = %lu", full_xid.value);
 				
-				if (!TransactionIdFollowsOrEquals(xid, XidFromFullTransactionId(ShmemVariableCache->nextFullXid)))
+				if (!FullTransactionIdFollowsOrEquals(full_xid, ShmemVariableCache->nextFullXid))
 				{
 					increment_xid = false;
 					LWLockRelease(XidGenLock);
@@ -217,6 +220,7 @@ GetNewTransactionId(bool isSubXact)
 			if (FullTransactionIdIsValid(next_xid))
 			{
 				full_xid = next_xid;
+				xid = XidFromFullTransactionId(full_xid);
 				elog(DEBUG1, "TransactionId = %lu", next_xid.value);
 				next_xid = InvalidFullTransactionId; /* reset */
 				if (!FullTransactionIdFollowsOrEquals(full_xid, ShmemVariableCache->nextFullXid))
@@ -240,6 +244,7 @@ GetNewTransactionId(bool isSubXact)
 					elog(ERROR, "Falling back to local Xid. Was = %lu, now is = %lu",
 						next_xid.value, ShmemVariableCache->nextFullXid.value);
 				full_xid = ShmemVariableCache->nextFullXid;
+				xid = XidFromFullTransactionId(full_xid);
 			}
 		}
 

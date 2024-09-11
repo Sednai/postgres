@@ -76,6 +76,7 @@ main(int argc, char *argv[])
 
 	FullTransactionId gxid[TXN_COUNT];
 	GTM_Conn *conn;
+	GTM_Timestamp *timestamp = NULL;
 	char test_output[256], test_end[256], test_output_csv[256];
 	char system_cmd[1024];
 
@@ -120,9 +121,9 @@ main(int argc, char *argv[])
 
 			case 'i':
 				tmp_name = strdup(optarg);
-				sprintf(test_output, "TEST_OUTPUT_%s\0", tmp_name);
-				sprintf(test_end, "TEST_END_%s\0", tmp_name);
-				sprintf(test_output_csv, "TEST_OUTPUT_%s.CSV\0", tmp_name);
+				sprintf(test_output, "TEST_OUTPUT_%s%c", tmp_name, '\0');
+				sprintf(test_end, "TEST_END_%s%c", tmp_name, '\0');
+				sprintf(test_output_csv, "TEST_OUTPUT_%s.CSV%c", tmp_name, '\0');
 				break;
 
 			default:
@@ -198,7 +199,7 @@ main(int argc, char *argv[])
 			if ((jj * TXN_COUNT) + ii >= ntxns_per_cli)
 				break;
 
-			gxid[ii] = begin_transaction(conn, GTM_ISOLATION_RC);
+			gxid[ii] = begin_transaction(conn, GTM_ISOLATION_RC, timestamp);
 			if (FullTransactionIdIsValid(gxid[ii]))
 				client_log(("Started a new transaction (GXID:%lu)\n", gxid[ii].value));
 			else
@@ -211,23 +212,23 @@ main(int argc, char *argv[])
 			}
 
 			if (!prepare_transaction(conn, gxid[ii]))
-				client_log(("PREPARE successful (GXID:%u)\n", gxid[ii]));
+				client_log(("PREPARE successful (GXID:%lu)\n", gxid[ii]));
 			else
-				client_log(("PREPARE failed (GXID:%u)\n", gxid[ii]));
+				client_log(("PREPARE failed (GXID:%lu)\n", gxid[ii]));
 
 			if (ii % 2 == 0)
 			{
 				if (!abort_transaction(conn, gxid[ii]))
-					client_log(("ROLLBACK successful (GXID:%u)\n", gxid[ii]));
+					client_log(("ROLLBACK successful (GXID:%lu)\n", gxid[ii]));
 				else
-					client_log(("ROLLBACK failed (GXID:%u)\n", gxid[ii]));
+					client_log(("ROLLBACK failed (GXID:%lu)\n", gxid[ii]));
 			}
 			else
 			{
 				if (!commit_transaction(conn, gxid[ii]))
-					client_log(("COMMIT successful (GXID:%u)\n", gxid[ii]));
+					client_log(("COMMIT successful (GXID:%lu)\n", gxid[ii]));
 				else
-					client_log(("COMMIT failed (GXID:%u)\n", gxid[ii]));
+					client_log(("COMMIT failed (GXID:%lu)\n", gxid[ii]));
 			}
 		}
 
@@ -253,10 +254,10 @@ main(int argc, char *argv[])
 		fprintf(fp, "Total snapshot size: %d\n", snapsize);
 		fprintf(fp, "Average snapshot size: %f\n", avg_sanpsize);
 	
-		fprintf(fp, "Time: %d.%d\n", diff.tv_sec, diff.tv_usec);
+		fprintf(fp, "Time: %ld.%ld\n", diff.tv_sec, diff.tv_usec);
 		fprintf(fp, "\n");
 
-		sprintf(system_cmd, "touch %s\0", test_end);
+		sprintf(system_cmd, "touch %s%c", test_end,'\0');
 		system(system_cmd);
 	}
 	else
@@ -268,9 +269,9 @@ main(int argc, char *argv[])
 
 	flock(fileno(fp2), LOCK_EX);
 	if (parent_pid != getpid())
-		fprintf(fp2, "%d,%d,%d,%d,%d,%d,%d,%f,false\n", this_testid, nclients, ntxns_per_cli, nstmts_per_txn, diff.tv_sec, diff.tv_usec, snapsize, avg_sanpsize);
+		fprintf(fp2, "%d,%d,%d,%d,%ld,%ld,%d,%f,false\n", this_testid, nclients, ntxns_per_cli, nstmts_per_txn, diff.tv_sec, diff.tv_usec, snapsize, avg_sanpsize);
 	else
-		fprintf(fp2, "%d,%d,%d,%d,%d,%d,%d,%f,true\n", this_testid, nclients, ntxns_per_cli, nstmts_per_txn, diff.tv_sec, diff.tv_usec, snapsize, avg_sanpsize);
+		fprintf(fp2, "%d,%d,%d,%d,%ld,%ld,%d,%f,true\n", this_testid, nclients, ntxns_per_cli, nstmts_per_txn, diff.tv_sec, diff.tv_usec, snapsize, avg_sanpsize);
 		
 	flock(fileno(fp2), LOCK_UN);
 	fclose(fp2);
