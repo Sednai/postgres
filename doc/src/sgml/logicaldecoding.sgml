@@ -771,7 +771,7 @@ OutputPluginWrite(ctx, true);
 
       <listitem>
        <para>
-        Perform <command>CLUSTER</command> on  <structname>pg_class</structname> in a
+        Perform <command>CLUSTER</command> on <structname>pg_class</structname> in a
         transaction.
        </para>
       </listitem>

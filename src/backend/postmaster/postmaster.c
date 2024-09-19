@@ -3957,6 +3957,22 @@ PostmasterStateMachine(void)
 		/* Signal all backend children except walsenders */
 		SignalSomeChildren(SIGTERM,
 						   BACKEND_TYPE_ALL - BACKEND_TYPE_WALSND);
+
+#ifdef PGXC
+		/* and the pool manager too */
+		if (IS_PGXC_COORDINATOR && PgPoolerPID != 0)
+			signal_child(PgPoolerPID, SIGTERM);
+
+		/* Unregister Node on GTM */
+		if (isNodeRegistered)
+		{
+			if (IS_PGXC_COORDINATOR)
+				UnregisterGTM(GTM_NODE_COORDINATOR);
+			else if (IS_PGXC_DATANODE)
+				UnregisterGTM(GTM_NODE_DATANODE);
+		}
+#endif
+
 		/* and the autovac launcher too */
 		if (AutoVacPID != 0)
 			signal_child(AutoVacPID, SIGTERM);

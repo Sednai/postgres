@@ -840,7 +840,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
    </para>
 
   <sect2 id="locking-tables">
-   <title>Table-level Locks</title>
+   <title>Table-Level Locks</title>
 
    <indexterm zone="locking-tables">
     <primary>LOCK</primary>
@@ -872,7 +872,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
    </para>
 
      <variablelist>
-      <title>Table-level Lock Modes</title>
+      <title>Table-Level Lock Modes</title>
       <varlistentry>
        <term>
         <literal>ACCESS SHARE</literal> (<literal>AccessShareLock</literal>)
@@ -951,9 +951,11 @@ ERROR:  could not serialize access due to read/write dependencies among transact
         <para>
          Acquired by <command>VACUUM</command> (without <option>FULL</option>),
          <command>ANALYZE</command>, <command>CREATE INDEX CONCURRENTLY</command>,
-         <command>CREATE STATISTICS</command>, <command>COMMENT ON</command> and
-         <command>ALTER TABLE VALIDATE</command> and other
-         <command>ALTER TABLE</command> variants (for full details see
+         <command>CREATE STATISTICS</command>, <command>COMMENT ON</command>,
+         <command>REINDEX CONCURRENTLY</command>,
+         and certain <command>ALTER INDEX</command> and
+         <command>ALTER TABLE</command> variants
+         (for full details see <xref linkend="sql-alterindex"/> and
          <xref linkend="sql-altertable"/>).
         </para>
        </listitem>
@@ -995,8 +997,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
         </para>
 
         <para>
-         Acquired by <command>CREATE COLLATION</command>,
-         <command>CREATE TRIGGER</command>, and many forms of
+         Acquired by <command>CREATE TRIGGER</command> and some forms of
          <command>ALTER TABLE</command> (see <xref linkend="sql-altertable"/>).
         </para>
        </listitem>
@@ -1046,7 +1047,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
          <command>CLUSTER</command>, <command>VACUUM FULL</command>,
          and <command>REFRESH MATERIALIZED VIEW</command> (without
          <option>CONCURRENTLY</option>)
-         commands. Many forms of <command>ALTER TABLE</command> also acquire
+         commands. Many forms of <command>ALTER INDEX</command> and <command>ALTER TABLE</command> also acquire
          a lock at this level. This is also the default lock mode for
          <command>LOCK TABLE</command> statements that do not specify
          a mode explicitly.
@@ -1192,7 +1193,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
    </sect2>
 
    <sect2 id="locking-rows">
-    <title>Row-level Locks</title>
+    <title>Row-Level Locks</title>
 
     <para>
      In addition to table-level locks, there are row-level locks, which
@@ -1210,7 +1211,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
     </para>
 
      <variablelist>
-      <title>Row-level Lock Modes</title>
+      <title>Row-Level Lock Modes</title>
       <varlistentry>
        <term>
         <literal>FOR UPDATE</literal>
@@ -1312,7 +1313,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
     </para>
 
     <table tocentry="1" id="row-lock-compatibility">
-     <title>Conflicting Row-level Locks</title>
+     <title>Conflicting Row-Level Locks</title>
      <tgroup cols="5">
       <colspec colnum="2" colname="lockst"/>
       <colspec colnum="5" colname="lockend"/>
@@ -1364,7 +1365,7 @@ ERROR:  could not serialize access due to read/write dependencies among transact
    </sect2>
 
    <sect2 id="locking-pages">
-    <title>Page-level Locks</title>
+    <title>Page-Level Locks</title>
 
     <para>
      In addition to table and row locks, page-level share/exclusive locks are
@@ -1602,7 +1603,7 @@ SELECT pg_advisory_lock(q.id) FROM
    </para>
 
    <sect2 id="serializable-consistency">
-    <title>Enforcing Consistency With Serializable Transactions</title>
+    <title>Enforcing Consistency with Serializable Transactions</title>
 
     <para>
      If the Serializable transaction isolation level is used for all writes
@@ -1640,7 +1641,7 @@ SELECT pg_advisory_lock(q.id) FROM
    </sect2>
 
    <sect2 id="non-serializable-consistency">
-    <title>Enforcing Consistency With Explicit Blocking Locks</title>
+    <title>Enforcing Consistency with Explicit Blocking Locks</title>
 
     <para>
      When non-serializable writes are possible,

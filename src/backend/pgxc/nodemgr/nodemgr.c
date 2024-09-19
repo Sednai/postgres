@@ -310,7 +310,7 @@ void
 PgxcNodeListAndCount(void)
 {
 	Relation rel;
-	HeapScanDesc scan;
+	TableScanDesc scan;
 	HeapTuple   tuple;
 
 	LWLockAcquire(NodeTableLock, LW_EXCLUSIVE);

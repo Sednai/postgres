@@ -614,6 +614,7 @@ SPI_execute_direct(const char *remote_sql, char *nodename)
 	int			res;
 	ExecDirectStmt *stmt = makeNode(ExecDirectStmt);
 	StringInfoData execdirect;
+	RawStmt *rawstmt;
 
 	initStringInfo(&execdirect);
 
@@ -633,8 +634,8 @@ SPI_execute_direct(const char *remote_sql, char *nodename)
 	plan.cursor_options = 0;
 
 	/* Wrap in RawStmt */
-	RawStmt *rawstmt = makeNode(RawStmt);
-	rawstmt->stmt = stmt;
+	rawstmt = makeNode(RawStmt);
+	rawstmt->stmt = (Node *) stmt;
 	rawstmt->stmt_location = 0;
 	rawstmt->stmt_len = 0;
 

@@ -671,10 +671,15 @@ ExecInsert(ModifyTableState *mtstate,
 #ifdef PGXC
 		if (IS_PGXC_COORDINATOR && resultRemoteRel)
 			estate->es_processed += resultRemoteRel->rqs_processed;
-		else
-#endif
+			/* PGXC: tts_id not set currently */
+		else {
+			(estate->es_processed)++;
+			setLastTid(&slot->tts_tid);
+		}
+#else
 		(estate->es_processed)++;
 		setLastTid(&slot->tts_tid);
+#endif
 	}
 
 	/*
@@ -1249,7 +1254,7 @@ ExecUpdate(ModifyTableState *mtstate,
 	 * tuple slot.
 	 */
 	if (IS_PGXC_COORDINATOR && resultRemoteRel && oldtuple != NULL)
-		slot = fill_slot_with_oldvals(slot, oldtuple,
+		slot = fill_slot_with_oldvals(slot, oldtuple->t_data,
 				GetUpdatedColumns(estate->es_result_relation_info, estate));
 #endif
 

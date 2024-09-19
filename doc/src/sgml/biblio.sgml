@@ -136,6 +136,14 @@
     <pubdate>1988</pubdate>
    </biblioentry>
 
+   <biblioentry id="sqltr-19075-6">
+    <title>SQL Technical Report</title>
+    <subtitle>Part 6: SQL support for JavaScript Object
+      Notation (JSON)</subtitle>
+    <edition>First Edition</edition>
+    <pubdate>2017</pubdate>
+   </biblioentry>
+
   </bibliodiv>
 
   <bibliodiv>

@@ -341,6 +341,23 @@ PostgreSQL documentation
  </refsect1>
 
  <refsect1>
+  <title>Environment</title>
+
+  <variablelist>
+   <varlistentry>
+    <term><envar>PG_COLOR</envar></term>
+    <listitem>
+     <para>
+      Specifies whether to use color in diagnostic messages. Possible values
+      are <literal>always</literal>, <literal>auto</literal> and
+      <literal>never</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+  </variablelist>
+ </refsect1>
+
+ <refsect1>
   <title>Notes</title>
 
   <para>

@@ -78,7 +78,7 @@ typedef union GTM_ResultData
 	struct
 	{
 		GTM_TransactionHandle	txnhandle;		/* SNAPSHOT_GXID_GET */
-		GlobalTransactionId		gxid;			/* SNAPSHOT_GET */
+		FullTransactionId		gxid;			/* SNAPSHOT_GET */
 		int						txn_count;		/* SNAPSHOT_GET_MULTI */
 		int						status[GTM_MAX_GLOBAL_TRANSACTIONS];
 	} grd_txn_snap_multi;

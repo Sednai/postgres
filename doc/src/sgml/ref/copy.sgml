@@ -24,6 +24,7 @@ PostgreSQL documentation
 COPY <replaceable class="parameter">table_name</replaceable> [ ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ]
     FROM { '<replaceable class="parameter">filename</replaceable>' | PROGRAM '<replaceable class="parameter">command</replaceable>' | STDIN }
     [ [ WITH ] ( <replaceable class="parameter">option</replaceable> [, ...] ) ]
+    [ WHERE <replaceable class="parameter">condition</replaceable> ]
 
 COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable class="parameter">column_name</replaceable> [, ...] ) ] | ( <replaceable class="parameter">query</replaceable> ) }
     TO { '<replaceable class="parameter">filename</replaceable>' | PROGRAM '<replaceable class="parameter">command</replaceable>' | STDOUT }
@@ -32,7 +33,6 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
 <phrase>where <replaceable class="parameter">option</replaceable> can be one of:</phrase>
 
     FORMAT <replaceable class="parameter">format_name</replaceable>
-    OIDS [ <replaceable class="parameter">boolean</replaceable> ]
     FREEZE [ <replaceable class="parameter">boolean</replaceable> ]
     DELIMITER '<replaceable class="parameter">delimiter_character</replaceable>'
     NULL '<replaceable class="parameter">null_string</replaceable>'
@@ -102,7 +102,8 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
      <listitem>
      <para>
       An optional list of columns to be copied.  If no column list is
-      specified, all columns of the table will be copied.
+      specified, all columns of the table except generated columns will be
+      copied.
      </para>
     </listitem>
    </varlistentry>
@@ -118,10 +119,10 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
      </para>
      <para>
       For <command>INSERT</command>, <command>UPDATE</command> and
-      <command>DELETE</command> queries a RETURNING clause must be provided,
-      and the target relation must not have a conditional rule, nor
-      an <literal>ALSO</literal> rule, nor an <literal>INSTEAD</literal> rule
-      that expands to multiple statements.
+      <command>DELETE</command> queries a <literal>RETURNING</literal> clause
+      must be provided, and the target relation must not have a conditional
+      rule, nor an <literal>ALSO</literal> rule, nor an
+      <literal>INSTEAD</literal> rule that expands to multiple statements.
      </para>
     </listitem>
    </varlistentry>
@@ -198,18 +199,6 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       <literal>csv</literal> (Comma Separated Values),
       or <literal>binary</literal>.
       The default is <literal>text</literal>.
-     </para>
-    </listitem>
-   </varlistentry>
-
-   <varlistentry>
-    <term><literal>OIDS</literal></term>
-    <listitem>
-     <para>
-      Specifies copying the OID for each row.  (An error is raised if
-      <literal>OIDS</literal> is specified for a table that does not
-      have OIDs, or in the case of copying a <replaceable
-      class="parameter">query</replaceable>.)
      </para>
     </listitem>
    </varlistentry>
@@ -362,6 +351,32 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
       omitted, the current client encoding is used. See the Notes below
       for more details.
      </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>WHERE</literal></term>
+    <listitem>
+   <para>
+    The optional <literal>WHERE</literal> clause has the general form
+<synopsis>
+WHERE <replaceable class="parameter">condition</replaceable>
+</synopsis>
+    where <replaceable class="parameter">condition</replaceable> is
+    any expression that evaluates to a result of type
+    <type>boolean</type>.  Any row that does not satisfy this
+    condition will not be inserted to the table.  A row satisfies the
+    condition if it returns true when the actual row values are
+    substituted for any variable references.
+   </para>
+
+   <para>
+    Currently, subqueries are not allowed in <literal>WHERE</literal>
+    expressions, and the evaluation does not see any changes made by the
+    <command>COPY</command> itself (this matters when the expression
+    contains calls to <literal>VOLATILE</literal> functions).
+   </para>
+
     </listitem>
    </varlistentry>
 
@@ -544,8 +559,6 @@ COPY <replaceable class="parameter">count</replaceable>
     place of columns that are null.
     <command>COPY FROM</command> will raise an error if any line of the
     input file contains more or fewer columns than are expected.
-    If <literal>OIDS</literal> is specified, the OID is read or written as the first column,
-    preceding the user data columns.
    </para>
 
    <para>
@@ -825,7 +838,9 @@ only one flag bit is defined, and the rest must be zero:
           <term>Bit 16</term>
           <listitem>
            <para>
-            if 1, OIDs are included in the data; if 0, not
+            If 1, OIDs are included in the data; if 0, not. Oid system columns
+            are not supported in <productname>PostgreSQL</productname>
+            anymore, but the format still contains the indicator.
            </para>
           </listitem>
          </varlistentry>
@@ -896,10 +911,9 @@ distribution).
 
     <para>
 If OIDs are included in the file, the OID field immediately follows the
-field-count word.  It is a normal field except that it's not included
-in the field-count.  In particular it has a length word &mdash; this will allow
-handling of 4-byte vs. 8-byte OIDs without too much pain, and will allow
-OIDs to be shown as null if that ever proves desirable.
+field-count word.  It is a normal field except that it's not included in the
+field-count.  Note that oid system columns are not supported in current
+versions of <productname>PostgreSQL</productname>.
     </para>
    </refsect3>
 
@@ -1002,9 +1016,8 @@ COPY <replaceable class="parameter">table_name</replaceable> [ ( <replaceable cl
     FROM { '<replaceable class="parameter">filename</replaceable>' | STDIN }
     [ [ WITH ]
           [ BINARY ]
-          [ OIDS ]
           [ DELIMITER [ AS ] '<replaceable class="parameter">delimiter_character</replaceable>' ]
-          [ NULL [ AS ] '<replaceable class="parameter">null string</replaceable>' ]
+          [ NULL [ AS ] '<replaceable class="parameter">null_string</replaceable>' ]
           [ CSV [ HEADER ]
                 [ QUOTE [ AS ] '<replaceable class="parameter">quote_character</replaceable>' ]
                 [ ESCAPE [ AS ] '<replaceable class="parameter">escape_character</replaceable>' ]
@@ -1014,9 +1027,8 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
     TO { '<replaceable class="parameter">filename</replaceable>' | STDOUT }
     [ [ WITH ]
           [ BINARY ]
-          [ OIDS ]
           [ DELIMITER [ AS ] '<replaceable class="parameter">delimiter_character</replaceable>' ]
-          [ NULL [ AS ] '<replaceable class="parameter">null string</replaceable>' ]
+          [ NULL [ AS ] '<replaceable class="parameter">null_string</replaceable>' ]
           [ CSV [ HEADER ]
                 [ QUOTE [ AS ] '<replaceable class="parameter">quote_character</replaceable>' ]
                 [ ESCAPE [ AS ] '<replaceable class="parameter">escape_character</replaceable>' ]
@@ -1033,12 +1045,12 @@ COPY { <replaceable class="parameter">table_name</replaceable> [ ( <replaceable 
    version 7.3 and is still supported:
 
 <synopsis>
-COPY [ BINARY ] <replaceable class="parameter">table_name</replaceable> [ WITH OIDS ]
+COPY [ BINARY ] <replaceable class="parameter">table_name</replaceable>
     FROM { '<replaceable class="parameter">filename</replaceable>' | STDIN }
     [ [USING] DELIMITERS '<replaceable class="parameter">delimiter_character</replaceable>' ]
     [ WITH NULL AS '<replaceable class="parameter">null_string</replaceable>' ]
 
-COPY [ BINARY ] <replaceable class="parameter">table_name</replaceable> [ WITH OIDS ]
+COPY [ BINARY ] <replaceable class="parameter">table_name</replaceable>
     TO { '<replaceable class="parameter">filename</replaceable>' | STDOUT }
     [ [USING] DELIMITERS '<replaceable class="parameter">delimiter_character</replaceable>' ]
     [ WITH NULL AS '<replaceable class="parameter">null_string</replaceable>' ]

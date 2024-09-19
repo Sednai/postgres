@@ -102,7 +102,7 @@ EXPLAIN SELECT * FROM pgbench_accounts WHERE filler LIKE '%x%';
     order-preserving merge.  In contrast, <literal>Gather</literal> reads tuples
     from the workers in whatever order is convenient, destroying any sort
     order that may have existed.
-   </para>   
+   </para>
  </sect1>
 
  <sect1 id="when-can-parallel-query-be-used">
@@ -122,14 +122,6 @@ EXPLAIN SELECT * FROM pgbench_accounts WHERE filler LIKE '%x%';
         value that is greater than zero. This is a special case of the more
         general principle that no more workers should be used than the number
         configured via <varname>max_parallel_workers_per_gather</varname>.
-      </para>
-    </listitem>
-
-    <listitem>
-      <para>
-        <xref linkend="guc-dynamic-shared-memory-type"/> must be set to a
-        value other than <literal>none</literal>.  Parallel query requires dynamic
-        shared memory in order to pass data between cooperating processes.
       </para>
     </listitem>
   </itemizedlist>
@@ -192,17 +184,10 @@ EXPLAIN SELECT * FROM pgbench_accounts WHERE filler LIKE '%x%';
         using a very large number of processes.
       </para>
     </listitem>
-
-    <listitem>
-      <para>
-        The transaction isolation level is serializable.  This is
-        a limitation of the current implementation.
-      </para>
-    </listitem>
   </itemizedlist>
 
   <para>
-    Even when parallel query plan is generated for a particular query, there
+    Even when a parallel query plan is generated for a particular query, there
     are several circumstances under which it will be impossible to execute
     that plan in parallel at execution time.  If this occurs, the leader
     will execute the portion of the plan below the <literal>Gather</literal>
@@ -239,16 +224,6 @@ EXPLAIN SELECT * FROM pgbench_accounts WHERE filler LIKE '%x%';
         <xref linkend="guc-max-parallel-workers-per-gather"/> to zero in
         sessions where it is likely, so as to avoid generating query plans
         that may be suboptimal when run serially.
-      </para>
-    </listitem>
-
-    <listitem>
-      <para>
-        The transaction isolation level is serializable.  This situation
-        does not normally arise, because parallel query plans are not
-        generated when the transaction isolation level is serializable.
-        However, it can happen if the transaction isolation level is changed to
-        serializable after the plan is generated and before it is executed.
       </para>
     </listitem>
   </itemizedlist>
@@ -372,7 +347,7 @@ EXPLAIN SELECT * FROM pgbench_accounts WHERE filler LIKE '%x%';
     workers in order to produce the final result.  This is reflected in the
     plan as a <literal>Finalize Aggregate</literal> node.
   </para>
-  
+
   <para>
     Because the <literal>Finalize Aggregate</literal> node runs on the leader
     process, queries that produce a relatively large number of groups in

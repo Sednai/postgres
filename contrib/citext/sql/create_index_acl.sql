@@ -71,12 +71,9 @@ ALTER TABLE s.x ADD CONSTRAINT e2rows EXCLUDE USING btree
 -- Shall not find s.coll via search_path, despite the s.const->public.setter
 -- call having set search_path=s during expression planning.  Suppress the
 -- message itself, which depends on the database encoding.
-\set VERBOSITY terse
-DO $$
-BEGIN
+\set VERBOSITY sqlstate
 ALTER TABLE s.x ADD CONSTRAINT underqualified EXCLUDE USING btree
   ((s.index_this_expr(y, s.const())) COLLATE coll WITH s.=)
   WHERE (s.index_row_if(y));
-EXCEPTION WHEN OTHERS THEN RAISE EXCEPTION '%', sqlstate; END$$;
 \set VERBOSITY default
 ROLLBACK;

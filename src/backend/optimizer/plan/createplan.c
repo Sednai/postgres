@@ -2660,7 +2660,7 @@ create_modifytable_plan(PlannerInfo *root, ModifyTablePath *best_path)
 							best_path->epqParam);
 
 #ifdef PGXC
-	plan = (ModifyTable *) pgxc_make_modifytable(root, plan);
+	plan = pgxc_make_modifytable(root, plan);
 #endif
 
 	copy_generic_path_info(&plan->plan, &best_path->path);
@@ -2690,7 +2690,7 @@ create_limit_plan(PlannerInfo *root, LimitPath *best_path, int flags)
 #ifdef PGXC
 		/* See if we can push LIMIT or OFFSET clauses to Datanodes */
 	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-		plan = (Limit *) create_remotelimit_plan(root, plan);
+		plan = (Limit *) create_remotelimit_plan(root, (Plan*) plan);
 #endif /* PGXC */
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);

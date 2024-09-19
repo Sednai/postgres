@@ -24,7 +24,7 @@
  * with collations that match the remote table's columns, which we can
  * consider to be user error.
  *
- * Portions Copyright (c) 2012-2018, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2019, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/deparse.c
@@ -35,9 +35,9 @@
 
 #include "postgres_fdw.h"
 
-#include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_namespace.h"
@@ -49,10 +49,9 @@
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/plannodes.h"
-#include "optimizer/clauses.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/prep.h"
 #include "optimizer/tlist.h"
-#include "optimizer/var.h"
 #include "parser/parsetree.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
@@ -118,83 +117,86 @@ typedef struct deparse_expr_cxt
  * remote server.
  */
 static bool foreign_expr_walker(Node *node,
-					foreign_glob_cxt *glob_cxt,
-					foreign_loc_cxt *outer_cxt);
+								foreign_glob_cxt *glob_cxt,
+								foreign_loc_cxt *outer_cxt);
 static char *deparse_type_name(Oid type_oid, int32 typemod);
 
 /*
  * Functions to construct string representation of a node tree.
  */
 static void deparseTargetList(StringInfo buf,
-				  RangeTblEntry *rte,
-				  Index rtindex,
-				  Relation rel,
-				  bool is_returning,
-				  Bitmapset *attrs_used,
-				  bool qualify_col,
-				  List **retrieved_attrs);
+							  RangeTblEntry *rte,
+							  Index rtindex,
+							  Relation rel,
+							  bool is_returning,
+							  Bitmapset *attrs_used,
+							  bool qualify_col,
+							  List **retrieved_attrs);
 static void deparseExplicitTargetList(List *tlist,
-						  bool is_returning,
-						  List **retrieved_attrs,
-						  deparse_expr_cxt *context);
+									  bool is_returning,
+									  List **retrieved_attrs,
+									  deparse_expr_cxt *context);
 static void deparseSubqueryTargetList(deparse_expr_cxt *context);
 static void deparseReturningList(StringInfo buf, RangeTblEntry *rte,
-					 Index rtindex, Relation rel,
-					 bool trig_after_row,
-					 List *returningList,
-					 List **retrieved_attrs);
+								 Index rtindex, Relation rel,
+								 bool trig_after_row,
+								 List *withCheckOptionList,
+								 List *returningList,
+								 List **retrieved_attrs);
 static void deparseColumnRef(StringInfo buf, int varno, int varattno,
-				 RangeTblEntry *rte, bool qualify_col);
+							 RangeTblEntry *rte, bool qualify_col);
 static void deparseRelation(StringInfo buf, Relation rel);
 static void deparseExpr(Expr *expr, deparse_expr_cxt *context);
 static void deparseVar(Var *node, deparse_expr_cxt *context);
 static void deparseConst(Const *node, deparse_expr_cxt *context, int showtype);
 static void deparseParam(Param *node, deparse_expr_cxt *context);
-static void deparseArrayRef(ArrayRef *node, deparse_expr_cxt *context);
+static void deparseSubscriptingRef(SubscriptingRef *node, deparse_expr_cxt *context);
 static void deparseFuncExpr(FuncExpr *node, deparse_expr_cxt *context);
 static void deparseOpExpr(OpExpr *node, deparse_expr_cxt *context);
 static void deparseOperatorName(StringInfo buf, Form_pg_operator opform);
 static void deparseDistinctExpr(DistinctExpr *node, deparse_expr_cxt *context);
 static void deparseScalarArrayOpExpr(ScalarArrayOpExpr *node,
-						 deparse_expr_cxt *context);
+									 deparse_expr_cxt *context);
 static void deparseRelabelType(RelabelType *node, deparse_expr_cxt *context);
 static void deparseBoolExpr(BoolExpr *node, deparse_expr_cxt *context);
 static void deparseNullTest(NullTest *node, deparse_expr_cxt *context);
 static void deparseArrayExpr(ArrayExpr *node, deparse_expr_cxt *context);
 static void printRemoteParam(int paramindex, Oid paramtype, int32 paramtypmod,
-				 deparse_expr_cxt *context);
+							 deparse_expr_cxt *context);
 static void printRemotePlaceholder(Oid paramtype, int32 paramtypmod,
-					   deparse_expr_cxt *context);
+								   deparse_expr_cxt *context);
 static void deparseSelectSql(List *tlist, bool is_subquery, List **retrieved_attrs,
-				 deparse_expr_cxt *context);
+							 deparse_expr_cxt *context);
 static void deparseLockingClause(deparse_expr_cxt *context);
-static void appendOrderByClause(List *pathkeys, deparse_expr_cxt *context);
+static void appendOrderByClause(List *pathkeys, bool has_final_sort,
+								deparse_expr_cxt *context);
+static void appendLimitClause(deparse_expr_cxt *context);
 static void appendConditions(List *exprs, deparse_expr_cxt *context);
 static void deparseFromExprForRel(StringInfo buf, PlannerInfo *root,
-					  RelOptInfo *foreignrel, bool use_alias,
-					  Index ignore_rel, List **ignore_conds,
-					  List **params_list);
+								  RelOptInfo *foreignrel, bool use_alias,
+								  Index ignore_rel, List **ignore_conds,
+								  List **params_list);
 static void deparseFromExpr(List *quals, deparse_expr_cxt *context);
 static void deparseRangeTblRef(StringInfo buf, PlannerInfo *root,
-				   RelOptInfo *foreignrel, bool make_subquery,
-				   Index ignore_rel, List **ignore_conds, List **params_list);
+							   RelOptInfo *foreignrel, bool make_subquery,
+							   Index ignore_rel, List **ignore_conds, List **params_list);
 static void deparseAggref(Aggref *node, deparse_expr_cxt *context);
 static void appendGroupByClause(List *tlist, deparse_expr_cxt *context);
 static void appendOrderBySuffix(Oid sortop, Oid sortcoltype, bool nulls_first,
 								deparse_expr_cxt *context);
 static void appendAggOrderBy(List *orderList, List *targetList,
-				 deparse_expr_cxt *context);
+							 deparse_expr_cxt *context);
 static void appendFunctionName(Oid funcid, deparse_expr_cxt *context);
 static Node *deparseSortGroupClause(Index ref, List *tlist, bool force_colno,
-					   deparse_expr_cxt *context);
+									deparse_expr_cxt *context);
 
 /*
  * Helper functions
  */
 static bool is_subquery_var(Var *node, RelOptInfo *foreignrel,
-				int *relno, int *colno);
+							int *relno, int *colno);
 static void get_relation_column_alias_ids(Var *node, RelOptInfo *foreignrel,
-							  int *relno, int *colno);
+										  int *relno, int *colno);
 
 
 /*
@@ -334,14 +336,13 @@ foreign_expr_walker(Node *node,
 					/* Var belongs to foreign table */
 
 					/*
-					 * System columns other than ctid and oid should not be
-					 * sent to the remote, since we don't make any effort to
-					 * ensure that local and remote values match (tableoid, in
+					 * System columns other than ctid should not be sent to
+					 * the remote, since we don't make any effort to ensure
+					 * that local and remote values match (tableoid, in
 					 * particular, almost certainly doesn't match).
 					 */
 					if (var->varattno < 0 &&
-						var->varattno != SelfItemPointerAttributeNumber &&
-						var->varattno != ObjectIdAttributeNumber)
+						var->varattno != SelfItemPointerAttributeNumber)
 						return false;
 
 					/* Else check the collation */
@@ -421,34 +422,34 @@ foreign_expr_walker(Node *node,
 					state = FDW_COLLATE_UNSAFE;
 			}
 			break;
-		case T_ArrayRef:
+		case T_SubscriptingRef:
 			{
-				ArrayRef   *ar = (ArrayRef *) node;
+				SubscriptingRef *sr = (SubscriptingRef *) node;
 
 				/* Assignment should not be in restrictions. */
-				if (ar->refassgnexpr != NULL)
+				if (sr->refassgnexpr != NULL)
 					return false;
 
 				/*
-				 * Recurse to remaining subexpressions.  Since the array
+				 * Recurse to remaining subexpressions.  Since the container
 				 * subscripts must yield (noncollatable) integers, they won't
 				 * affect the inner_cxt state.
 				 */
-				if (!foreign_expr_walker((Node *) ar->refupperindexpr,
+				if (!foreign_expr_walker((Node *) sr->refupperindexpr,
 										 glob_cxt, &inner_cxt))
 					return false;
-				if (!foreign_expr_walker((Node *) ar->reflowerindexpr,
+				if (!foreign_expr_walker((Node *) sr->reflowerindexpr,
 										 glob_cxt, &inner_cxt))
 					return false;
-				if (!foreign_expr_walker((Node *) ar->refexpr,
+				if (!foreign_expr_walker((Node *) sr->refexpr,
 										 glob_cxt, &inner_cxt))
 					return false;
 
 				/*
-				 * Array subscripting should yield same collation as input,
-				 * but for safety use same logic as for function nodes.
+				 * Container subscripting should yield same collation as
+				 * input, but for safety use same logic as for function nodes.
 				 */
-				collation = ar->refcollid;
+				collation = sr->refcollid;
 				if (collation == InvalidOid)
 					state = FDW_COLLATE_NONE;
 				else if (inner_cxt.state == FDW_COLLATE_SAFE &&
@@ -1025,8 +1026,8 @@ build_tlist_to_deparse(RelOptInfo *foreignrel)
 void
 deparseSelectStmtForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *rel,
 						List *tlist, List *remote_conds, List *pathkeys,
-						bool is_subquery, List **retrieved_attrs,
-						List **params_list)
+						bool has_final_sort, bool has_limit, bool is_subquery,
+						List **retrieved_attrs, List **params_list)
 {
 	deparse_expr_cxt context;
 	PgFdwRelationInfo *fpinfo = (PgFdwRelationInfo *) rel->fdw_private;
@@ -1081,7 +1082,11 @@ deparseSelectStmtForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *rel,
 
 	/* Add ORDER BY clause if we found any useful pathkeys */
 	if (pathkeys)
-		appendOrderByClause(pathkeys, &context);
+		appendOrderByClause(pathkeys, has_final_sort, &context);
+
+	/* Add LIMIT clause if necessary */
+	if (has_limit)
+		appendLimitClause(&context);
 
 	/* Add any necessary FOR UPDATE/SHARE. */
 	deparseLockingClause(&context);
@@ -1143,11 +1148,11 @@ deparseSelectSql(List *tlist, bool is_subquery, List **retrieved_attrs,
 		 * Core code already has some lock on each rel being planned, so we
 		 * can use NoLock here.
 		 */
-		Relation	rel = heap_open(rte->relid, NoLock);
+		Relation	rel = table_open(rte->relid, NoLock);
 
 		deparseTargetList(buf, rte, foreignrel->relid, rel, false,
 						  fpinfo->attrs_used, false, retrieved_attrs);
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 	}
 }
 
@@ -1171,7 +1176,7 @@ deparseFromExpr(List *quals, deparse_expr_cxt *context)
 	/* Construct FROM clause */
 	appendStringInfoString(buf, " FROM ");
 	deparseFromExprForRel(buf, context->root, scanrel,
-						  (bms_num_members(scanrel->relids) > 1),
+						  (bms_membership(scanrel->relids) == BMS_MULTIPLE),
 						  (Index) 0, NULL, context->params_list);
 
 	/* Construct WHERE clause */
@@ -1239,8 +1244,8 @@ deparseTargetList(StringInfo buf,
 	}
 
 	/*
-	 * Add ctid and oid if needed.  We currently don't support retrieving any
-	 * other system columns.
+	 * Add ctid if needed.  We currently don't support retrieving any other
+	 * system columns.
 	 */
 	if (bms_is_member(SelfItemPointerAttributeNumber - FirstLowInvalidHeapAttributeNumber,
 					  attrs_used))
@@ -1257,22 +1262,6 @@ deparseTargetList(StringInfo buf,
 
 		*retrieved_attrs = lappend_int(*retrieved_attrs,
 									   SelfItemPointerAttributeNumber);
-	}
-	if (bms_is_member(ObjectIdAttributeNumber - FirstLowInvalidHeapAttributeNumber,
-					  attrs_used))
-	{
-		if (!first)
-			appendStringInfoString(buf, ", ");
-		else if (is_returning)
-			appendStringInfoString(buf, " RETURNING ");
-		first = false;
-
-		if (qualify_col)
-			ADD_REL_QUALIFIER(buf, rtindex);
-		appendStringInfoString(buf, "oid");
-
-		*retrieved_attrs = lappend_int(*retrieved_attrs,
-									   ObjectIdAttributeNumber);
 	}
 
 	/* Don't generate bad syntax if no undropped columns */
@@ -1357,7 +1346,7 @@ deparseLockingClause(deparse_expr_cxt *context)
 				}
 
 				/* Add the relation alias if we are here for a join relation */
-				if (bms_num_members(rel->relids) > 1 &&
+				if (bms_membership(rel->relids) == BMS_MULTIPLE &&
 					rc->strength != LCS_NONE)
 					appendStringInfo(buf, " OF %s%d", REL_ALIAS_PREFIX, relid);
 			}
@@ -1654,7 +1643,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 		 * Core code already has some lock on each rel being planned, so we
 		 * can use NoLock here.
 		 */
-		Relation	rel = heap_open(rte->relid, NoLock);
+		Relation	rel = table_open(rte->relid, NoLock);
 
 		deparseRelation(buf, rel);
 
@@ -1666,7 +1655,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 		if (use_alias)
 			appendStringInfo(buf, " %s%d", REL_ALIAS_PREFIX, foreignrel->relid);
 
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 	}
 }
 
@@ -1702,7 +1691,8 @@ deparseRangeTblRef(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 		/* Deparse the subquery representing the relation. */
 		appendStringInfoChar(buf, '(');
 		deparseSelectStmtForRel(buf, root, foreignrel, NIL,
-								fpinfo->remote_conds, NIL, true,
+								fpinfo->remote_conds, NIL,
+								false, false, true,
 								&retrieved_attrs, params_list);
 		appendStringInfoChar(buf, ')');
 
@@ -1740,15 +1730,17 @@ deparseRangeTblRef(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
  * deparse remote INSERT statement
  *
  * The statement text is appended to buf, and we also create an integer List
- * of the columns being retrieved by RETURNING (if any), which is returned
- * to *retrieved_attrs.
+ * of the columns being retrieved by WITH CHECK OPTION or RETURNING (if any),
+ * which is returned to *retrieved_attrs.
  */
 void
 deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 				 Index rtindex, Relation rel,
 				 List *targetAttrs, bool doNothing,
-				 List *returningList, List **retrieved_attrs)
+				 List *withCheckOptionList, List *returningList,
+				 List **retrieved_attrs)
 {
+	TupleDesc	tupdesc = RelationGetDescr(rel);
 	AttrNumber	pindex;
 	bool		first;
 	ListCell   *lc;
@@ -1778,12 +1770,20 @@ deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 		first = true;
 		foreach(lc, targetAttrs)
 		{
+			int			attnum = lfirst_int(lc);
+			Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
+
 			if (!first)
 				appendStringInfoString(buf, ", ");
 			first = false;
 
-			appendStringInfo(buf, "$%d", pindex);
-			pindex++;
+			if (attr->attgenerated)
+				appendStringInfoString(buf, "DEFAULT");
+			else
+			{
+				appendStringInfo(buf, "$%d", pindex);
+				pindex++;
+			}
 		}
 
 		appendStringInfoChar(buf, ')');
@@ -1796,22 +1796,24 @@ deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_insert_after_row,
-						 returningList, retrieved_attrs);
+						 withCheckOptionList, returningList, retrieved_attrs);
 }
 
 /*
  * deparse remote UPDATE statement
  *
  * The statement text is appended to buf, and we also create an integer List
- * of the columns being retrieved by RETURNING (if any), which is returned
- * to *retrieved_attrs.
+ * of the columns being retrieved by WITH CHECK OPTION or RETURNING (if any),
+ * which is returned to *retrieved_attrs.
  */
 void
 deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 				 Index rtindex, Relation rel,
-				 List *targetAttrs, List *returningList,
+				 List *targetAttrs,
+				 List *withCheckOptionList, List *returningList,
 				 List **retrieved_attrs)
 {
+	TupleDesc	tupdesc = RelationGetDescr(rel);
 	AttrNumber	pindex;
 	bool		first;
 	ListCell   *lc;
@@ -1825,20 +1827,26 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
 	foreach(lc, targetAttrs)
 	{
 		int			attnum = lfirst_int(lc);
+		Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
 
 		if (!first)
 			appendStringInfoString(buf, ", ");
 		first = false;
 
 		deparseColumnRef(buf, rtindex, attnum, rte, false);
-		appendStringInfo(buf, " = $%d", pindex);
-		pindex++;
+		if (attr->attgenerated)
+			appendStringInfoString(buf, " = DEFAULT");
+		else
+		{
+			appendStringInfo(buf, " = $%d", pindex);
+			pindex++;
+		}
 	}
 	appendStringInfoString(buf, " WHERE ctid = $1");
 
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_update_after_row,
-						 returningList, retrieved_attrs);
+						 withCheckOptionList, returningList, retrieved_attrs);
 }
 
 /*
@@ -1932,7 +1940,7 @@ deparseDirectUpdateSql(StringInfo buf, PlannerInfo *root,
 								  &context);
 	else
 		deparseReturningList(buf, rte, rtindex, rel, false,
-							 returningList, retrieved_attrs);
+							 NIL, returningList, retrieved_attrs);
 }
 
 /*
@@ -1954,7 +1962,7 @@ deparseDeleteSql(StringInfo buf, RangeTblEntry *rte,
 
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_delete_after_row,
-						 returningList, retrieved_attrs);
+						 NIL, returningList, retrieved_attrs);
 }
 
 /*
@@ -2016,7 +2024,7 @@ deparseDirectDeleteSql(StringInfo buf, PlannerInfo *root,
 	else
 		deparseReturningList(buf, planner_rt_fetch(rtindex, root),
 							 rtindex, rel, false,
-							 returningList, retrieved_attrs);
+							 NIL, returningList, retrieved_attrs);
 }
 
 /*
@@ -2026,6 +2034,7 @@ static void
 deparseReturningList(StringInfo buf, RangeTblEntry *rte,
 					 Index rtindex, Relation rel,
 					 bool trig_after_row,
+					 List *withCheckOptionList,
 					 List *returningList,
 					 List **retrieved_attrs)
 {
@@ -2036,6 +2045,21 @@ deparseReturningList(StringInfo buf, RangeTblEntry *rte,
 		/* whole-row reference acquires all non-system columns */
 		attrs_used =
 			bms_make_singleton(0 - FirstLowInvalidHeapAttributeNumber);
+	}
+
+	if (withCheckOptionList != NIL)
+	{
+		/*
+		 * We need the attrs, non-system and system, mentioned in the local
+		 * query's WITH CHECK OPTION list.
+		 *
+		 * Note: we do this to ensure that WCO constraints will be evaluated
+		 * on the data actually inserted/updated on the remote side, which
+		 * might differ from the data supplied by the core code, for example
+		 * as a result of remote triggers.
+		 */
+		pull_varattnos((Node *) withCheckOptionList, rtindex,
+					   &attrs_used);
 	}
 
 	if (returningList != NIL)
@@ -2155,12 +2179,6 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, RangeTblEntry *rte,
 			ADD_REL_QUALIFIER(buf, varno);
 		appendStringInfoString(buf, "ctid");
 	}
-	else if (varattno == ObjectIdAttributeNumber)
-	{
-		if (qualify_col)
-			ADD_REL_QUALIFIER(buf, varno);
-		appendStringInfoString(buf, "oid");
-	}
 	else if (varattno < 0)
 	{
 		/*
@@ -2196,7 +2214,7 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, RangeTblEntry *rte,
 		 * The lock on the relation will be held by upper callers, so it's
 		 * fine to open it with no lock here.
 		 */
-		rel = heap_open(rte->relid, NoLock);
+		rel = table_open(rte->relid, NoLock);
 
 		/*
 		 * The local name of the foreign table can not be recognized by the
@@ -2231,7 +2249,7 @@ deparseColumnRef(StringInfo buf, int varno, int varattno, RangeTblEntry *rte,
 		if (qualify_col)
 			appendStringInfoString(buf, " END");
 
-		heap_close(rel, NoLock);
+		table_close(rel, NoLock);
 		bms_free(attrs_used);
 	}
 	else
@@ -2370,8 +2388,8 @@ deparseExpr(Expr *node, deparse_expr_cxt *context)
 		case T_Param:
 			deparseParam((Param *) node, context);
 			break;
-		case T_ArrayRef:
-			deparseArrayRef((ArrayRef *) node, context);
+		case T_SubscriptingRef:
+			deparseSubscriptingRef((SubscriptingRef *) node, context);
 			break;
 		case T_FuncExpr:
 			deparseFuncExpr((FuncExpr *) node, context);
@@ -2423,7 +2441,7 @@ deparseVar(Var *node, deparse_expr_cxt *context)
 	int			colno;
 
 	/* Qualify columns when multiple relations are involved. */
-	bool		qualify_col = (bms_num_members(relids) > 1);
+	bool		qualify_col = (bms_membership(relids) == BMS_MULTIPLE);
 
 	/*
 	 * If the Var belongs to the foreign relation that is deparsed as a
@@ -2618,10 +2636,10 @@ deparseParam(Param *node, deparse_expr_cxt *context)
 }
 
 /*
- * Deparse an array subscript expression.
+ * Deparse a container subscript expression.
  */
 static void
-deparseArrayRef(ArrayRef *node, deparse_expr_cxt *context)
+deparseSubscriptingRef(SubscriptingRef *node, deparse_expr_cxt *context)
 {
 	StringInfo	buf = context->buf;
 	ListCell   *lowlist_item;
@@ -3221,21 +3239,24 @@ appendGroupByClause(List *tlist, deparse_expr_cxt *context)
 /*
  * Deparse ORDER BY clause defined by the given pathkeys.
  *
+ * The clause should use Vars from context->scanrel if !has_final_sort,
+ * or from context->foreignrel's targetlist if has_final_sort.
+ *
  * We find a suitable pathkey expression (some earlier step
  * should have verified that there is one) and deparse it.
  */
 static void
-appendOrderByClause(List *pathkeys, deparse_expr_cxt *context)
+appendOrderByClause(List *pathkeys, bool has_final_sort,
+					deparse_expr_cxt *context)
 {
 	ListCell   *lcell;
 	int			nestlevel;
-	const char *delim = " ";
 	StringInfo	buf = context->buf;
+	bool		gotone = false;
 
 	/* Make sure any constants in the exprs are printed portably */
 	nestlevel = set_transmission_modes();
 
-	appendStringInfoString(buf, " ORDER BY");
 	foreach(lcell, pathkeys)
 	{
 		PathKey    *pathkey = lfirst(lcell);
@@ -3243,9 +3264,20 @@ appendOrderByClause(List *pathkeys, deparse_expr_cxt *context)
 		Expr	   *em_expr;
 		Oid			oprid;
 
-		em = find_em_for_rel(context->root,
-							 pathkey->pk_eclass,
-							 context->scanrel);
+		if (has_final_sort)
+		{
+			/*
+			 * By construction, context->foreignrel is the input relation to
+			 * the final sort.
+			 */
+			em = find_em_for_rel_target(context->root,
+										pathkey->pk_eclass,
+										context->foreignrel);
+		}
+		else
+			em = find_em_for_rel(context->root,
+								 pathkey->pk_eclass,
+								 context->scanrel);
 
 		/*
 		 * We don't expect any error here; it would mean that shippability
@@ -3256,6 +3288,26 @@ appendOrderByClause(List *pathkeys, deparse_expr_cxt *context)
 			elog(ERROR, "could not find pathkey item to sort");
 
 		em_expr = em->em_expr;
+
+		/*
+		 * If the member is a Const expression then we needn't add it to the
+		 * ORDER BY clause.  This can happen in UNION ALL queries where the
+		 * union child targetlist has a Const.  Adding these would be
+		 * wasteful, but also, for INT columns, an integer literal would be
+		 * seen as an ordinal column position rather than a value to sort by.
+		 * deparseConst() does have code to handle this, but it seems less
+		 * effort on all accounts just to skip these for ORDER BY clauses.
+		 */
+		if (IsA(em_expr, Const))
+			continue;
+
+		if (!gotone)
+		{
+			appendStringInfoString(buf, " ORDER BY ");
+			gotone = true;
+		}
+		else
+			appendStringInfoString(buf, ", ");
 
 		/*
 		 * Lookup the operator corresponding to the strategy in the opclass.
@@ -3271,7 +3323,6 @@ appendOrderByClause(List *pathkeys, deparse_expr_cxt *context)
 				 pathkey->pk_strategy, em->em_datatype, em->em_datatype,
 				 pathkey->pk_opfamily);
 
-		appendStringInfoString(buf, delim);
 		deparseExpr(em_expr, context);
 
 		/*
@@ -3281,8 +3332,34 @@ appendOrderByClause(List *pathkeys, deparse_expr_cxt *context)
 		appendOrderBySuffix(oprid, exprType((Node *) em_expr),
 							pathkey->pk_nulls_first, context);
 
-		delim = ", ";
 	}
+	reset_transmission_modes(nestlevel);
+}
+
+/*
+ * Deparse LIMIT/OFFSET clause.
+ */
+static void
+appendLimitClause(deparse_expr_cxt *context)
+{
+	PlannerInfo *root = context->root;
+	StringInfo	buf = context->buf;
+	int			nestlevel;
+
+	/* Make sure any constants in the exprs are printed portably */
+	nestlevel = set_transmission_modes();
+
+	if (root->parse->limitCount)
+	{
+		appendStringInfoString(buf, " LIMIT ");
+		deparseExpr((Expr *) root->parse->limitCount, context);
+	}
+	if (root->parse->limitOffset)
+	{
+		appendStringInfoString(buf, " OFFSET ");
+		deparseExpr((Expr *) root->parse->limitOffset, context);
+	}
+
 	reset_transmission_modes(nestlevel);
 }
 

@@ -246,6 +246,24 @@
    </para>
 
    <para>
+    Some considerations apply for generated
+    columns.<indexterm><primary>generated column</primary><secondary>in
+    triggers</secondary></indexterm>  Stored generated columns are computed after
+    <literal>BEFORE</literal> triggers and before <literal>AFTER</literal>
+    triggers.  Therefore, the generated value can be inspected in
+    <literal>AFTER</literal> triggers.  In <literal>BEFORE</literal> triggers,
+    the <literal>OLD</literal> row contains the old generated value, as one
+    would expect, but the <literal>NEW</literal> row does not yet contain the
+    new generated value and should not be accessed.  In the C language
+    interface, the content of the column is undefined at this point; a
+    higher-level programming language should prevent access to a stored
+    generated column in the <literal>NEW</literal> row in a
+    <literal>BEFORE</literal> trigger.  Changes to the value of a generated
+    column in a <literal>BEFORE</literal> trigger are ignored and will be
+    overwritten.
+   </para>
+
+   <para>
     If more than one trigger is defined for the same event on the same
     relation, the triggers will be fired in alphabetical order by
     trigger name.  In the case of <literal>BEFORE</literal> and
@@ -495,8 +513,8 @@ typedef struct TriggerData
     HeapTuple        tg_trigtuple;
     HeapTuple        tg_newtuple;
     Trigger         *tg_trigger;
-    Buffer           tg_trigtuplebuf;
-    Buffer           tg_newtuplebuf;
+    TupleTableSlot  *tg_trigslot;
+    TupleTableSlot  *tg_newslot;
     Tuplestorestate *tg_oldtable;
     Tuplestorestate *tg_newtable;
 } TriggerData;
@@ -698,21 +716,21 @@ typedef struct Trigger
      </varlistentry>
 
      <varlistentry>
-      <term><structfield>tg_trigtuplebuf</structfield></term>
+      <term><structfield>tg_trigslot</structfield></term>
       <listitem>
        <para>
-        The buffer containing <structfield>tg_trigtuple</structfield>, or <symbol>InvalidBuffer</symbol> if there
-        is no such tuple or it is not stored in a disk buffer.
+        The slot containing <structfield>tg_trigtuple</structfield>,
+        or a <symbol>NULL</symbol> pointer if there is no such tuple.
        </para>
       </listitem>
      </varlistentry>
 
      <varlistentry>
-      <term><structfield>tg_newtuplebuf</structfield></term>
+      <term><structfield>tg_newslot</structfield></term>
       <listitem>
        <para>
-        The buffer containing <structfield>tg_newtuple</structfield>, or <symbol>InvalidBuffer</symbol> if there
-        is no such tuple or it is not stored in a disk buffer.
+        The slot containing <structfield>tg_newtuple</structfield>,
+        or a <symbol>NULL</symbol> pointer if there is no such tuple.
        </para>
       </listitem>
      </varlistentry>

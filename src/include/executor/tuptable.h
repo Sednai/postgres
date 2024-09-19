@@ -19,6 +19,9 @@
 #include "access/tupdesc.h"
 #include "access/htup_details.h"
 #include "storage/buf.h"
+#ifdef PGXC
+#include "lib/stringinfo.h"
+#endif
 
 /*----------
  * The executor stores tuples in a "tuple table" which is a List of
@@ -346,6 +349,8 @@ extern void slot_getmissingattrs(TupleTableSlot *slot, int startAttNum,
 								 int lastAttNum);
 extern void slot_getsomeattrs_int(TupleTableSlot *slot, int attnum);
 
+/* in access/common/heaptuple.c */
+extern void slot_deform_datarow(TupleTableSlot *slot);
 
 #ifndef FRONTEND
 
@@ -357,7 +362,19 @@ static inline void
 slot_getsomeattrs(TupleTableSlot *slot, int attnum)
 {
 	if (slot->tts_nvalid < attnum)
+#ifdef PGXC
+	{
+		/* Handle the DataRow tuple case */
+		if (slot->tts_dataRow)
+		{
+			slot_deform_datarow(slot);
+			return;
+		}
+#endif
 		slot_getsomeattrs_int(slot, attnum);
+#ifdef PGXC
+	}
+#endif
 }
 
 /*
@@ -384,6 +401,15 @@ slot_attisnull(TupleTableSlot *slot, int attnum)
 {
 	AssertArg(attnum > 0);
 
+#ifdef PGXC
+	/* If it is a data row tuple extract all and return requested */
+	if (slot->tts_dataRow)
+	{
+		slot_deform_datarow(slot);
+		return slot->tts_isnull[attnum - 1];
+	}
+#endif
+
 	if (attnum > slot->tts_nvalid)
 		slot_getsomeattrs(slot, attnum);
 
@@ -398,6 +424,16 @@ slot_getattr(TupleTableSlot *slot, int attnum,
 			 bool *isnull)
 {
 	AssertArg(attnum > 0);
+
+#ifdef PGXC
+	/* If it is a data row tuple extract all and return requested */
+	if (slot->tts_dataRow)
+	{
+		slot_deform_datarow(slot);
+		*isnull = slot->tts_isnull[attnum - 1];
+		return slot->tts_values[attnum - 1];
+	}
+#endif
 
 	if (attnum > slot->tts_nvalid)
 		slot_getsomeattrs(slot, attnum);
@@ -469,6 +505,14 @@ static inline void
 ExecMaterializeSlot(TupleTableSlot *slot)
 {
 	slot->tts_ops->materialize(slot);
+
+#ifdef PGXC
+	if (!slot->tts_shouldFreeRow)
+	{
+		slot->tts_dataRow = NULL;
+		slot->tts_dataLen = -1;
+	}
+#endif
 }
 
 /*
@@ -488,6 +532,14 @@ ExecCopySlotHeapTuple(TupleTableSlot *slot)
 static inline MinimalTuple
 ExecCopySlotMinimalTuple(TupleTableSlot *slot)
 {
+#ifdef PGXC
+	/*
+	 * Ensure values are extracted from data row to the Datum array
+	 */
+	if (slot->tts_dataRow)
+		slot_getallattrs(slot);
+#endif
+
 	return slot->tts_ops->copy_minimal_tuple(slot);
 }
 

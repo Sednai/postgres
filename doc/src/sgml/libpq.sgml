@@ -798,7 +798,7 @@ PGPing PQping(const char *conninfo);
     connection parameters.  There are two accepted formats for these strings:
     plain keyword/value strings
     and URIs.  URIs generally follow
-    <ulink url="https://tools.ietf.org/html/rfc3986">RFC
+    <ulink url="https://datatracker.ietf.org/doc/html/rfc3986">RFC
     3986</ulink>, except that multi-host connection strings are allowed
     as further described below.
    </para>
@@ -1262,6 +1262,20 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
       </listitem>
      </varlistentry>
 
+     <varlistentry id="libpq-tcp-user-timeout" xreflabel="tcp_user_timeout">
+      <term><literal>tcp_user_timeout</literal></term>
+      <listitem>
+       <para>
+        Controls the number of milliseconds that transmitted data may
+        remain unacknowledged before a connection is forcibly closed.
+        A value of zero uses the system default. This parameter is
+        ignored for connections made via a Unix-domain socket.
+        It is only supported on systems where <symbol>TCP_USER_TIMEOUT</symbol>
+        is available; on other systems, it has no effect.
+       </para>
+      </listitem>
+     </varlistentry>
+
      <varlistentry id="libpq-connect-tty" xreflabel="tty">
       <term><literal>tty</literal></term>
       <listitem>
@@ -1326,6 +1340,63 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
        In physical or logical replication mode, only the simple query protocol
        can be used.
       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry id="libpq-connect-gssencmode" xreflabel="gssencmode">
+      <term><literal>gssencmode</literal></term>
+      <listitem>
+       <para>
+        This option determines whether or with what priority a secure
+        <acronym>GSS</acronym> TCP/IP connection will be negotiated with the
+        server. There are three modes:
+
+        <variablelist>
+         <varlistentry>
+          <term><literal>disable</literal></term>
+          <listitem>
+           <para>
+            only try a non-<acronym>GSSAPI</acronym>-encrypted connection
+           </para>
+          </listitem>
+         </varlistentry>
+
+         <varlistentry>
+          <term><literal>prefer</literal> (default)</term>
+          <listitem>
+           <para>
+            if there are <acronym>GSSAPI</acronym> credentials present (i.e.,
+            in a credentials cache), first try
+            a <acronym>GSSAPI</acronym>-encrypted connection; if that fails or
+            there are no credentials, try a
+            non-<acronym>GSSAPI</acronym>-encrypted connection.  This is the
+            default when <productname>PostgreSQL</productname> has been
+            compiled with <acronym>GSSAPI</acronym> support.
+           </para>
+          </listitem>
+         </varlistentry>
+
+         <varlistentry>
+          <term><literal>require</literal></term>
+          <listitem>
+           <para>
+            only try a <acronym>GSSAPI</acronym>-encrypted connection
+           </para>
+          </listitem>
+         </varlistentry>
+        </variablelist>
+       </para>
+
+       <para>
+        <literal>gssencmode</literal> is ignored for Unix domain socket
+        communication.  If <productname>PostgreSQL</productname> is compiled
+        without GSSAPI support, using the <literal>require</literal> option
+        will cause an error, while <literal>prefer</literal> will be accepted
+        but <application>libpq</application> will not actually attempt
+        a <acronym>GSSAPI</acronym>-encrypted
+        connection.<indexterm><primary>GSSAPI</primary><secondary sortas="libpq">with
+        libpq</secondary></indexterm>
+       </para>
       </listitem>
      </varlistentry>
 
@@ -1417,6 +1488,16 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         an <acronym>SSL</acronym>
         connection.<indexterm><primary>SSL</primary><secondary
         sortas="libpq">with libpq</secondary></indexterm>
+       </para>
+
+       <para>
+        Note that if <acronym>GSSAPI</acronym> encryption is possible,
+        that will be used in preference to <acronym>SSL</acronym>
+        encryption, regardless of the value of <literal>sslmode</literal>.
+        To force use of <acronym>SSL</acronym> encryption in an
+        environment that has working <acronym>GSSAPI</acronym>
+        infrastructure (such as a Kerberos server), also
+        set <literal>gssencmode</literal> to <literal>disable</literal>.
        </para>
       </listitem>
      </varlistentry>
@@ -1559,6 +1640,15 @@ postgresql://%2Fvar%2Flib%2Fpostgresql/dbname
         This must match the service name specified in the server
         configuration for Kerberos authentication to succeed. (See also
         <xref linkend="gssapi-auth"/>.)
+        The default value is normally <literal>postgres</literal>,
+        but that can be changed when
+        building <productname>PostgreSQL</productname> via
+        the <option>--with-krb-srvnam</option> option
+        of <application>configure</application>.
+        In most environments, this parameter never needs to be changed.
+        Some Kerberos implementations might require a different service name,
+        such as Microsoft Active Directory which requires the service name
+        to be in upper case (<literal>POSTGRES</literal>).
        </para>
       </listitem>
      </varlistentry>
@@ -1746,6 +1836,36 @@ char *PQhost(const PGconn *conn);
        not possible to rely on the result of <function>PQhost</function> until
        the connection is established.  The status of the connection can be
        checked using the function <function>PQstatus</function>.
+      </para>
+     </listitem>
+    </varlistentry>
+
+
+    <varlistentry id="libpq-pqhostaddr">
+     <term>
+      <function>PQhostaddr</function>
+      <indexterm>
+       <primary>PQhostaddr</primary>
+      </indexterm>
+     </term>
+
+     <listitem>
+      <para>
+       Returns the server IP address of the active connection.
+       This can be the address that a host name resolved to,
+       or an IP address provided through the <literal>hostaddr</literal>
+       parameter.
+<synopsis>
+char *PQhostaddr(const PGconn *conn);
+</synopsis>
+      </para>
+
+      <para>
+       <function>PQhostaddr</function> returns <symbol>NULL</symbol> if the
+       <parameter>conn</parameter> argument is <symbol>NULL</symbol>.
+       Otherwise, if there is an error producing the host information
+       (perhaps if the connection has not been fully established or
+       there was an error), it returns an empty string.
       </para>
      </listitem>
     </varlistentry>
@@ -4821,11 +4941,12 @@ int PQsetnonblocking(PGconn *conn, int arg);
       </para>
 
       <para>
-       In the nonblocking state, calls to
+       In the nonblocking state, successful calls to
        <function>PQsendQuery</function>, <function>PQputline</function>,
        <function>PQputnbytes</function>, <function>PQputCopyData</function>,
-       and <function>PQendcopy</function> will not block but instead return
-       an error if they need to be called again.
+       and <function>PQendcopy</function> will not block;  their changes
+       are stored in the local output buffer until they are flushed.
+       Unsuccessful calls will return an error and must be retried.
       </para>
 
       <para>
@@ -4900,7 +5021,7 @@ int PQflush(PGconn *conn);
  </sect1>
 
  <sect1 id="libpq-single-row-mode">
-  <title>Retrieving Query Results Row-By-Row</title>
+  <title>Retrieving Query Results Row-by-Row</title>
 
   <indexterm zone="libpq-single-row-mode">
    <primary>libpq</primary>
@@ -5960,21 +6081,30 @@ typedef enum
 {
     PQERRORS_TERSE,
     PQERRORS_DEFAULT,
-    PQERRORS_VERBOSE
+    PQERRORS_VERBOSE,
+    PQERRORS_SQLSTATE
 } PGVerbosity;
 
 PGVerbosity PQsetErrorVerbosity(PGconn *conn, PGVerbosity verbosity);
 </synopsis>
 
-      <function>PQsetErrorVerbosity</function> sets the verbosity mode, returning
-      the connection's previous setting.  In <firstterm>TERSE</firstterm> mode,
-      returned messages include severity, primary text, and position only;
-      this will normally fit on a single line.  The default mode produces
-      messages that include the above plus any detail, hint, or context
-      fields (these might span multiple lines).  The <firstterm>VERBOSE</firstterm>
-      mode includes all available fields.  Changing the verbosity does not
-      affect the messages available from already-existing
-      <structname>PGresult</structname> objects, only subsequently-created ones.
+      <function>PQsetErrorVerbosity</function> sets the verbosity mode,
+      returning the connection's previous setting.
+      In <firstterm>TERSE</firstterm> mode, returned messages include
+      severity, primary text, and position only; this will normally fit on a
+      single line.  The <firstterm>DEFAULT</firstterm> mode produces messages
+      that include the above plus any detail, hint, or context fields (these
+      might span multiple lines).  The <firstterm>VERBOSE</firstterm> mode
+      includes all available fields.  The <firstterm>SQLSTATE</firstterm>
+      mode includes only the error severity and the <symbol>SQLSTATE</symbol>
+      error code, if one is available (if not, the output is like
+      <firstterm>TERSE</firstterm> mode).
+     </para>
+
+     <para>
+      Changing the verbosity setting does not affect the messages available
+      from already-existing <structname>PGresult</structname> objects, only
+      subsequently-created ones.
       (But see <function>PQresultVerboseErrorMessage</function> if you
       want to print a previous error with a different verbosity.)
      </para>
@@ -6007,13 +6137,19 @@ PGContextVisibility PQsetErrorContextVisibility(PGconn *conn, PGContextVisibilit
 
       <function>PQsetErrorContextVisibility</function> sets the context display mode,
       returning the connection's previous setting.  This mode controls
-      whether the <literal>CONTEXT</literal> field is included in messages
-      (unless the verbosity setting is <firstterm>TERSE</firstterm>, in which
-      case <literal>CONTEXT</literal> is never shown).  The <firstterm>NEVER</firstterm> mode
+      whether the <literal>CONTEXT</literal> field is included in messages.
+      The <firstterm>NEVER</firstterm> mode
       never includes <literal>CONTEXT</literal>, while <firstterm>ALWAYS</firstterm> always
       includes it if available.  In <firstterm>ERRORS</firstterm> mode (the
-      default), <literal>CONTEXT</literal> fields are included only for error
-      messages, not for notices and warnings.  Changing this mode does not
+      default), <literal>CONTEXT</literal> fields are included only in error
+      messages, not in notices and warnings.
+      (However, if the verbosity setting is <firstterm>TERSE</firstterm>
+      or <firstterm>SQLSTATE</firstterm>, <literal>CONTEXT</literal> fields
+      are omitted regardless of the context display mode.)
+     </para>
+
+     <para>
+      Changing this mode does not
       affect the messages available from
       already-existing <structname>PGresult</structname> objects, only
       subsequently-created ones.
@@ -6416,6 +6552,32 @@ void *PQresultAlloc(PGresult *res, size_t nBytes);
       the return value is <symbol>NULL</symbol>.  The result is
       guaranteed to be adequately aligned for any type of data,
       just as for <function>malloc</function>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry id="libpq-pqresultmemorysize">
+    <term>
+     <function>PQresultMemorySize</function>
+     <indexterm>
+      <primary>PQresultMemorySize</primary>
+     </indexterm>
+    </term>
+
+    <listitem>
+     <para>
+      Retrieves the number of bytes allocated for
+      a <structname>PGresult</structname> object.
+<synopsis>
+size_t PQresultMemorySize(const PGresult *res);
+</synopsis>
+     </para>
+
+     <para>
+      This value is the sum of all <function>malloc</function> requests
+      associated with the <structname>PGresult</structname> object, that is,
+      all the space that will be freed by <function>PQclear</function>.
+      This information can be useful for managing memory consumption.
      </para>
     </listitem>
    </varlistentry>
@@ -6993,6 +7155,14 @@ void *PQinstanceData(const PGconn *conn, PGEventProc proc);
 int PQresultSetInstanceData(PGresult *res, PGEventProc proc, void *data);
 </synopsis>
       </para>
+
+      <para>
+       Beware that any storage represented by <parameter>data</parameter>
+       will not be accounted for by <function>PQresultMemorySize</function>,
+       unless it is allocated using <function>PQresultAlloc</function>.
+       (Doing so is recommendable because it eliminates the need to free
+       such storage explicitly when the result is destroyed.)
+      </para>
      </listitem>
     </varlistentry>
 
@@ -7391,6 +7561,16 @@ myEventProc(PGEventId evtId, void *evtInfo, void *passThrough)
       </indexterm>
       <envar>PGREQUIREPEER</envar> behaves the same as the <xref
       linkend="libpq-connect-requirepeer"/> connection parameter.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      <indexterm>
+       <primary><envar>PGGSSENCMODE</envar></primary>
+      </indexterm>
+      <envar>PGGSSENCMODE</envar> behaves the same as the <xref
+      linkend="libpq-connect-gssencmode"/> connection parameter.
      </para>
     </listitem>
 
@@ -7952,7 +8132,7 @@ ldap://ldap.acme.com/cn=dbserver,cn=hosts?pgconnectinfo?base?(objectclass=*)
   </para>
 
   <para>
-   For a connection to be known secure, SSL usage must be configured
+   For a connection to be known SSL-secured, SSL usage must be configured
    on <emphasis>both the client and the server</emphasis> before the connection
    is made. If it is only configured on the server, the client may end up
    sending sensitive information (e.g., passwords) before

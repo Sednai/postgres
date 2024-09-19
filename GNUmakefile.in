@@ -92,7 +92,6 @@ GNUmakefile: GNUmakefile.in $(top_builddir)/config.status
 
 distdir	= postgresql-$(VERSION)
 dummy	= =install=
-garbage = =*  "#"*  ."#"*  *~*  *.orig  *.rej  core  postgresql-*
 
 dist: $(distdir).tar.gz $(distdir).tar.bz2
 	rm -rf $(distdir)
@@ -140,5 +139,8 @@ distcheck: dist
 # is sufficiently similar to the original one.
 	rm -rf $(distdir) $(dummy)
 	@echo "Distribution integrity checks out."
+
+cpluspluscheck: submake-generated-headers
+	$(top_srcdir)/src/tools/pginclude/cpluspluscheck $(top_srcdir) $(abs_top_builddir)
 
 .PHONY: dist distdir distcheck docs install-docs world check-world install-world installcheck-world

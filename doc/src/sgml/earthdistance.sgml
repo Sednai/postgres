@@ -45,7 +45,7 @@
  </caution>
 
  <sect2>
-  <title>Cube-based Earth Distances</title>
+  <title>Cube-Based Earth Distances</title>
 
   <para>
    Data is stored in cubes that are points (both corners are the same) using 3
@@ -81,7 +81,7 @@
   </para>
 
   <table id="earthdistance-cube-functions">
-   <title>Cube-based Earthdistance Functions</title>
+   <title>Cube-Based Earthdistance Functions</title>
    <tgroup cols="3">
     <thead>
      <row>
@@ -158,7 +158,7 @@
  </sect2>
 
  <sect2>
-  <title>Point-based Earth Distances</title>
+  <title>Point-Based Earth Distances</title>
 
   <para>
    The second part of the module relies on representing Earth locations as
@@ -175,7 +175,7 @@
   </para>
 
   <table id="earthdistance-point-operators">
-   <title>Point-based Earthdistance Operators</title>
+   <title>Point-Based Earthdistance Operators</title>
    <tgroup cols="3">
     <thead>
      <row>

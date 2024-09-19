@@ -465,7 +465,7 @@ gtmpqParseSuccess(GTM_Conn *conn, GTM_Result *result)
 			/* Fall through */
 		case SNAPSHOT_GET_RESULT:
 			if (gtmpqGetnchar((char *)&result->gr_resdata.grd_txn_snap_multi.gxid,
-						   sizeof (GlobalTransactionId), conn))
+						   sizeof (FullTransactionId), conn))
 			{
 				result->gr_status = GTM_RESULT_ERROR;
 				break;

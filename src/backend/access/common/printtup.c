@@ -339,7 +339,7 @@ SendRowDescriptionCols_2(StringInfo buf, TupleDesc typeinfo, List *targetlist, i
 		{
 			char	   *typename;
 			typename = get_typename(atttypid);
-			pq_sendstring(&buf, typename);
+			pq_sendstring(buf, typename);
 		}
 #endif
 		/* column ID only info appears in protocol 3.0 and up */

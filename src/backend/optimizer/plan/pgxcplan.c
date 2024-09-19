@@ -884,17 +884,9 @@ pgxc_add_returning_list(RemoteQuery *rq, List *ret_list, int rel_index)
 	rq->base_tlist = list_copy(shipableReturningList);
 }
 
-Plan *
-pgxc_make_modifytable(PlannerInfo *root, Plan *topplan)
+ModifyTable *
+pgxc_make_modifytable(PlannerInfo *root, ModifyTable *mt)
 {
-
-	ModifyTable *mt = (ModifyTable *)topplan;
-
-	/* We expect to work only on ModifyTable node */
-	if (!IsA(topplan, ModifyTable)) {
-		elog(WARNING, "Unexpected node type: %d", topplan->type);
-		return topplan;
-	}
 	/*
 	 * PGXC should apply INSERT/UPDATE/DELETE to a Datanode. We are overriding
 	 * normal Postgres behavior by modifying final plan or by adding a node on

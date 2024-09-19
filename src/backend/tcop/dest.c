@@ -116,7 +116,7 @@ CreateDestReceiver(CommandDest dest)
 	 * It's ok to cast the constness away as any modification of the none
 	 * receiver would be a bug (which gets easier to catch this way).
 	 */
-
+	
 	switch (dest)
 	{
 		case DestRemote:

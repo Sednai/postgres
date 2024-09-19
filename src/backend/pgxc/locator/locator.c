@@ -51,6 +51,7 @@
 #include "access/table.h"
 #include "access/relation.h"
 #include "nodes/makefuncs.h"
+#include "optimizer/optimizer.h"
 
 static Expr *pgxc_find_distcol_expr(Index varno, AttrNumber attrNum,
 												Node *quals);

@@ -33,6 +33,7 @@
   is no need to add index terms pointing from the new to old names.
  -->
 
+ &obsolete-recovery-config;
  &obsolete-pgxlogdump;
  &obsolete-pgresetxlog;
  &obsolete-pgreceivexlog;

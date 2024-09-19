@@ -46,7 +46,8 @@ CREATE FOREIGN TABLE [ IF NOT EXISTS ] <replaceable class="parameter">table_name
 { NOT NULL |
   NULL |
   CHECK ( <replaceable class="parameter">expression</replaceable> ) [ NO INHERIT ] |
-  DEFAULT <replaceable>default_expr</replaceable> }
+  DEFAULT <replaceable>default_expr</replaceable> |
+  GENERATED ALWAYS AS ( <replaceable>generation_expr</replaceable> ) STORED }
 
 <phrase>and <replaceable class="parameter">table_constraint</replaceable> is:</phrase>
 
@@ -55,9 +56,9 @@ CHECK ( <replaceable class="parameter">expression</replaceable> ) [ NO INHERIT ]
 
 <phrase>and <replaceable class="parameter">partition_bound_spec</replaceable> is:</phrase>
 
-IN ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | NULL } [, ...] ) |
-FROM ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | MINVALUE | MAXVALUE } [, ...] )
-  TO ( { <replaceable class="parameter">numeric_literal</replaceable> | <replaceable class="parameter">string_literal</replaceable> | TRUE | FALSE | MINVALUE | MAXVALUE } [, ...] ) |
+IN ( <replaceable class="parameter">partition_bound_expr</replaceable> [, ...] ) |
+FROM ( { <replaceable class="parameter">partition_bound_expr</replaceable> | MINVALUE | MAXVALUE } [, ...] )
+  TO ( { <replaceable class="parameter">partition_bound_expr</replaceable> | MINVALUE | MAXVALUE } [, ...] ) |
 WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REMAINDER <replaceable class="parameter">numeric_literal</replaceable> )
 </synopsis>
  </refsynopsisdiv>
@@ -274,6 +275,30 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
    </varlistentry>
 
    <varlistentry>
+    <term><literal>GENERATED ALWAYS AS ( <replaceable>generation_expr</replaceable> ) STORED</literal><indexterm><primary>generated column</primary></indexterm></term>
+    <listitem>
+     <para>
+      This clause creates the column as a <firstterm>generated
+      column</firstterm>.  The column cannot be written to, and when read the
+      result of the specified expression will be returned.
+     </para>
+
+     <para>
+      The keyword <literal>STORED</literal> is required to signify that the
+      column will be computed on write.  (The computed value will be presented
+      to the foreign-data wrapper for storage and must be returned on
+      reading.)
+     </para>
+
+     <para>
+      The generation expression can refer to other columns in the table, but
+      not other generated columns.  Any functions and operators used must be
+      immutable.  References to other tables are not allowed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><replaceable class="parameter">server_name</replaceable></term>
     <listitem>
      <para>
@@ -356,6 +381,16 @@ WITH ( MODULUS <replaceable class="parameter">numeric_literal</replaceable>, REM
     An <command>UPDATE</command> that would require doing that will fail
     due to the partitioning constraint, assuming that that is properly
     enforced by the remote server.
+   </para>
+
+   <para>
+    Similar considerations apply to generated columns.  Stored generated
+    columns are computed on insert or update on the local
+    <productname>PostgreSQL</productname> server and handed to the
+    foreign-data wrapper for writing out to the foreign data store, but it is
+    not enforced that a query of the foreign table returns values for stored
+    generated columns that are consistent with the generation expression.
+    Again, this might result in incorrect query results.
    </para>
  </refsect1>
 

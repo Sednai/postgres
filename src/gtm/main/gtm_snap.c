@@ -348,7 +348,7 @@ ProcessGetSnapshotCommand(Port *myport, StringInfo message, bool get_gxid)
 		proxyhdr.ph_conid = myport->conn_id;
 		pq_sendbytes(&buf, (char *)&proxyhdr, sizeof (GTM_ProxyMsgHeader));
 	}
-	pq_sendbytes(&buf, (char *)&gxid, sizeof (GlobalTransactionId));
+	pq_sendbytes(&buf, (char *)&gxid, sizeof (FullTransactionId));
 	pq_sendbytes(&buf, (char *)&txn_count, sizeof(txn_count));
 	pq_sendbytes(&buf, (char *)&status, sizeof(int) * txn_count);
 	pq_sendbytes(&buf, (char *)&snapshot->sn_xmin, sizeof (GlobalTransactionId));

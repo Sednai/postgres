@@ -4872,6 +4872,7 @@ PostgresMain(int argc, char *argv[],
 					TransactionId xid = (TransactionId) pq_getmsgint(&input_message, 4);
 					SetNextFullTransactionId(FullTransactionIdFromEpochAndXid(epoch,xid));
 					pq_getmsgend(&input_message);
+					elog(DEBUG1, "Received gixd %lu", FullTransactionIdFromEpochAndXid(epoch,xid).value);
 				}
 				break;
 
@@ -4901,6 +4902,8 @@ PostgresMain(int argc, char *argv[],
 				/* Latest Snashot data for update visibility */
 				setSyncGXID();
 				setLatestGTMSnapshot(xmin, xmax, xcnt, (GlobalTransactionId *) xip);
+				elog(DEBUG1, "Received global snapshot");
+			
 				break;
 
 			case 't':			/* timestamp */

@@ -28,10 +28,11 @@
 #include "postgres.h"
 
 #include "access/gin_private.h"
-#include "access/heapam.h"
 #include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
+#include "access/relation.h"
+#include "access/table.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "funcapi.h"
@@ -614,10 +615,9 @@ pgstathashindex(PG_FUNCTION_ARGS)
 	float8		free_percent;
 	uint64		total_space;
 
-	rel = index_open(relid, AccessShareLock);
+	rel = relation_open(relid, AccessShareLock);
 
-	/* index_open() checks that it's an index */
-	if (!IS_HASH(rel))
+	if (!IS_INDEX(rel) || !IS_HASH(rel))
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 				 errmsg("relation \"%s\" is not a hash index",

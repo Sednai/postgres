@@ -30,6 +30,7 @@
 #include "pageinspect.h"
 
 #include "access/nbtree.h"
+#include "access/relation.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
 #include "funcapi.h"
@@ -432,7 +433,7 @@ bt_page_items_bytea(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use pageinspect functions"))));
+				 (errmsg("must be superuser to use raw page functions"))));
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -578,7 +579,7 @@ bt_metap(PG_FUNCTION_ARGS)
 	 * Get values of extended metadata if available, use default values
 	 * otherwise.
 	 */
-	if (metad->btm_version == BTREE_VERSION)
+	if (metad->btm_version >= BTREE_NOVAC_VERSION)
 	{
 		/*
 		 * kludge: btm_oldest_btpo_xact is declared as int4, which is wrong.

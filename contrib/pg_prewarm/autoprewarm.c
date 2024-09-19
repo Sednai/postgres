@@ -16,7 +16,7 @@
  *		relevant database in turn.  The former keeps running after the
  *		initial prewarm is complete to update the dump file periodically.
  *
- *	Copyright (c) 2016-2018, PostgreSQL Global Development Group
+ *	Copyright (c) 2016-2019, PostgreSQL Global Development Group
  *
  *	IDENTIFICATION
  *		contrib/pg_prewarm/autoprewarm.c
@@ -28,7 +28,7 @@
 
 #include <unistd.h>
 
-#include "access/heapam.h"
+#include "access/relation.h"
 #include "access/xact.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
@@ -213,8 +213,6 @@ autoprewarm_main(Datum main_arg)
 	/* Periodically dump buffers until terminated. */
 	while (!got_sigterm)
 	{
-		int			rc;
-
 		/* In case of a SIGHUP, just reload the configuration. */
 		if (got_sighup)
 		{
@@ -225,10 +223,10 @@ autoprewarm_main(Datum main_arg)
 		if (autoprewarm_interval <= 0)
 		{
 			/* We're only dumping at shutdown, so just wait forever. */
-			rc = WaitLatch(&MyProc->procLatch,
-						   WL_LATCH_SET | WL_POSTMASTER_DEATH,
-						   -1L,
-						   PG_WAIT_EXTENSION);
+			(void) WaitLatch(&MyProc->procLatch,
+							 WL_LATCH_SET | WL_EXIT_ON_PM_DEATH,
+							 -1L,
+							 PG_WAIT_EXTENSION);
 		}
 		else
 		{
@@ -252,16 +250,14 @@ autoprewarm_main(Datum main_arg)
 			}
 
 			/* Sleep until the next dump time. */
-			rc = WaitLatch(&MyProc->procLatch,
-						   WL_LATCH_SET | WL_TIMEOUT | WL_POSTMASTER_DEATH,
-						   delay_in_ms,
-						   PG_WAIT_EXTENSION);
+			(void) WaitLatch(&MyProc->procLatch,
+							 WL_LATCH_SET | WL_TIMEOUT | WL_EXIT_ON_PM_DEATH,
+							 delay_in_ms,
+							 PG_WAIT_EXTENSION);
 		}
 
-		/* Reset the latch, bail out if postmaster died, otherwise loop. */
+		/* Reset the latch, loop. */
 		ResetLatch(&MyProc->procLatch);
-		if (rc & WL_POSTMASTER_DEATH)
-			proc_exit(1);
 	}
 
 	/*
@@ -365,7 +361,7 @@ apw_load_buffers(void)
 		Oid			current_db = blkinfo[j].database;
 
 		/*
-		 * Advance the prewarm_stop_idx to the first BlockRecordInfo that does
+		 * Advance the prewarm_stop_idx to the first BlockInfoRecord that does
 		 * not belong to this database.
 		 */
 		j++;
@@ -374,7 +370,7 @@ apw_load_buffers(void)
 			if (current_db != blkinfo[j].database)
 			{
 				/*
-				 * Combine BlockRecordInfos for global objects with those of
+				 * Combine BlockInfoRecords for global objects with those of
 				 * the database.
 				 */
 				if (current_db != InvalidOid)
@@ -387,7 +383,7 @@ apw_load_buffers(void)
 
 		/*
 		 * If we reach this point with current_db == InvalidOid, then only
-		 * BlockRecordInfos belonging to global objects exist.  We can't
+		 * BlockInfoRecords belonging to global objects exist.  We can't
 		 * prewarm without a database connection, so just bail out.
 		 */
 		if (current_db == InvalidOid)
@@ -652,7 +648,7 @@ apw_dump_now(bool is_bgworker, bool dump_unlogged)
 		errno = save_errno;
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not write to file \"%s\" : %m",
+				 errmsg("could not write to file \"%s\": %m",
 						transient_dump_file_path)));
 	}
 
@@ -675,7 +671,7 @@ apw_dump_now(bool is_bgworker, bool dump_unlogged)
 			errno = save_errno;
 			ereport(ERROR,
 					(errcode_for_file_access(),
-					 errmsg("could not write to file \"%s\" : %m",
+					 errmsg("could not write to file \"%s\": %m",
 							transient_dump_file_path)));
 		}
 	}
@@ -695,7 +691,7 @@ apw_dump_now(bool is_bgworker, bool dump_unlogged)
 		errno = save_errno;
 		ereport(ERROR,
 				(errcode_for_file_access(),
-				 errmsg("could not close file \"%s\" : %m",
+				 errmsg("could not close file \"%s\": %m",
 						transient_dump_file_path)));
 	}
 

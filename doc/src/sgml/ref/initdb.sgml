@@ -216,9 +216,10 @@ PostgreSQL documentation
        <para>
         Use checksums on data pages to help detect corruption by the
         I/O system that would otherwise be silent. Enabling checksums
-        may incur a noticeable performance penalty. This option can only
-        be set during initialization, and cannot be changed later. If
-        set, checksums are calculated for all objects, in all databases.
+        may incur a noticeable performance penalty. If set, checksums
+        are calculated for all objects, in all databases. All checksum
+        failures will be reported in the
+        <xref linkend="pg-stat-database-view"/> view.
        </para>
       </listitem>
      </varlistentry>
@@ -462,6 +463,17 @@ PostgreSQL documentation
    </varlistentry>
 
    <varlistentry>
+    <term><envar>PG_COLOR</envar></term>
+    <listitem>
+     <para>
+      Specifies whether to use color in diagnostic messages. Possible values
+      are <literal>always</literal>, <literal>auto</literal> and
+      <literal>never</literal>.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
     <term><envar>TZ</envar></term>
 
     <listitem>
@@ -473,12 +485,6 @@ PostgreSQL documentation
     </listitem>
    </varlistentry>
   </variablelist>
-
-  <para>
-   This utility, like most other <productname>PostgreSQL</productname> utilities,
-   also uses the environment variables supported by <application>libpq</application>
-   (see <xref linkend="libpq-envars"/>).
-  </para>
 
  </refsect1>
 

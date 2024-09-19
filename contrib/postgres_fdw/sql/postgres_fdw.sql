@@ -142,14 +142,6 @@ CREATE FOREIGN TABLE ft6 (
 	c3 text
 ) SERVER loopback2 OPTIONS (schema_name 'S 1', table_name 'T 4');
 
--- A table with oids. CREATE FOREIGN TABLE doesn't support the
--- WITH OIDS option, but ALTER does.
-CREATE FOREIGN TABLE ft_pg_type (
-	typname name,
-	typlen smallint
-) SERVER loopback OPTIONS (schema_name 'pg_catalog', table_name 'pg_type');
-ALTER TABLE ft_pg_type SET WITH OIDS;
-
 -- ===================================================================
 -- tests for validator
 -- ===================================================================
@@ -172,6 +164,7 @@ ALTER SERVER testserver1 OPTIONS (
 	keepalives 'value',
 	keepalives_idle 'value',
 	keepalives_interval 'value',
+	tcp_user_timeout 'value',
 	-- requiressl 'value',
 	sslcompression 'value',
 	sslmode 'value',
@@ -292,6 +285,25 @@ SELECT t1."C 1", t2.c1, t3.c1 FROM "S 1"."T 1" t1 full join ft1 t2 full join ft2
 RESET enable_hashjoin;
 RESET enable_nestloop;
 
+-- Test executing assertion in estimate_path_cost_size() that makes sure that
+-- retrieved_rows for foreign rel re-used to cost pre-sorted foreign paths is
+-- a sensible value even when the rel has tuples=0
+CREATE TABLE loct_empty (c1 int NOT NULL, c2 text);
+CREATE FOREIGN TABLE ft_empty (c1 int NOT NULL, c2 text)
+  SERVER loopback OPTIONS (table_name 'loct_empty');
+INSERT INTO loct_empty
+  SELECT id, 'AAA' || to_char(id, 'FM000') FROM generate_series(1, 100) id;
+DELETE FROM loct_empty;
+ANALYZE ft_empty;
+EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft_empty ORDER BY c1;
+
+-- test restriction on non-system foreign tables.
+SET restrict_nonsystem_relation_kind TO 'foreign-table';
+SELECT * from ft1 where c1 < 1; -- ERROR
+INSERT INTO ft1 (c1) VALUES (1); -- ERROR
+DELETE FROM ft1 WHERE c1 = 1; -- ERROR
+RESET restrict_nonsystem_relation_kind;
+
 -- ===================================================================
 -- WHERE with remotely-executable conditions
 -- ===================================================================
@@ -304,7 +316,7 @@ EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c1 = -c1;          -- Op
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE 1 = c1!;           -- OpExpr(r)
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE (c1 IS NOT NULL) IS DISTINCT FROM (c1 IS NOT NULL); -- DistinctExpr
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c1 = ANY(ARRAY[c2, 1, c1 + 0]); -- ScalarArrayOpExpr
-EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c1 = (ARRAY[c1,c2,3])[1]; -- ArrayRef
+EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c1 = (ARRAY[c1,c2,3])[1]; -- SubscriptingRef
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c6 = E'foo''s\\bar';  -- check special chars
 EXPLAIN (VERBOSE, COSTS OFF) SELECT * FROM ft1 t1 WHERE c8 = 'foo';  -- can't be sent to remote
 -- parameterized remote path for foreign table
@@ -321,12 +333,6 @@ WHERE a.c2 = 6 AND b.c1 = a.c1 AND a.c8 = 'foo' AND b.c7 = upper(a.c7);
 -- bug before 9.3.5 due to sloppy handling of remote-estimate parameters
 SELECT * FROM ft1 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft2 WHERE c1 < 5));
 SELECT * FROM ft2 WHERE c1 = ANY (ARRAY(SELECT c1 FROM ft1 WHERE c1 < 5));
--- we should not push order by clause with volatile expressions or unsafe
--- collations
-EXPLAIN (VERBOSE, COSTS OFF)
-	SELECT * FROM ft2 ORDER BY ft2.c1, random();
-EXPLAIN (VERBOSE, COSTS OFF)
-	SELECT * FROM ft2 ORDER BY ft2.c1, ft2.c3 collate "C";
 
 -- user-defined operator/function
 CREATE FUNCTION postgres_fdw_abs(int) RETURNS int AS $$
@@ -357,6 +363,11 @@ EXPLAIN (VERBOSE, COSTS OFF)
   SELECT count(c3) FROM ft1 t1 WHERE t1.c1 === t1.c2;
 SELECT count(c3) FROM ft1 t1 WHERE t1.c1 === t1.c2;
 
+-- ORDER BY can be shipped, though
+EXPLAIN (VERBOSE, COSTS OFF)
+  SELECT * FROM ft1 t1 WHERE t1.c1 === t1.c2 order by t1.c2 limit 1;
+SELECT * FROM ft1 t1 WHERE t1.c1 === t1.c2 order by t1.c2 limit 1;
+
 -- but let's put them in an extension ...
 ALTER EXTENSION postgres_fdw ADD FUNCTION postgres_fdw_abs(int);
 ALTER EXTENSION postgres_fdw ADD OPERATOR === (int, int);
@@ -370,6 +381,11 @@ EXPLAIN (VERBOSE, COSTS OFF)
   SELECT count(c3) FROM ft1 t1 WHERE t1.c1 === t1.c2;
 SELECT count(c3) FROM ft1 t1 WHERE t1.c1 === t1.c2;
 
+-- and both ORDER BY and LIMIT can be shipped
+EXPLAIN (VERBOSE, COSTS OFF)
+  SELECT * FROM ft1 t1 WHERE t1.c1 === t1.c2 order by t1.c2 limit 1;
+SELECT * FROM ft1 t1 WHERE t1.c1 === t1.c2 order by t1.c2 limit 1;
+
 -- check schema-qualification of regconfig constant
 CREATE TEXT SEARCH CONFIGURATION public.custom_search
   (COPY = pg_catalog.english);
@@ -378,6 +394,32 @@ SELECT c1, to_tsvector('custom_search'::regconfig, c3) FROM ft1
 WHERE c1 = 642 AND length(to_tsvector('custom_search'::regconfig, c3)) > 0;
 SELECT c1, to_tsvector('custom_search'::regconfig, c3) FROM ft1
 WHERE c1 = 642 AND length(to_tsvector('custom_search'::regconfig, c3)) > 0;
+
+-- ===================================================================
+-- ORDER BY queries
+-- ===================================================================
+-- we should not push order by clause with volatile expressions or unsafe
+-- collations
+EXPLAIN (VERBOSE, COSTS OFF)
+	SELECT * FROM ft2 ORDER BY ft2.c1, random();
+EXPLAIN (VERBOSE, COSTS OFF)
+	SELECT * FROM ft2 ORDER BY ft2.c1, ft2.c3 collate "C";
+
+-- Ensure we don't push ORDER BY expressions which are Consts at the UNION
+-- child level to the foreign server.
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM (
+    SELECT 1 AS type,c1 FROM ft1
+    UNION ALL
+    SELECT 2 AS type,c1 FROM ft2
+) a ORDER BY type,c1;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT * FROM (
+    SELECT 1 AS type,c1 FROM ft1
+    UNION ALL
+    SELECT 2 AS type,c1 FROM ft2
+) a ORDER BY type;
 
 -- ===================================================================
 -- JOIN queries
@@ -510,8 +552,8 @@ SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t
 SELECT t1.c1, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t1.c1 OFFSET 100 LIMIT 10 FOR SHARE;
 -- join in CTE
 EXPLAIN (VERBOSE, COSTS OFF)
-WITH t (c1_1, c1_3, c2_1) AS (SELECT t1.c1, t1.c3, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1)) SELECT c1_1, c2_1 FROM t ORDER BY c1_3, c1_1 OFFSET 100 LIMIT 10;
-WITH t (c1_1, c1_3, c2_1) AS (SELECT t1.c1, t1.c3, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1)) SELECT c1_1, c2_1 FROM t ORDER BY c1_3, c1_1 OFFSET 100 LIMIT 10;
+WITH t (c1_1, c1_3, c2_1) AS MATERIALIZED (SELECT t1.c1, t1.c3, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1)) SELECT c1_1, c2_1 FROM t ORDER BY c1_3, c1_1 OFFSET 100 LIMIT 10;
+WITH t (c1_1, c1_3, c2_1) AS MATERIALIZED (SELECT t1.c1, t1.c3, t2.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1)) SELECT c1_1, c2_1 FROM t ORDER BY c1_3, c1_1 OFFSET 100 LIMIT 10;
 -- ctid with whole-row reference
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.ctid, t1, t2, t1.c1 FROM ft1 t1 JOIN ft2 t2 ON (t1.c1 = t2.c1) ORDER BY t1.c3, t1.c1 OFFSET 100 LIMIT 10;
@@ -523,7 +565,7 @@ SELECT t1.c1 FROM ft1 t1 WHERE EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2.c1)
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1 FROM ft1 t1 WHERE NOT EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2.c2) ORDER BY t1.c1 OFFSET 100 LIMIT 10;
 SELECT t1.c1 FROM ft1 t1 WHERE NOT EXISTS (SELECT 1 FROM ft2 t2 WHERE t1.c1 = t2.c2) ORDER BY t1.c1 OFFSET 100 LIMIT 10;
--- CROSS JOIN, not pushed down
+-- CROSS JOIN can be pushed down
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.c1, t2.c1 FROM ft1 t1 CROSS JOIN ft2 t2 ORDER BY t1.c1, t2.c1 OFFSET 100 LIMIT 10;
 SELECT t1.c1, t2.c1 FROM ft1 t1 CROSS JOIN ft2 t2 ORDER BY t1.c1, t2.c1 OFFSET 100 LIMIT 10;
@@ -579,22 +621,21 @@ SELECT ft5, ft5.c1, ft5.c2, ft5.c3, ft4.c1, ft4.c2 FROM ft5 left join ft4 on ft5
 
 -- multi-way join involving multiple merge joins
 -- (this case used to have EPQ-related planning problems)
+CREATE TABLE local_tbl (c1 int NOT NULL, c2 int NOT NULL, c3 text, CONSTRAINT local_tbl_pkey PRIMARY KEY (c1));
+INSERT INTO local_tbl SELECT id, id % 10, to_char(id, 'FM0000') FROM generate_series(1, 1000) id;
+ANALYZE local_tbl;
 SET enable_nestloop TO false;
 SET enable_hashjoin TO false;
 EXPLAIN (VERBOSE, COSTS OFF)
-SELECT * FROM ft1, ft2, ft4, ft5 WHERE ft1.c1 = ft2.c1 AND ft1.c2 = ft4.c1
-    AND ft1.c2 = ft5.c1 AND ft1.c1 < 100 AND ft2.c1 < 100 FOR UPDATE;
-SELECT * FROM ft1, ft2, ft4, ft5 WHERE ft1.c1 = ft2.c1 AND ft1.c2 = ft4.c1
-    AND ft1.c2 = ft5.c1 AND ft1.c1 < 100 AND ft2.c1 < 100 FOR UPDATE;
+SELECT * FROM ft1, ft2, ft4, ft5, local_tbl WHERE ft1.c1 = ft2.c1 AND ft1.c2 = ft4.c1
+    AND ft1.c2 = ft5.c1 AND ft1.c2 = local_tbl.c1 AND ft1.c1 < 100 AND ft2.c1 < 100 FOR UPDATE;
+SELECT * FROM ft1, ft2, ft4, ft5, local_tbl WHERE ft1.c1 = ft2.c1 AND ft1.c2 = ft4.c1
+    AND ft1.c2 = ft5.c1 AND ft1.c2 = local_tbl.c1 AND ft1.c1 < 100 AND ft2.c1 < 100 FOR UPDATE;
 RESET enable_nestloop;
 RESET enable_hashjoin;
 
 -- test that add_paths_with_pathkeys_for_rel() arranges for the epq_path to
 -- return columns needed by the parent ForeignScan node
-CREATE TABLE local_tbl (c1 int NOT NULL, c2 int NOT NULL, c3 text, CONSTRAINT local_tbl_pkey PRIMARY KEY (c1));
-INSERT INTO local_tbl SELECT id, id % 10, to_char(id, 'FM0000') FROM generate_series(1, 1000) id;
-ANALYZE local_tbl;
-
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT * FROM local_tbl LEFT JOIN (SELECT ft1.*, COALESCE(ft1.c3 || ft2.c3, 'foobar') FROM ft1 INNER JOIN ft2 ON (ft1.c1 = ft2.c1 AND ft1.c1 < 100)) ss ON (local_tbl.c1 = ss.c1) ORDER BY local_tbl.c1 FOR UPDATE OF local_tbl;
 
@@ -646,6 +687,10 @@ DROP ROLE regress_view_owner;
 explain (verbose, costs off)
 select count(c6), sum(c1), avg(c1), min(c2), max(c1), stddev(c2), sum(c1) * (random() <= 1)::int as sum2 from ft1 where c2 < 5 group by c2 order by 1, 2;
 select count(c6), sum(c1), avg(c1), min(c2), max(c1), stddev(c2), sum(c1) * (random() <= 1)::int as sum2 from ft1 where c2 < 5 group by c2 order by 1, 2;
+
+explain (verbose, costs off)
+select count(c6), sum(c1), avg(c1), min(c2), max(c1), stddev(c2), sum(c1) * (random() <= 1)::int as sum2 from ft1 where c2 < 5 group by c2 order by 1, 2 limit 1;
+select count(c6), sum(c1), avg(c1), min(c2), max(c1), stddev(c2), sum(c1) * (random() <= 1)::int as sum2 from ft1 where c2 < 5 group by c2 order by 1, 2 limit 1;
 
 -- Aggregate is not pushed down as aggregation contains random()
 explain (verbose, costs off)
@@ -858,6 +903,9 @@ select array_agg(c1 order by c1 using operator(public.<^)) from ft2 where c2 = 6
 -- This should not be pushed either.
 explain (verbose, costs off)
 select * from ft2 order by c1 using operator(public.<^);
+
+-- Update local stats on ft2
+ANALYZE ft2;
 
 -- Add into extension
 alter extension postgres_fdw add operator class my_op_class using btree;
@@ -1076,9 +1124,6 @@ SELECT * FROM ft1 t1 WHERE t1.ctid = '(0,2)';
 EXPLAIN (VERBOSE, COSTS OFF)
 SELECT ctid, * FROM ft1 t1 LIMIT 1;
 SELECT ctid, * FROM ft1 t1 LIMIT 1;
-EXPLAIN (VERBOSE, COSTS OFF)
-SELECT oid, * FROM ft_pg_type WHERE typname = 'int4';
-SELECT oid, * FROM ft_pg_type WHERE typname = 'int4';
 
 -- ===================================================================
 -- used in PL/pgSQL function
@@ -1359,26 +1404,73 @@ ALTER FOREIGN TABLE ft1 DROP CONSTRAINT ft1_c2negative;
 -- test WITH CHECK OPTION constraints
 -- ===================================================================
 
+CREATE FUNCTION row_before_insupd_trigfunc() RETURNS trigger AS $$BEGIN NEW.a := NEW.a + 10; RETURN NEW; END$$ LANGUAGE plpgsql;
+
 CREATE TABLE base_tbl (a int, b int);
 ALTER TABLE base_tbl SET (autovacuum_enabled = 'false');
+CREATE TRIGGER row_before_insupd_trigger BEFORE INSERT OR UPDATE ON base_tbl FOR EACH ROW EXECUTE PROCEDURE row_before_insupd_trigfunc();
 CREATE FOREIGN TABLE foreign_tbl (a int, b int)
-  SERVER loopback OPTIONS(table_name 'base_tbl');
+  SERVER loopback OPTIONS (table_name 'base_tbl');
 CREATE VIEW rw_view AS SELECT * FROM foreign_tbl
   WHERE a < b WITH CHECK OPTION;
 \d+ rw_view
 
-INSERT INTO rw_view VALUES (0, 10); -- ok
-INSERT INTO rw_view VALUES (10, 0); -- should fail
 EXPLAIN (VERBOSE, COSTS OFF)
-UPDATE rw_view SET b = 20 WHERE a = 0; -- not pushed down
-UPDATE rw_view SET b = 20 WHERE a = 0; -- ok
+INSERT INTO rw_view VALUES (0, 5);
+INSERT INTO rw_view VALUES (0, 5); -- should fail
 EXPLAIN (VERBOSE, COSTS OFF)
-UPDATE rw_view SET b = -20 WHERE a = 0; -- not pushed down
-UPDATE rw_view SET b = -20 WHERE a = 0; -- should fail
+INSERT INTO rw_view VALUES (0, 15);
+INSERT INTO rw_view VALUES (0, 15); -- ok
+SELECT * FROM foreign_tbl;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE rw_view SET b = b + 5;
+UPDATE rw_view SET b = b + 5; -- should fail
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE rw_view SET b = b + 15;
+UPDATE rw_view SET b = b + 15; -- ok
 SELECT * FROM foreign_tbl;
 
 DROP FOREIGN TABLE foreign_tbl CASCADE;
+DROP TRIGGER row_before_insupd_trigger ON base_tbl;
 DROP TABLE base_tbl;
+
+-- test WCO for partitions
+
+CREATE TABLE child_tbl (a int, b int);
+ALTER TABLE child_tbl SET (autovacuum_enabled = 'false');
+CREATE TRIGGER row_before_insupd_trigger BEFORE INSERT OR UPDATE ON child_tbl FOR EACH ROW EXECUTE PROCEDURE row_before_insupd_trigfunc();
+CREATE FOREIGN TABLE foreign_tbl (a int, b int)
+  SERVER loopback OPTIONS (table_name 'child_tbl');
+
+CREATE TABLE parent_tbl (a int, b int) PARTITION BY RANGE(a);
+ALTER TABLE parent_tbl ATTACH PARTITION foreign_tbl FOR VALUES FROM (0) TO (100);
+
+CREATE VIEW rw_view AS SELECT * FROM parent_tbl
+  WHERE a < b WITH CHECK OPTION;
+\d+ rw_view
+
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO rw_view VALUES (0, 5);
+INSERT INTO rw_view VALUES (0, 5); -- should fail
+EXPLAIN (VERBOSE, COSTS OFF)
+INSERT INTO rw_view VALUES (0, 15);
+INSERT INTO rw_view VALUES (0, 15); -- ok
+SELECT * FROM foreign_tbl;
+
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE rw_view SET b = b + 5;
+UPDATE rw_view SET b = b + 5; -- should fail
+EXPLAIN (VERBOSE, COSTS OFF)
+UPDATE rw_view SET b = b + 15;
+UPDATE rw_view SET b = b + 15; -- ok
+SELECT * FROM foreign_tbl;
+
+DROP FOREIGN TABLE foreign_tbl CASCADE;
+DROP TRIGGER row_before_insupd_trigger ON child_tbl;
+DROP TABLE parent_tbl CASCADE;
+
+DROP FUNCTION row_before_insupd_trigfunc;
 
 -- ===================================================================
 -- test serial columns (ie, sequence-based defaults)
@@ -1394,6 +1486,36 @@ insert into loc1(f2) values('bye');
 insert into rem1(f2) values('bye remote');
 select * from loc1;
 select * from rem1;
+
+-- ===================================================================
+-- test generated columns
+-- ===================================================================
+create table gloc1 (
+  a int,
+  b int generated always as (a * 2) stored);
+alter table gloc1 set (autovacuum_enabled = 'false');
+create foreign table grem1 (
+  a int,
+  b int generated always as (a * 2) stored)
+  server loopback options(table_name 'gloc1');
+explain (verbose, costs off)
+insert into grem1 (a) values (1), (2);
+insert into grem1 (a) values (1), (2);
+explain (verbose, costs off)
+update grem1 set a = 22 where a = 2;
+update grem1 set a = 22 where a = 2;
+select * from gloc1;
+select * from grem1;
+delete from grem1;
+
+-- test copy from
+copy grem1 from stdin;
+1
+2
+\.
+select * from gloc1;
+select * from grem1;
+delete from grem1;
 
 -- ===================================================================
 -- test local triggers
@@ -1474,6 +1596,23 @@ DROP TRIGGER trig_stmt_after ON rem1;
 
 DELETE from rem1;
 
+-- Test multiple AFTER ROW triggers on a foreign table
+CREATE TRIGGER trig_row_after1
+AFTER INSERT OR UPDATE OR DELETE ON rem1
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+
+CREATE TRIGGER trig_row_after2
+AFTER INSERT OR UPDATE OR DELETE ON rem1
+FOR EACH ROW EXECUTE PROCEDURE trigger_data(23,'skidoo');
+
+insert into rem1 values(1,'insert');
+update rem1 set f2  = 'update' where f1 = 1;
+update rem1 set f2 = f2 || f2;
+delete from rem1;
+
+-- cleanup
+DROP TRIGGER trig_row_after1 ON rem1;
+DROP TRIGGER trig_row_after2 ON rem1;
 
 -- Test WHEN conditions
 
@@ -1785,6 +1924,27 @@ select * from bar where f1 in (select f1 from foo) for update;
 explain (verbose, costs off)
 select * from bar where f1 in (select f1 from foo) for share;
 select * from bar where f1 in (select f1 from foo) for share;
+
+-- Now check SELECT FOR UPDATE/SHARE with an inherited source table,
+-- where the parent is itself a foreign table
+create table loct4 (f1 int, f2 int, f3 int);
+create foreign table foo2child (f3 int) inherits (foo2)
+  server loopback options (table_name 'loct4');
+
+explain (verbose, costs off)
+select * from bar where f1 in (select f1 from foo2) for share;
+select * from bar where f1 in (select f1 from foo2) for share;
+
+drop foreign table foo2child;
+
+-- And with a local child relation of the foreign table parent
+create table foo2child (f3 int) inherits (foo2);
+
+explain (verbose, costs off)
+select * from bar where f1 in (select f1 from foo2) for share;
+select * from bar where f1 in (select f1 from foo2) for share;
+
+drop table foo2child;
 
 -- Check UPDATE with inherited target and an inherited source table
 explain (verbose, costs off)
@@ -2258,6 +2418,7 @@ CREATE TABLE import_source.t3 (c1 timestamptz default now(), c2 typ1);
 CREATE TABLE import_source."x 4" (c1 float8, "C 2" text, c3 varchar(42));
 CREATE TABLE import_source."x 5" (c1 float8);
 ALTER TABLE import_source."x 5" DROP COLUMN c1;
+CREATE TABLE import_source."x 6" (c1 int, c2 int generated always as (c1 * 2) stored);
 CREATE TABLE import_source.t4 (c1 int) PARTITION BY RANGE (c1);
 CREATE TABLE import_source.t4_part PARTITION OF import_source.t4
   FOR VALUES FROM (1) TO (100);
@@ -2275,7 +2436,7 @@ IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest2
 \d import_dest2.*
 CREATE SCHEMA import_dest3;
 IMPORT FOREIGN SCHEMA import_source FROM SERVER loopback INTO import_dest3
-  OPTIONS (import_collate 'false', import_not_null 'false');
+  OPTIONS (import_collate 'false', import_generated 'false', import_not_null 'false');
 \det+ import_dest3.*
 \d import_dest3.*
 
@@ -2391,8 +2552,8 @@ EXPLAIN (COSTS OFF)
 SELECT t1.a,t2.b,t3.c FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) INNER JOIN fprt1 t3 ON (t2.b = t3.a) WHERE t1.a % 25 =0 ORDER BY 1,2,3;
 SELECT t1.a,t2.b,t3.c FROM fprt1 t1 INNER JOIN fprt2 t2 ON (t1.a = t2.b) INNER JOIN fprt1 t3 ON (t2.b = t3.a) WHERE t1.a % 25 =0 ORDER BY 1,2,3;
 
--- left outer join + nullable clasue
-EXPLAIN (COSTS OFF)
+-- left outer join + nullable clause
+EXPLAIN (VERBOSE, COSTS OFF)
 SELECT t1.a,t2.b,t2.c FROM fprt1 t1 LEFT JOIN (SELECT * FROM fprt2 WHERE a < 10) t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a < 10 ORDER BY 1,2,3;
 SELECT t1.a,t2.b,t2.c FROM fprt1 t1 LEFT JOIN (SELECT * FROM fprt2 WHERE a < 10) t2 ON (t1.a = t2.b and t1.b = t2.a) WHERE t1.a < 10 ORDER BY 1,2,3;
 

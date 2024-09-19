@@ -1624,3 +1624,90 @@ varsize_any(void *p)
 {
 	return VARSIZE_ANY(p);
 }
+
+#ifdef PGXC
+/*
+ * slot_deform_datarow
+ * 		Extract data from the DataRow message into Datum/isnull arrays.
+ * 		We always extract all atributes, as specified in tts_tupleDescriptor,
+ * 		because there is no easy way to find random attribute in the DataRow.
+ */
+void
+slot_deform_datarow(TupleTableSlot *slot)
+{
+	int attnum;
+	int i;
+	int 		col_count;
+	char	   *cur = slot->tts_dataRow;
+	StringInfo  buffer;
+	uint16		n16;
+	uint32		n32;
+	MemoryContext oldcontext;
+
+	if (slot->tts_tupleDescriptor == NULL || slot->tts_dataRow == NULL)
+		return;
+
+	attnum = slot->tts_tupleDescriptor->natts;
+
+	/* fastpath: exit if values already extracted */
+	if (slot->tts_nvalid == attnum)
+		return;
+
+	Assert(slot->tts_dataRow);
+
+	memcpy(&n16, cur, 2);
+	cur += 2;
+	col_count = ntohs(n16);
+
+	if (col_count != attnum)
+		ereport(ERROR,
+				(errcode(ERRCODE_DATA_CORRUPTED),
+				 errmsg("Tuple does not match the descriptor")));
+
+	/*
+	 * Ensure info about input functions is available as long as slot lives
+	 * as well as deformed values
+	 */
+	oldcontext = MemoryContextSwitchTo(slot->tts_mcxt);
+
+	if (slot->tts_attinmeta == NULL)
+		slot->tts_attinmeta = TupleDescGetAttInMetadata(slot->tts_tupleDescriptor);
+
+	buffer = makeStringInfo();
+	for (i = 0; i < attnum; i++)
+	{
+		int len;
+
+		/* get size */
+		memcpy(&n32, cur, 4);
+		cur += 4;
+		len = ntohl(n32);
+
+		/* get data */
+		if (len == -1)
+		{
+			slot->tts_values[i] = (Datum) 0;
+			slot->tts_isnull[i] = true;
+		}
+		else
+		{
+			appendBinaryStringInfo(buffer, cur, len);
+			cur += len;
+
+			slot->tts_values[i] = InputFunctionCall(slot->tts_attinmeta->attinfuncs + i,
+													buffer->data,
+													slot->tts_attinmeta->attioparams[i],
+													slot->tts_attinmeta->atttypmods[i]);
+			slot->tts_isnull[i] = false;
+
+			resetStringInfo(buffer);
+		}
+	}
+	pfree(buffer->data);
+	pfree(buffer);
+
+	slot->tts_nvalid = attnum;
+
+	MemoryContextSwitchTo(oldcontext);
+}
+#endif

@@ -499,6 +499,16 @@ tts_minimal_clear(TupleTableSlot *slot)
 	ItemPointerSetInvalid(&slot->tts_tid);
 	mslot->off = 0;
 	mslot->mintuple = NULL;
+
+#ifdef PGXC
+	if (slot->tts_shouldFreeRow)
+		pfree(slot->tts_dataRow);
+
+	slot->tts_shouldFreeRow = false;
+	slot->tts_dataRow = NULL;
+	slot->tts_dataLen = -1;
+#endif
+
 }
 
 static void
@@ -638,6 +648,9 @@ tts_minimal_store_tuple(TupleTableSlot *slot, MinimalTuple mtup, bool shouldFree
 
 	if (shouldFree)
 		slot->tts_flags |= TTS_FLAG_SHOULDFREE;
+
+
+
 }
 
 
@@ -2395,7 +2408,7 @@ ExecStoreDataRowTuple(char *msg, size_t len, Oid msgnode_oid, TupleTableSlot *sl
 	 * Store the new tuple into the specified slot.
 	 */
 	
-	slot->tts_flags |= TTS_FLAG_EMPTY;
+	slot->tts_flags &= ~TTS_FLAG_EMPTY;
 
 	slot->tts_shouldFreeRow = shouldFree;
 	

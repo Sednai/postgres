@@ -2590,7 +2590,7 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 					 (PlanState *) remotestate);
 	*/
 	remotestate->ss.ps.qual =
-		ExecInitQual((Expr *) node->scan.plan.qual, (PlanState *) remotestate);
+		ExecInitQual(node->scan.plan.qual, (PlanState *) remotestate);
 
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_MARK)));
@@ -3224,9 +3224,9 @@ do_query(RemoteQueryState *node)
  */
 
 TupleTableSlot *
-ExecRemoteQuery(RemoteQueryState *node)
+ExecRemoteQuery(PlanState *node)
 {
-	return ExecScan(&(node->ss),
+	return ExecScan(&( ((RemoteQueryState *) node)->ss),
 					(ExecScanAccessMtd) RemoteQueryNext,
 					(ExecScanRecheckMtd) RemoteQueryRecheck);
 }
