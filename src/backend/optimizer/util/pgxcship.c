@@ -1177,7 +1177,7 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		break;
 	
 		default:
-			elog(ERROR, "unrecognized node type: %d",
+			elog(ERROR, "pgxc_shippability_walker unrecognized node type: %d",
 				 (int) nodeTag(node));
 			break;
 	}

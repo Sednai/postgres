@@ -469,12 +469,13 @@ compute_hash(Oid type, Datum value, char locator)
 
 		case CHAROID:
 			return DirectFunctionCall1(hashchar, value);
+		
 		case NAMEOID:
 			return DirectFunctionCall1(hashname, value);
 		
 		case VARCHAROID:
 		case TEXTOID:
-			return DirectFunctionCall1(hashtext, value);
+			return DirectFunctionCall1Coll(hashtext, DEFAULT_COLLATION_OID, value);
 
 		case OIDVECTOROID:
 			return DirectFunctionCall1(hashoidvector, value);
@@ -486,7 +487,8 @@ compute_hash(Oid type, Datum value, char locator)
 			return DirectFunctionCall1(hashint8, value);
 
 		case BPCHAROID:
-			return DirectFunctionCall1(hashbpchar, value);
+			return DirectFunctionCall1Coll(hashbpchar, DEFAULT_COLLATION_OID, value);
+
 		case BYTEAOID:
 			return DirectFunctionCall1(hashvarlena, value);
 

@@ -6425,7 +6425,11 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 	{
 		case TRIGGER_EVENT_INSERT:
 			tgtype_event = TRIGGER_TYPE_INSERT;
+#ifdef PGXC
+			if (row_trigger && newslot != NULL)
+#else
 			if (row_trigger)
+#endif
 			{
 				Assert(oldslot == NULL);
 				Assert(newslot != NULL);
@@ -6463,7 +6467,11 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 			break;
 		case TRIGGER_EVENT_UPDATE:
 			tgtype_event = TRIGGER_TYPE_UPDATE;
+#ifdef PGXC
+			if (row_trigger && newslot != NULL)
+#else
 			if (row_trigger)
+#endif
 			{
 				Assert(oldslot != NULL);
 				Assert(newslot != NULL);

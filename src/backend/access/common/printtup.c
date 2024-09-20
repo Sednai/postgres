@@ -413,7 +413,7 @@ printtup(TupleTableSlot *slot, DestReceiver *self)
 	StringInfo	buf = &myState->buf;
 	int			natts = typeinfo->natts;
 	int			i;
-
+	
 #ifdef PGXC
 	/*
 	 * If we are having DataRow-based tuple we do not have to encode attribute
