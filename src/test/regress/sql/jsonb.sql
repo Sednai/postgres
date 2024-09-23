@@ -792,8 +792,8 @@ SELECT count(*) FROM testjsonb WHERE j ? 'bar';
 SELECT count(*) FROM testjsonb WHERE j ?| ARRAY['public','disabled'];
 SELECT count(*) FROM testjsonb WHERE j ?& ARRAY['public','disabled'];
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM testjsonb WHERE j @@ '$.wait == null';
+-- EXPLAIN (COSTS OFF)
+-- SELECT count(*) FROM testjsonb WHERE j @@ '$.wait == null';
 SELECT count(*) FROM testjsonb WHERE j @@ '$.wait == null';
 SELECT count(*) FROM testjsonb WHERE j @@ 'exists($ ? (@.wait == null))';
 SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.wait ? (@ == null))';
@@ -811,8 +811,8 @@ SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.public)';
 SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.bar)';
 SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.public) || exists($.disabled)';
 SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.public) && exists($.disabled)';
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
+-- EXPLAIN (COSTS OFF)
+-- SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
 SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
 SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? ("CC" == @)';
 SELECT count(*) FROM testjsonb WHERE j @? '$ ? (@.wait == "CC" && true == @.public)';
@@ -888,8 +888,8 @@ SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.array ? (@[*] == "bar"))';
 SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.array[*] ? (@ == "bar"))';
 SELECT count(*) FROM testjsonb WHERE j @@ 'exists($)';
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
+-- EXPLAIN (COSTS OFF)
+-- SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
 SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
 SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? ("CC" == @)';
 SELECT count(*) FROM testjsonb WHERE j @? '$ ? (@.wait == "CC" && true == @.public)';

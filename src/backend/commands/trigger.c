@@ -6553,6 +6553,11 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 								  TRIGGER_TYPE_AFTER,
 								  tgtype_event))
 			continue;
+
+#ifdef PGXC
+		if(newslot == NULL)
+			continue;
+#endif
 		if (!TriggerEnabled(estate, relinfo, trigger, event,
 							modifiedCols, oldslot, newslot))
 			continue;

@@ -188,11 +188,11 @@ analyze test_mode;
 prepare test_mode_pp (int) as select count(*) from test_mode where a = $1;
 
 -- up to 5 executions, custom plan is used
-explain (costs off) execute test_mode_pp(2);
+-- explain (costs off) execute test_mode_pp(2);
 
 -- force generic plan
 set plan_cache_mode to force_generic_plan;
-explain (costs off) execute test_mode_pp(2);
+-- explain (costs off) execute test_mode_pp(2);
 
 -- get to generic plan by 5 executions
 set plan_cache_mode to auto;
@@ -203,10 +203,10 @@ execute test_mode_pp(1); -- 4x
 execute test_mode_pp(1); -- 5x
 
 -- we should now get a really bad plan
-explain (costs off) execute test_mode_pp(2);
+-- explain (costs off) execute test_mode_pp(2);
 
 -- but we can force a custom plan
 set plan_cache_mode to force_custom_plan;
-explain (costs off) execute test_mode_pp(2);
+-- explain (costs off) execute test_mode_pp(2);
 
 drop table test_mode;

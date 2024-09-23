@@ -851,6 +851,8 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		}
 		break;
 
+		case T_WithCheckOption:
+		case T_SubscriptingRef:
 		case T_RowCompareExpr:
 		case T_MinMaxExpr:
 		{

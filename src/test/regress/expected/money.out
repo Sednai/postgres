@@ -503,18 +503,6 @@ SELECT '-92233720368547758.08'::money::numeric;
  -92233720368547758.08
 (1 row)
 
-SELECT '92233720368547758.07'::money::numeric;
-       numeric        
-----------------------
- 92233720368547758.07
-(1 row)
-
-SELECT '-92233720368547758.08'::money::numeric;
-        numeric        
------------------------
- -92233720368547758.08
-(1 row)
-
 -- overflow checks
 SELECT '92233720368547758.07'::money + '0.01'::money;
 ERROR:  money out of range

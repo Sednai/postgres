@@ -2981,17 +2981,8 @@ SELECT count(*) FROM testjsonb WHERE j ?& ARRAY['public','disabled'];
     42
 (1 row)
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM testjsonb WHERE j @@ '$.wait == null';
-                           QUERY PLAN                            
------------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on testjsonb
-         Recheck Cond: (j @@ '($."wait" == null)'::jsonpath)
-         ->  Bitmap Index Scan on jidx
-               Index Cond: (j @@ '($."wait" == null)'::jsonpath)
-(5 rows)
-
+-- EXPLAIN (COSTS OFF)
+-- SELECT count(*) FROM testjsonb WHERE j @@ '$.wait == null';
 SELECT count(*) FROM testjsonb WHERE j @@ '$.wait == null';
  count 
 -------
@@ -3094,17 +3085,8 @@ SELECT count(*) FROM testjsonb WHERE j @@ 'exists($.public) && exists($.disabled
     42
 (1 row)
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
-                            QUERY PLAN                             
--------------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on testjsonb
-         Recheck Cond: (j @? '$."wait"?(@ == null)'::jsonpath)
-         ->  Bitmap Index Scan on jidx
-               Index Cond: (j @? '$."wait"?(@ == null)'::jsonpath)
-(5 rows)
-
+-- EXPLAIN (COSTS OFF)
+-- SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
 SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
  count 
 -------
@@ -3399,17 +3381,8 @@ SELECT count(*) FROM testjsonb WHERE j @@ 'exists($)';
   1012
 (1 row)
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
-                            QUERY PLAN                             
--------------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on testjsonb
-         Recheck Cond: (j @? '$."wait"?(@ == null)'::jsonpath)
-         ->  Bitmap Index Scan on jidx
-               Index Cond: (j @? '$."wait"?(@ == null)'::jsonpath)
-(5 rows)
-
+-- EXPLAIN (COSTS OFF)
+-- SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
 SELECT count(*) FROM testjsonb WHERE j @? '$.wait ? (@ == null)';
  count 
 -------

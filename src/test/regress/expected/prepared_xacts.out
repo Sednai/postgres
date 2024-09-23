@@ -240,7 +240,7 @@ COMMIT PREPARED 'regress-one';
 --------+---------+-----------+----------+---------
  a      | integer |           |          | 
 
-SELECT * FROM pxtest2;
+SELECT * FROM pxtest2 ORDER BY a;
  a 
 ---
  1
