@@ -203,7 +203,7 @@ Indexes:
     "test_replica_identity2_id_key" UNIQUE CONSTRAINT, btree (id) REPLICA IDENTITY
 
 -- straight index variant
-CREATE TABLE test_replica_identity3 (id int NOT NULL);
+CREATE TABLE test_replica_identity3 (id int NOT NULL) DISTRIBUTE BY REPLICATION;
 CREATE UNIQUE INDEX test_replica_identity3_id_key ON test_replica_identity3 (id);
 ALTER TABLE test_replica_identity3 REPLICA IDENTITY USING INDEX test_replica_identity3_id_key;
 \d test_replica_identity3

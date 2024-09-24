@@ -109,7 +109,7 @@ select 'foo' as f, generate_series(1,2) as g from few order by 1;
 -- data modification
 CREATE TABLE fewmore AS SELECT generate_series(1,3) AS data;
 INSERT INTO fewmore VALUES(generate_series(4,5));
-SELECT * FROM fewmore;
+SELECT * FROM fewmore ORDER BY 1;
 
 -- SRFs are not allowed in UPDATE (they once were, but it was nonsense)
 UPDATE fewmore SET data = generate_series(4,9);

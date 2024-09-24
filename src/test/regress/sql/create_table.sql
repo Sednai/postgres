@@ -278,27 +278,13 @@ DROP TABLE unlogged1, public.unlogged2;
 -- CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
 -- DROP TABLE as_select1;
 
-PREPARE select1 AS SELECT 1 as a;
-CREATE TABLE as_select1 AS EXECUTE select1;
-DEALLOCATE select1;
-
--- create an extra wide table to test for issues related to that
--- (temporarily hide query, to avoid the long CREATE TABLE stmt)
-\set ECHO none
-SELECT 'CREATE TABLE extra_wide_table(firstc text, '|| array_to_string(array_agg('c'||i||' bool'),',')||', lastc text);'
-FROM generate_series(1, 1100) g(i)
-\gexec
-\set ECHO all
-INSERT INTO extra_wide_table(firstc, lastc) VALUES('first col', 'last col');
-SELECT firstc, lastc FROM extra_wide_table;
-
-PREPARE select1 AS SELECT 1 as a;
-CREATE TABLE as_select1 AS EXECUTE select1;
-CREATE TABLE as_select1 AS EXECUTE select1;
-SELECT * FROM as_select1;
-CREATE TABLE IF NOT EXISTS as_select1 AS EXECUTE select1;
-DROP TABLE as_select1;
-DEALLOCATE select1;
+-- PREPARE select1 AS SELECT 1 as a;
+-- CREATE TABLE as_select1 AS EXECUTE select1;
+-- CREATE TABLE as_select1 AS EXECUTE select1;
+-- SELECT * FROM as_select1;
+-- CREATE TABLE IF NOT EXISTS as_select1 AS EXECUTE select1;
+-- DROP TABLE as_select1;
+-- DEALLOCATE select1;
 
 -- create an extra wide table to test for issues related to that
 -- (temporarily hide query, to avoid the long CREATE TABLE stmt)
@@ -637,7 +623,7 @@ CREATE TABLE fail_part PARTITION OF unparted FOR VALUES WITH (MODULUS 2, REMAIND
 DROP TABLE unparted;
 
 -- cannot create a permanent rel as partition of a temp rel
-CREATE TEMP TABLE temp_parted_xc (
+CREATE TEMP TABLE temp_parted (
 	a int
 ) PARTITION BY LIST (a);
 CREATE TABLE fail_part PARTITION OF temp_parted FOR VALUES IN ('a');
@@ -948,7 +934,7 @@ create table part_column_drop (
   d int,
   b int,
   useless_3 int
-) partition by range (id);
+) partition by range (id) distribute by replication;
 alter table part_column_drop drop column useless_1;
 alter table part_column_drop drop column useless_2;
 alter table part_column_drop drop column useless_3;

@@ -212,6 +212,7 @@ SELECT (pg_identify_object(addr1.classid, addr1.objid, addr1.objsubid)).*,
 ---
 -- DROP FOREIGN DATA WRAPPER addr_fdw CASCADE;
 -- DROP PUBLICATION addr_pub;
+-- DROP PUBLICATION addr_pub_schema;
 -- DROP SUBSCRIPTION regress_addr_sub;
 
 DROP SCHEMA addr_nsp CASCADE;

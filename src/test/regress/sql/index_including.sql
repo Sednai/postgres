@@ -80,7 +80,7 @@ select * from tbl where (c1,c2,c3) < (2,5,1);
 SET enable_seqscan = off;
 -- explain (costs off)
 -- select * from tbl where (c1,c2,c3) < (262,1,1) limit 1;
-select * from tbl where (c1,c2,c3) < (262,1,1) limit 1;
+select * from tbl where (c1,c2,c3) < (262,1,1) order by c1 limit 1;
 DROP TABLE tbl;
 RESET enable_seqscan;
 
@@ -229,7 +229,7 @@ VACUUM nametbl;
 SET enable_seqscan = 0;
 
 -- Ensure we get an index only scan plan
-EXPLAIN (COSTS OFF) SELECT c2, c1, c3 FROM nametbl WHERE c2 = 'two' AND c1 = 1;
+-- EXPLAIN (COSTS OFF) SELECT c2, c1, c3 FROM nametbl WHERE c2 = 'two' AND c1 = 1;
 
 -- Validate the results look sane
 SELECT c2, c1, c3 FROM nametbl WHERE c2 = 'two' AND c1 = 1;

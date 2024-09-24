@@ -323,7 +323,7 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 		Assert(IS_PGXC_COORDINATOR);
 		pgxc_fill_matview_by_copy(dest, stmt->skipData, 0, NULL);
 	}
-	else
+	else {
 #endif /* PGXC */
 
 
@@ -363,7 +363,9 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 		if (!stmt->skipData)
 			pgstat_count_heap_insert(matviewRel, processed);
 	}
-
+#ifdef PGXC
+	}
+#endif
 	table_close(matviewRel, NoLock);
 
 	/* Roll back any GUC changes */
@@ -1043,7 +1045,7 @@ pgxc_fill_matview_by_copy(DestReceiver *mv_dest, bool skipdata, int operation,
 
 			/* Create the tuple and slot out of the values read */
 			tuple = heap_form_tuple(tupDesc, values, isnulls);
-			ExecStoreHeapTuple(tuple, slot, false);
+			ExecForceStoreHeapTuple(tuple, slot, false);
 
 			/* Insert the row in the materialized view */
 			mv_dest->receiveSlot(slot, mv_dest);

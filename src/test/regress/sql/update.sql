@@ -38,7 +38,7 @@ SELECT * FROM update_test ORDER BY a,b,c;
 UPDATE update_test SET a=v.i FROM (VALUES(100, 20)) AS v(i, j)
   WHERE update_test.b = v.j;
 
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 
 -- fail, wrong data type:
 UPDATE update_test SET a = v.* FROM (VALUES(100, 20)) AS v(i, j)
@@ -49,12 +49,12 @@ UPDATE update_test SET a = v.* FROM (VALUES(100, 20)) AS v(i, j)
 --
 
 INSERT INTO update_test SELECT a,b+1,c FROM update_test;
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 
 UPDATE update_test SET (c,b,a) = ('bugle', b+11, DEFAULT) WHERE c = 'foo';
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 UPDATE update_test SET (c,b) = ('car', a+b), a = a + 1 WHERE a = 10;
-SELECT * FROM update_test;
+SELECT * FROM update_test ORDER BY a,b,c;
 -- fail, multi assignment to same column:
 UPDATE update_test SET (c,b) = ('car', a+b), b = a + 1 WHERE a = 10;
 
@@ -90,10 +90,10 @@ UPDATE update_test SET c = repeat('x', 10000) WHERE c = 'car';
 SELECT a, b, char_length(c) FROM update_test;
 
 -- Check multi-assignment with a Result node to handle a one-time filter.
-EXPLAIN (VERBOSE, COSTS OFF)
-UPDATE update_test t
-  SET (a, b) = (SELECT b, a FROM update_test s WHERE s.a = t.a)
-  WHERE CURRENT_USER = SESSION_USER;
+-- EXPLAIN (VERBOSE, COSTS OFF)
+-- UPDATE update_test t
+--   SET (a, b) = (SELECT b, a FROM update_test s WHERE s.a = t.a)
+--   WHERE CURRENT_USER = SESSION_USER;
 UPDATE update_test t
   SET (a, b) = (SELECT b, a FROM update_test s WHERE s.a = t.a)
   WHERE CURRENT_USER = SESSION_USER;

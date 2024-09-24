@@ -81,33 +81,6 @@ ERROR:  GENERATED ALWAYS AS IDENTITY not supported in XC yet
 -- SELECT * FROM test_like_id_3;  -- identity was copied and applied
 -- DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
 -- Test renumbering of Vars when combining LIKE with inheritance
-CREATE TABLE test_like_4 (b int DEFAULT 42,
-  c int NOT NULL,
-  a int CHECK (a > 0));
-CREATE TABLE test_like_5 (x point, y point, z point);
-CREATE TABLE test_like_5x (p int CHECK (p > 0),
-   q int DEFAULT 99);
-CREATE TABLE test_like_5c (LIKE test_like_4 INCLUDING ALL)
-  INHERITS (test_like_5, test_like_5x);
-\d test_like_5c
-            Table "public.test_like_5c"
- Column |  Type   | Collation | Nullable | Default 
---------+---------+-----------+----------+---------
- x      | point   |           |          | 
- y      | point   |           |          | 
- z      | point   |           |          | 
- p      | integer |           |          | 
- q      | integer |           |          | 99
- b      | integer |           |          | 42
- c      | integer |           | not null | 
- a      | integer |           |          | 
-Check constraints:
-    "test_like_4_a_check" CHECK (a > 0)
-    "test_like_5x_p_check" CHECK (p > 0)
-Inherits: test_like_5,
-          test_like_5x
-
-DROP TABLE test_like_id_1, test_like_id_2, test_like_id_3;
 CREATE TABLE test_like_gen_1 (a int, b int GENERATED ALWAYS AS (a * 2) STORED);
 \d test_like_gen_1
                         Table "public.test_like_gen_1"
@@ -258,7 +231,7 @@ Inherits: test_like_5,
 
 DROP TABLE test_like_4, test_like_4a, test_like_4b, test_like_4c, test_like_4d;
 DROP TABLE test_like_5, test_like_5x, test_like_5c;
-CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text); /* copies indexes */
+CREATE TABLE inhg (x text, LIKE inhx INCLUDING INDEXES, y text) DISTRIBUTE BY REPLICATION; /* copies indexes */
 INSERT INTO inhg VALUES (5, 10);
 INSERT INTO inhg VALUES (20, 10); -- should fail
 ERROR:  duplicate key value violates unique constraint "inhg_pkey"

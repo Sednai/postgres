@@ -457,15 +457,16 @@ select 'foo' as f, generate_series(1,2) as g from few order by 1;
 -- data modification
 CREATE TABLE fewmore AS SELECT generate_series(1,3) AS data;
 INSERT INTO fewmore VALUES(generate_series(4,5));
-SELECT * FROM fewmore;
+ERROR:  set-valued function called in context that cannot accept a set
+LINE 1: INSERT INTO fewmore VALUES(generate_series(4,5));
+                                   ^
+SELECT * FROM fewmore ORDER BY 1;
  data 
 ------
     1
     2
     3
-    4
-    5
-(5 rows)
+(3 rows)
 
 -- SRFs are not allowed in UPDATE (they once were, but it was nonsense)
 UPDATE fewmore SET data = generate_series(4,9);

@@ -369,7 +369,7 @@ ExecCreateTableAs(CreateTableAsStmt *stmt, const char *queryString,
 		IsConnFromCoord())
 	{
 		/* We need ExecutorStart to build the tuple descriptor only */
-		ExecutorStart(queryDesc, EXEC_FLAG_EXPLAIN_ONLY);
+		ExecutorStart(queryDesc, EXEC_FLAG_EXPLAIN_ONLY);		
 		pgxc_fill_matview_by_copy(dest, into->skipData, queryDesc->operation,
 									queryDesc->tupDesc);
 	}

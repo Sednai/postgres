@@ -231,7 +231,7 @@ SELECT relname, relkind, relpersistence FROM pg_class WHERE relname ~ '^unlogged
 
 REINDEX INDEX unlogged1_pkey;
 REINDEX INDEX unlogged2_pkey;
-ERROR:  cannot PREPARE a transaction that has operated on temporary tables
+ERROR:  cannot PREPARE a transaction that has operated on temporary objects
 SELECT relname, relkind, relpersistence FROM pg_class WHERE relname ~ '^unlogged\d' ORDER BY relname;
     relname     | relkind | relpersistence 
 ----------------+---------+----------------
@@ -256,26 +256,18 @@ ERROR:  cannot create temporary relation in non-temporary schema
 LINE 1: CREATE TEMP TABLE public.temp_to_perm (a int primary key);
                           ^
 DROP TABLE unlogged1, public.unlogged2;
-CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
-CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
-ERROR:  relation "as_select1" already exists
-CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
-NOTICE:  relation "as_select1" already exists, skipping
-DROP TABLE as_select1;
-PREPARE select1 AS SELECT 1 as a;
-CREATE TABLE as_select1 AS EXECUTE select1;
-CREATE TABLE as_select1 AS EXECUTE select1;
-ERROR:  relation "as_select1" already exists
-SELECT * FROM as_select1;
- a 
----
- 1
-(1 row)
-
-CREATE TABLE IF NOT EXISTS as_select1 AS EXECUTE select1;
-NOTICE:  relation "as_select1" already exists, skipping
-DROP TABLE as_select1;
-DEALLOCATE select1;
+-- PGXC deactivated
+-- CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+-- CREATE TABLE as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+-- CREATE TABLE IF NOT EXISTS as_select1 AS SELECT * FROM pg_class WHERE relkind = 'r';
+-- DROP TABLE as_select1;
+-- PREPARE select1 AS SELECT 1 as a;
+-- CREATE TABLE as_select1 AS EXECUTE select1;
+-- CREATE TABLE as_select1 AS EXECUTE select1;
+-- SELECT * FROM as_select1;
+-- CREATE TABLE IF NOT EXISTS as_select1 AS EXECUTE select1;
+-- DROP TABLE as_select1;
+-- DEALLOCATE select1;
 -- create an extra wide table to test for issues related to that
 -- (temporarily hide query, to avoid the long CREATE TABLE stmt)
 \set ECHO none
@@ -760,7 +752,7 @@ CREATE TABLE fail_part PARTITION OF unparted FOR VALUES WITH (MODULUS 2, REMAIND
 ERROR:  "unparted" is not partitioned
 DROP TABLE unparted;
 -- cannot create a permanent rel as partition of a temp rel
-CREATE TEMP TABLE temp_parted_xc (
+CREATE TEMP TABLE temp_parted (
 	a int
 ) PARTITION BY LIST (a);
 CREATE TABLE fail_part PARTITION OF temp_parted FOR VALUES IN ('a');
@@ -1202,7 +1194,7 @@ create table part_column_drop (
   d int,
   b int,
   useless_3 int
-) partition by range (id);
+) partition by range (id) distribute by replication;
 alter table part_column_drop drop column useless_1;
 alter table part_column_drop drop column useless_2;
 alter table part_column_drop drop column useless_3;

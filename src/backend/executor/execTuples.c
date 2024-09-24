@@ -1385,7 +1385,7 @@ ExecStoreHeapTuple(HeapTuple tuple,
 	Assert(slot != NULL);
 	Assert(slot->tts_tupleDescriptor != NULL);
 
-	if (unlikely(!TTS_IS_HEAPTUPLE(slot)))
+	if (unlikely(!TTS_IS_HEAPTUPLE(slot)))	
 		elog(ERROR, "trying to store a heap tuple into wrong type of slot");
 	tts_heap_store_tuple(slot, tuple, shouldFree);
 

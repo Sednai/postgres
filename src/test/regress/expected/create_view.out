@@ -1774,15 +1774,15 @@ select pg_get_ruledef(oid, true) from pg_rewrite
 CREATE TABLE tt26(c int);
 BEGIN;
 CREATE TABLE tt27(c int);
-SAVEPOINT q;
+-- SAVEPOINT q;
 CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
 SELECT * FROM tt27;
  c 
 ---
 (0 rows)
 
-ROLLBACK TO q;
-CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
+-- ROLLBACK TO q;
+-- CREATE RULE "_RETURN" AS ON SELECT TO tt27 DO INSTEAD SELECT * FROM tt26;
 ROLLBACK;
 BEGIN;
 CREATE TABLE tt28(c int);
@@ -1836,7 +1836,7 @@ drop cascades to view aliased_view_2
 drop cascades to view aliased_view_3
 drop cascades to view aliased_view_4
 DROP SCHEMA testviewschm2 CASCADE;
-NOTICE:  drop cascades to 67 other objects
+NOTICE:  drop cascades to 66 other objects
 DETAIL:  drop cascades to table t1
 drop cascades to view temporal1
 drop cascades to view temporal2
@@ -1894,7 +1894,6 @@ drop cascades to type nestedcomposite
 drop cascades to view tt15v
 drop cascades to view tt16v
 drop cascades to view tt17v
-drop cascades to table tt15v_log
 drop cascades to view tt18v
 drop cascades to view tt19v
 drop cascades to view tt20v

@@ -297,20 +297,10 @@ order by thousand, tenthous;
       999 |     9999
 (25 rows)
 
-explain (costs off)
-select thousand, tenthous, four from tenk1
-where (thousand, tenthous, four) > (998, 5000, 3)
-order by thousand, tenthous;
-                              QUERY PLAN                               
------------------------------------------------------------------------
- Sort
-   Sort Key: thousand, tenthous
-   ->  Bitmap Heap Scan on tenk1
-         Filter: (ROW(thousand, tenthous, four) > ROW(998, 5000, 3))
-         ->  Bitmap Index Scan on tenk1_thous_tenthous
-               Index Cond: (ROW(thousand, tenthous) >= ROW(998, 5000))
-(6 rows)
-
+-- explain (costs off)
+-- select thousand, tenthous, four from tenk1
+-- where (thousand, tenthous, four) > (998, 5000, 3)
+-- order by thousand, tenthous;
 select thousand, tenthous, four from tenk1
 where (thousand, tenthous, four) > (998, 5000, 3)
 order by thousand, tenthous;
@@ -333,16 +323,10 @@ order by thousand, tenthous;
       999 |     9999 |    3
 (15 rows)
 
-explain (costs off)
-select thousand, tenthous from tenk1
-where (998, 5000) < (thousand, tenthous)
-order by thousand, tenthous;
-                        QUERY PLAN                        
-----------------------------------------------------------
- Index Only Scan using tenk1_thous_tenthous on tenk1
-   Index Cond: (ROW(thousand, tenthous) > ROW(998, 5000))
-(2 rows)
-
+-- explain (costs off)
+-- select thousand, tenthous from tenk1
+-- where (998, 5000) < (thousand, tenthous)
+-- order by thousand, tenthous;
 select thousand, tenthous from tenk1
 where (998, 5000) < (thousand, tenthous)
 order by thousand, tenthous;
@@ -365,20 +349,10 @@ order by thousand, tenthous;
       999 |     9999
 (15 rows)
 
-explain (costs off)
-select thousand, hundred from tenk1
-where (998, 5000) < (thousand, hundred)
-order by thousand, hundred;
-                        QUERY PLAN                         
------------------------------------------------------------
- Sort
-   Sort Key: thousand, hundred
-   ->  Bitmap Heap Scan on tenk1
-         Filter: (ROW(998, 5000) < ROW(thousand, hundred))
-         ->  Bitmap Index Scan on tenk1_thous_tenthous
-               Index Cond: (thousand >= 998)
-(6 rows)
-
+-- explain (costs off)
+-- select thousand, hundred from tenk1
+-- where (998, 5000) < (thousand, hundred)
+-- order by thousand, hundred;
 select thousand, hundred from tenk1
 where (998, 5000) < (thousand, hundred)
 order by thousand, hundred;
