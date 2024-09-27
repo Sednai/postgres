@@ -204,8 +204,8 @@ drop materialized view mvtest_error;
 CREATE TABLE mvtest_v AS SELECT generate_series(1,10) AS a;
 CREATE MATERIALIZED VIEW mvtest_mv_v AS SELECT a FROM mvtest_v WHERE a <= 5;
 DELETE FROM mvtest_v WHERE EXISTS ( SELECT * FROM mvtest_mv_v WHERE mvtest_mv_v.a = mvtest_v.a );
-SELECT * FROM mvtest_v;
-SELECT * FROM mvtest_mv_v;
+SELECT * FROM mvtest_v ORDER BY a;
+SELECT * FROM mvtest_mv_v ORDER BY a;
 DROP TABLE mvtest_v CASCADE;
 
 -- make sure running as superuser works when MV owned by another role (bug #11208)

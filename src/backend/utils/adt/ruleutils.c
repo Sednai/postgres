@@ -7023,7 +7023,8 @@ get_utility_query_def(Query *query, deparse_context *context)
 					(errcode(ERRCODE_INVALID_TABLE_DEFINITION),
 					 errmsg("temporary tables cannot specify a schema name")));
 
-		appendStringInfo(buf, "CREATE %s %s TABLE ",
+		appendStringInfo(buf, "CREATE %s %s %s TABLE ",
+		 		stmt->islocal ? "LOCAL" : "",
 				istemp ? "TEMP" : "",
 				isunlogged ? "UNLOGGED" : "");
 

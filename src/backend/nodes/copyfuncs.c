@@ -3493,6 +3493,7 @@ CopyCreateStmtFields(const CreateStmt *from, CreateStmt *newnode)
 #ifdef PGXC
 	COPY_NODE_FIELD(distributeby);
 	COPY_NODE_FIELD(subcluster);
+	COPY_SCALAR_FIELD(islocal);
 #endif
 }
 

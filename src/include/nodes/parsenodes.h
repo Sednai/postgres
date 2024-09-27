@@ -2098,6 +2098,7 @@ typedef struct CreateStmt
 #ifdef PGXC
 	DistributeBy *distributeby; 	/* distribution to use, or NULL */
 	PGXCSubCluster *subcluster;		/* subcluster of table */
+	bool		islocal;
 #endif
 } CreateStmt;
 
@@ -3340,6 +3341,9 @@ typedef struct CreateTableAsStmt
 	ObjectType	relkind;		/* OBJECT_TABLE or OBJECT_MATVIEW */
 	bool		is_select_into; /* it was written as SELECT INTO */
 	bool		if_not_exists;	/* just do nothing if it already exists? */
+#ifdef PGXC
+	bool		islocal;
+#endif
 } CreateTableAsStmt;
 
 /* ----------------------

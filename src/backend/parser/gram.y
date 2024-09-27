@@ -3254,6 +3254,11 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $13;
 					n->if_not_exists = false;
 /* PGXC_BEGIN */
+					if ($2 == RELPERSISTENCE_TEMP_LOCAL)
+					{
+						$4->relpersistence = RELPERSISTENCE_TEMP;
+						n->islocal = true;
+					}
 					n->distributeby = $14;
 					n->subcluster = $15;
 /* PGXC_END */
@@ -3280,6 +3285,12 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $16;
 					n->if_not_exists = true;
 /* PGXC_BEGIN */
+					if ($2 == RELPERSISTENCE_TEMP_LOCAL)
+					{
+						$7->relpersistence = RELPERSISTENCE_TEMP;
+						n->islocal = true;
+					}
+				
 					n->distributeby = $17;
 					n->subcluster = $18;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
@@ -3313,6 +3324,12 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $12;
 					n->if_not_exists = false;
 /* PGXC_BEGIN */
+					if ($2 == RELPERSISTENCE_TEMP_LOCAL)
+					{
+						$4->relpersistence = RELPERSISTENCE_TEMP;
+						n->islocal = true;
+					}
+				
 					n->distributeby = $13;
 					n->subcluster = $14;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
@@ -3345,6 +3362,12 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
 					n->tablespacename = $15;
 					n->if_not_exists = true;
 /* PGXC_BEGIN */
+					if ($2 == RELPERSISTENCE_TEMP_LOCAL)
+					{
+						$7->relpersistence = RELPERSISTENCE_TEMP;
+						n->islocal = true;
+					}
+				
 					n->distributeby = $16;
 					n->subcluster = $17;
 					if (n->inhRelations != NULL && n->distributeby != NULL)
@@ -3434,8 +3457,8 @@ CreateStmt:	CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'
  */
 OptTemp:	TEMPORARY					{ $$ = RELPERSISTENCE_TEMP; }
 			| TEMP						{ $$ = RELPERSISTENCE_TEMP; }
-			| LOCAL TEMPORARY			{ $$ = RELPERSISTENCE_TEMP; }
-			| LOCAL TEMP				{ $$ = RELPERSISTENCE_TEMP; }
+			| LOCAL TEMPORARY			{ $$ = RELPERSISTENCE_TEMP_LOCAL; }
+			| LOCAL TEMP				{ $$ = RELPERSISTENCE_TEMP_LOCAL; }
 			| GLOBAL TEMPORARY
 				{
 					ereport(WARNING,
@@ -4243,6 +4266,11 @@ CreateAsStmt:
 					ctas->if_not_exists = false;
 					/* cram additional flags into the IntoClause */
 					$4->rel->relpersistence = $2;
+					if ($2 == RELPERSISTENCE_TEMP_LOCAL)
+					{
+						$4->rel->relpersistence = RELPERSISTENCE_TEMP;
+						ctas->islocal = true;
+					}					
 					$4->skipData = !($7);
 					$$ = (Node *) ctas;
 				}

@@ -762,7 +762,7 @@ configure:13019: $? = 0
 configure:13029: result: yes
 configure:13039: checking for library containing setproctitle
 configure:13069: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lm  >&5
-/usr/bin/ld: /tmp/ccpjwIkV.o: in function `main':
+/usr/bin/ld: /tmp/cc28esVF.o: in function `main':
 /xc/git/postgres/conftest.c:44: undefined reference to `setproctitle'
 collect2: error: ld returned 1 exit status
 configure:13069: $? = 1
@@ -815,7 +815,7 @@ configure: failed program was:
 |   return 0;
 | }
 configure:13069: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lutil  -lm  >&5
-/usr/bin/ld: /tmp/ccqXyuzp.o: in function `main':
+/usr/bin/ld: /tmp/cc5jV7to.o: in function `main':
 /xc/git/postgres/conftest.c:44: undefined reference to `setproctitle'
 collect2: error: ld returned 1 exit status
 configure:13069: $? = 1
@@ -878,7 +878,7 @@ configure:13190: $? = 0
 configure:13210: result: none required
 configure:13219: checking for library containing shl_load
 configure:13249: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lm  >&5
-/usr/bin/ld: /tmp/ccEABGFM.o: in function `main':
+/usr/bin/ld: /tmp/ccsuEYLr.o: in function `main':
 /xc/git/postgres/conftest.c:44: undefined reference to `shl_load'
 collect2: error: ld returned 1 exit status
 configure:13249: $? = 1
@@ -989,7 +989,7 @@ configure:13308: $? = 0
 configure:13328: result: none required
 configure:13337: checking for library containing crypt
 configure:13367: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lm  >&5
-/usr/bin/ld: /tmp/ccGUNcEf.o: in function `main':
+/usr/bin/ld: /tmp/ccpcwKSH.o: in function `main':
 /xc/git/postgres/conftest.c:44: undefined reference to `crypt'
 collect2: error: ld returned 1 exit status
 configure:13367: $? = 1
@@ -4851,7 +4851,7 @@ configure:17558: $? = 0
 configure:17558: result: yes
 configure:17564: checking for copyfile
 configure:17564: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccaTuBpa.o: in function `main':
+/usr/bin/ld: /tmp/ccmm9MYX.o: in function `main':
 /xc/git/postgres/conftest.c:125: undefined reference to `copyfile'
 collect2: error: ld returned 1 exit status
 configure:17564: $? = 1
@@ -4995,7 +4995,7 @@ configure:17576: $? = 0
 configure:17576: result: yes
 configure:17582: checking for getpeerucred
 configure:17582: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/cczPNr39.o: in function `main':
+/usr/bin/ld: /tmp/cc9nl6QZ.o: in function `main':
 /xc/git/postgres/conftest.c:127: undefined reference to `getpeerucred'
 collect2: error: ld returned 1 exit status
 configure:17582: $? = 1
@@ -5137,7 +5137,7 @@ configure:17588: $? = 0
 configure:17588: result: yes
 configure:17594: checking for mbstowcs_l
 configure:17594: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccjpGRRL.o: in function `main':
+/usr/bin/ld: /tmp/ccdAnmip.o: in function `main':
 /xc/git/postgres/conftest.c:128: undefined reference to `mbstowcs_l'
 collect2: error: ld returned 1 exit status
 configure:17594: $? = 1
@@ -5298,7 +5298,7 @@ configure:17618: $? = 0
 configure:17618: result: yes
 configure:17624: checking for pstat
 configure:17624: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/cccTej8c.o: in function `main':
+/usr/bin/ld: /tmp/ccuwb7CH.o: in function `main':
 /xc/git/postgres/conftest.c:132: undefined reference to `pstat'
 collect2: error: ld returned 1 exit status
 configure:17624: $? = 1
@@ -5441,7 +5441,7 @@ configure: failed program was:
 configure:17624: result: no
 configure:17630: checking for pthread_is_threaded_np
 configure:17630: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccBCP855.o: in function `main':
+/usr/bin/ld: /tmp/ccZiwHDQ.o: in function `main':
 /xc/git/postgres/conftest.c:132: undefined reference to `pthread_is_threaded_np'
 collect2: error: ld returned 1 exit status
 configure:17630: $? = 1
@@ -5588,7 +5588,7 @@ configure:17636: $? = 0
 configure:17636: result: yes
 configure:17642: checking for setproctitle
 configure:17642: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccPtVsxW.o: in function `main':
+/usr/bin/ld: /tmp/ccYBty5e.o: in function `main':
 /xc/git/postgres/conftest.c:133: undefined reference to `setproctitle'
 collect2: error: ld returned 1 exit status
 configure:17642: $? = 1
@@ -5732,7 +5732,7 @@ configure: failed program was:
 configure:17642: result: no
 configure:17648: checking for setproctitle_fast
 configure:17648: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccHbHDfC.o: in function `main':
+/usr/bin/ld: /tmp/cc8fLs0x.o: in function `main':
 /xc/git/postgres/conftest.c:133: undefined reference to `setproctitle_fast'
 collect2: error: ld returned 1 exit status
 configure:17648: $? = 1
@@ -5912,7 +5912,7 @@ configure:17702: $? = 0
 configure:17702: result: yes
 configure:17708: checking for wcstombs_l
 configure:17708: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccJu10E3.o: in function `main':
+/usr/bin/ld: /tmp/ccMNcKOb.o: in function `main':
 /xc/git/postgres/conftest.c:142: undefined reference to `wcstombs_l'
 collect2: error: ld returned 1 exit status
 configure:17708: $? = 1
@@ -7298,7 +7298,7 @@ configure:18469: $? = 0
 configure:18469: result: yes
 configure:18482: checking for fls
 configure:18482: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccS8bPYr.o: in function `main':
+/usr/bin/ld: /tmp/ccfHJgYZ.o: in function `main':
 /xc/git/postgres/conftest.c:164: undefined reference to `fls'
 collect2: error: ld returned 1 exit status
 configure:18482: $? = 1
@@ -7515,7 +7515,7 @@ configure:18599: $? = 0
 configure:18599: result: yes
 configure:18612: checking for strlcat
 configure:18612: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/cccTfR1E.o: in function `main':
+/usr/bin/ld: /tmp/ccW8CPnM.o: in function `main':
 /xc/git/postgres/conftest.c:173: undefined reference to `strlcat'
 collect2: error: ld returned 1 exit status
 configure:18612: $? = 1
@@ -7699,7 +7699,7 @@ configure: failed program was:
 configure:18612: result: no
 configure:18625: checking for strlcpy
 configure:18625: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccYYFkWs.o: in function `main':
+/usr/bin/ld: /tmp/cckj83DA.o: in function `main':
 /xc/git/postgres/conftest.c:173: undefined reference to `strlcpy'
 collect2: error: ld returned 1 exit status
 configure:18625: $? = 1
@@ -7902,7 +7902,7 @@ configure:18717: $? = 0
 configure:18717: result: yes
 configure:18730: checking for getpeereid
 configure:18730: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccSGaqDK.o: in function `main':
+/usr/bin/ld: /tmp/cchg1IsP.o: in function `main':
 /xc/git/postgres/conftest.c:177: undefined reference to `getpeereid'
 collect2: error: ld returned 1 exit status
 configure:18730: $? = 1
@@ -8110,8 +8110,8 @@ configure:18968: $? = 0
 configure:18977: result: yes
 configure:18985: checking for optreset
 configure:19002: gcc -o conftest -Wall -Wmissing-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wendif-labels -Wmissing-format-attribute -Wformat-security -fno-strict-aliasing -fwrapv -fexcess-precision=standard -Wno-format-truncation -Wno-stringop-truncation -DPGXC -g  -D_GNU_SOURCE    conftest.c -lz  -lcrypt -lm  >&5
-/usr/bin/ld: /tmp/ccMhGmBW.o: warning: relocation against `optreset' in read-only section `.text'
-/usr/bin/ld: /tmp/ccMhGmBW.o: in function `main':
+/usr/bin/ld: /tmp/ccmS7G9Q.o: warning: relocation against `optreset' in read-only section `.text'
+/usr/bin/ld: /tmp/ccmS7G9Q.o: in function `main':
 /xc/git/postgres/conftest.c:158: undefined reference to `optreset'
 /usr/bin/ld: warning: creating DT_TEXTREL in a PIE
 collect2: error: ld returned 1 exit status

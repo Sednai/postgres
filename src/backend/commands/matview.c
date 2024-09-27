@@ -34,6 +34,7 @@
 #ifdef PGXC
 #include "commands/copy.h"
 #include "commands/createas.h"
+#include "commands/vacuum.h"
 #endif /* PGXC */
 #include "commands/matview.h"
 #include "commands/tablecmds.h"
@@ -167,7 +168,7 @@ ExecRefreshMatView(RefreshMatViewStmt *stmt, const char *queryString,
 	int			save_sec_context;
 	int			save_nestlevel;
 	ObjectAddress address;
-
+	
 	/* Determine strength of lock needed. */
 	concurrent = stmt->concurrent;
 	lockmode = concurrent ? ExclusiveLock : AccessExclusiveLock;
@@ -635,7 +636,6 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 	appendStringInfo(&querybuf, "ANALYZE %s", tempname);
 	if (SPI_exec(querybuf.data, 0) != SPI_OK_UTILITY)
 		elog(ERROR, "SPI_exec failed: %s", querybuf.data);
-
 	/*
 	 * We need to ensure that there are not duplicate rows without NULLs in
 	 * the new data set before we can count on the "diff" results.  Check for
@@ -687,7 +687,12 @@ refresh_by_match_merge(Oid matviewOid, Oid tempOid, Oid relowner,
 						   save_sec_context | SECURITY_LOCAL_USERID_CHANGE);
 	resetStringInfo(&querybuf);
 	appendStringInfo(&querybuf,
+#ifdef PGXC
+					 "CREATE LOCAL TEMP TABLE %s (tid pg_catalog.tid)",
+
+#else
 					 "CREATE TEMP TABLE %s (tid pg_catalog.tid)",
+#endif
 					 diffname);
 	if (SPI_exec(querybuf.data, 0) != SPI_OK_UTILITY)
 		elog(ERROR, "SPI_exec failed: %s", querybuf.data);

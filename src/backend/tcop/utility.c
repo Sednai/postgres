@@ -888,8 +888,44 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 				 * We have to run the command on nodes before Coordinator because
 				 * vacuum() pops active snapshot and we can not send it to nodes
 				 */
-				if (IS_PGXC_COORDINATOR)
-					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, true, EXEC_ON_DATANODES, false);
+				if (IS_PGXC_COORDINATOR) {
+					bool has_local;
+
+					ListCell   *cell;
+			
+					RemoteQueryExecType exec_type;
+					bool first = true;
+					bool is_local = false;
+
+					foreach (cell, stmt->rels)
+					{
+						VacuumRelation   *vacrel = (VacuumRelation *) lfirst(cell);
+						Oid			relid = vacrel->oid;
+
+						/* Skip if object does not exist */
+						if (!OidIsValid(relid))
+							relid = RangeVarGetRelid(vacrel->relation, NoLock, false);
+							if (!OidIsValid(relid))
+								continue;
+
+						Relation rel = relation_open(relid, NoLock);
+						bool res = rel->rd_locator_info;
+						relation_close(rel, NoLock);
+						
+						if(first) {
+							is_local = (res == NIL);
+							first = false;
+						}
+						else 
+							if(is_local != res)
+								ereport(ERROR,
+												(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+												 errmsg("VACUUM/ANALYZE does not supported for LOCAL and non-LOCAL objects"),
+												 errdetail("You should separate LOCAL and non-LOCAL objects")));	
+					}
+				
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, true,(is_local) ? EXEC_ON_NONE : EXEC_ON_DATANODES, false);
+				}
 #endif
 				/* forbidden in parallel mode due to CommandIsReadOnly */
 				ExecVacuum(pstate, stmt, isTopLevel);
@@ -1548,7 +1584,8 @@ ProcessUtilitySlow(ParseState *pstate,
 #ifdef PGXC
 					ListCell   *l;
 					bool		is_temp = false;
-					
+					bool		is_local = false;
+
 					if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
 					{
 						/*
@@ -1567,12 +1604,14 @@ ProcessUtilitySlow(ParseState *pstate,
 							{
 								CreateStmt *stmt_loc = (CreateStmt *) stmt;
 								bool is_object_temp = stmt_loc->relation->relpersistence == RELPERSISTENCE_TEMP;
-
+								bool is_object_local = stmt_loc->islocal; 
 								if (is_first)
 								{
 									is_first = false;
 									if (is_object_temp)
 										is_temp = true;
+									if(is_object_local) 
+										is_local = true;
 								}
 								else
 								{
@@ -1581,6 +1620,12 @@ ProcessUtilitySlow(ParseState *pstate,
 												(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 												 errmsg("CREATE not supported for TEMP and non-TEMP objects"),
 												 errdetail("You should separate TEMP and non-TEMP objects")));
+									
+									if (is_object_local != is_local)
+										ereport(ERROR,
+												(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+												 errmsg("CREATE not supported for LOCAL and non-LOCAL objects"),
+												 errdetail("You should separate LOCAL and non-LOCAL objects")));							
 								}
 							}
 							else if (IsA(stmt, CreateForeignTableStmt))
@@ -1607,7 +1652,7 @@ ProcessUtilitySlow(ParseState *pstate,
 					 * Coordinator, if not already done so
 					 */
 					if (!sentToRemote)
-						stmts = AddRemoteQueryNode(stmts, queryString, EXEC_ON_ALL_NODES, is_temp);
+						stmts = AddRemoteQueryNode(stmts, queryString, is_local ? EXEC_ON_NONE : EXEC_ON_ALL_NODES, is_temp);
 #endif
 
 
@@ -3065,8 +3110,20 @@ ExecUtilityFindNodesRelkind(Oid relid, bool *is_temp)
 			break;
 
 		case RELKIND_RELATION:
-			*is_temp = IsTempTable(relid);
-			exec_type = EXEC_ON_ALL_NODES;
+			Relation	rel;
+			bool		res;	
+			rel = relation_open(relid, NoLock);
+			res = rel->rd_locator_info;
+			relation_close(rel, NoLock);
+			
+			/* Check if local only table */
+			if(!res) {
+				exec_type = EXEC_ON_NONE;
+				*is_temp = true;
+			} else {
+				*is_temp = (rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP);
+				exec_type = EXEC_ON_ALL_NODES;
+			}	
 			break;
 
 		case RELKIND_VIEW:
@@ -3079,6 +3136,7 @@ ExecUtilityFindNodesRelkind(Oid relid, bool *is_temp)
 		default:
 			*is_temp = false;
 			exec_type = EXEC_ON_ALL_NODES;
+			
 			break;
 	}
 

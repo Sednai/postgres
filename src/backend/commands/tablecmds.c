@@ -933,7 +933,7 @@ DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 	 *    should not try to find out the node list itself.
 	 */
 	if ((IS_PGXC_COORDINATOR || (isRestoreMode && stmt->distributeby != NULL))
-		&& (relkind == RELKIND_RELATION || relkind == RELKIND_PARTITIONED_TABLE) )
+		&& (relkind == RELKIND_RELATION || relkind == RELKIND_PARTITIONED_TABLE) && !stmt->islocal)
 	{
 		AddRelationDistribution(relationId, stmt->distributeby,
 								stmt->subcluster, inheritOids, descriptor);
@@ -18560,6 +18560,26 @@ IsTempTable(Oid relid)
 	 */
 	rel = relation_open(relid, NoLock);
 	res = rel->rd_rel->relpersistence == RELPERSISTENCE_TEMP;
+	relation_close(rel, NoLock);
+	return res;
+}
+
+/*
+ * IsLocalTable
+ *
+ * Check if given table Oid is local only.
+ */
+bool
+IsLocalTable(Oid relid)
+{
+	Relation	rel;
+	bool		res;
+	/*
+	 * PGXCTODO: Is it correct to open without locks?
+	 * we just check if this table is temporary though...
+	 */
+	rel = relation_open(relid, NoLock);
+	res = rel->rd_locator_info;
 	relation_close(rel, NoLock);
 	return res;
 }

@@ -103,6 +103,7 @@ extern void RangeVarCallbackOwnsTable(const RangeVar *relation,
 
 #ifdef PGXC
 extern bool IsTempTable(Oid relid);
+extern bool IsLocalTable(Oid relid);
 extern bool IsIndexUsingTempTable(Oid relid);
 extern bool IsOnCommitActions(void);
 extern void DropTableThrowErrorExternal(RangeVar *relation,

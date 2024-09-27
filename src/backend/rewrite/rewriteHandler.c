@@ -4531,6 +4531,7 @@ QueryRewriteCTAS(Query *parsetree, bool execute)
 	/* Start building a CreateStmt for creating the target table */
 	create_stmt = makeNode(CreateStmt);
 	create_stmt->relation = relation;
+	create_stmt->islocal = stmt->islocal;
 	into = stmt->into;
 
 	/* Obtain the target list of new table */
