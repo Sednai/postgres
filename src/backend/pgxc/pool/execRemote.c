@@ -4239,7 +4239,7 @@ ExecProcNodeDMLInXC(EState *estate,
 	 */
 	if (TupIsNull(sourceDataSlot))
 		return NULL;
-
+	
 	/*
 	 * The current implementation of DMLs with RETURNING when run on replicated
 	 * tables returns row from one of the datanodes. In order to achieve this

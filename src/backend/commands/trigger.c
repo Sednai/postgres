@@ -6556,7 +6556,7 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 
 #ifdef PGXC
 		if(newslot == NULL)
-			continue;
+			elog(ERROR,"AfterTrigger without remote data (PGXC not working yet)");
 #endif
 		if (!TriggerEnabled(estate, relinfo, trigger, event,
 							modifiedCols, oldslot, newslot))
