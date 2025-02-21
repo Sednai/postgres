@@ -4,7 +4,7 @@
  *	  This file contains routines to support indexes defined on system
  *	  catalogs.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,6 +18,7 @@
 #include "access/genam.h"
 #include "access/heapam.h"
 #include "access/htup_details.h"
+#include "access/xact.h"
 #include "catalog/index.h"
 #include "catalog/indexing.h"
 #include "catalog/pg_subscription.h"
@@ -167,6 +168,7 @@ CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple)
 					 heapRelation,
 					 index->rd_index->indisunique ?
 					 UNIQUE_CHECK_YES : UNIQUE_CHECK_NO,
+					 false,
 					 indexInfo);
 	}
 
@@ -199,17 +201,7 @@ CatalogTupleCheckConstraints(Relation heapRel, HeapTuple tup)
 		{
 			Form_pg_attribute thisatt = TupleDescAttr(tupdesc, attnum);
 
-			/*
-			 * Through an embarrassing oversight, pre-v13 installations have
-			 * pg_subscription.subslotname and pg_subscription_rel.srsublsn
-			 * marked as attnotnull, which they should not be.  Ignore those
-			 * flags.
-			 */
-			Assert(!(thisatt->attnotnull && att_isnull(attnum, bp) &&
-					 !((thisatt->attrelid == SubscriptionRelationId &&
-						thisatt->attnum == Anum_pg_subscription_subslotname) ||
-					   (thisatt->attrelid == SubscriptionRelRelationId &&
-						thisatt->attnum == Anum_pg_subscription_rel_srsublsn))));
+			Assert(!(thisatt->attnotnull && att_isnull(attnum, bp)));
 		}
 	}
 }
@@ -224,7 +216,6 @@ CatalogTupleCheckConstraints(Relation heapRel, HeapTuple tup)
  * CatalogTupleInsert - do heap and indexing work for a new catalog tuple
  *
  * Insert the tuple data in "tup" into the specified catalog relation.
- * The Oid of the inserted tuple is returned.
  *
  * This is a convenience routine for the common case of inserting a single
  * tuple in a system catalog; it inserts a new heap tuple, keeping indexes
@@ -264,6 +255,41 @@ CatalogTupleInsertWithInfo(Relation heapRel, HeapTuple tup,
 	simple_heap_insert(heapRel, tup);
 
 	CatalogIndexInsert(indstate, tup);
+}
+
+/*
+ * CatalogTuplesMultiInsertWithInfo - as above, but for multiple tuples
+ *
+ * Insert multiple tuples into the given catalog relation at once, with an
+ * amortized cost of CatalogOpenIndexes.
+ */
+void
+CatalogTuplesMultiInsertWithInfo(Relation heapRel, TupleTableSlot **slot,
+								 int ntuples, CatalogIndexState indstate)
+{
+	/* Nothing to do */
+	if (ntuples <= 0)
+		return;
+
+	heap_multi_insert(heapRel, slot, ntuples,
+					  GetCurrentCommandId(true), 0, NULL);
+
+	/*
+	 * There is no equivalent to heap_multi_insert for the catalog indexes, so
+	 * we must loop over and insert individually.
+	 */
+	for (int i = 0; i < ntuples; i++)
+	{
+		bool		should_free;
+		HeapTuple	tuple;
+
+		tuple = ExecFetchSlotHeapTuple(slot[i], true, &should_free);
+		tuple->t_tableOid = slot[i]->tts_tableOid;
+		CatalogIndexInsert(indstate, tuple);
+
+		if (should_free)
+			heap_freetuple(tuple);
+	}
 }
 
 /*

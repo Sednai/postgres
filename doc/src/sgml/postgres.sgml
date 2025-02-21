@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/postgres.sgml -->
 
-<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.2//EN"
-          "http://www.oasis-open.org/docbook/xml/4.2/docbookx.dtd"
+<!DOCTYPE book PUBLIC "-//OASIS//DTD DocBook XML V4.5//EN"
+          "http://www.oasis-open.org/docbook/xml/4.5/docbookx.dtd"
 [
 
 <!ENTITY % version SYSTEM "version.sgml">
@@ -9,7 +9,15 @@
 <!ENTITY % filelist SYSTEM "filelist.sgml">
 %filelist;
 
+<!ENTITY commit_baseurl "https://postgr.es/c/">
 <!ENTITY reference  SYSTEM "reference.sgml">
+
+<!--
+Zero-width space.  Use this to allow line breaks at desirable places in
+table cells, examples, etc. without causing an unwanted space when the
+break is not needed in a wider output rendering.
+-->
+<!ENTITY zwsp "&#x200B;">
 
 ]>
 
@@ -147,6 +155,7 @@
    </para>
   </partintro>
 
+  &installbin;
   &installation;
   &installw;
   &runtime;
@@ -225,6 +234,7 @@
   &bgworker;
   &logicaldecoding;
   &replication-origins;
+  &archive-modules;
 
  </part>
 
@@ -242,6 +252,7 @@
 
   &arch-dev;
   &catalogs;
+  &system-views;
   &protocol;
   &sources;
   &nls;
@@ -253,6 +264,7 @@
   &tableam;
   &indexam;
   &generic-wal;
+  &custom-rmgr;
   &btree;
   &gist;
   &spgist;
@@ -262,6 +274,7 @@
   &storage;
   &bki;
   &planstats;
+  &backup-manifest;
 
  </part>
 
@@ -279,6 +292,8 @@
   &docguide;
   &limits;
   &acronyms;
+  &glossary;
+  &color;
   &obsolete;
 
  </part>

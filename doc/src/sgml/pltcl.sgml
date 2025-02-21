@@ -1,7 +1,7 @@
 <!-- doc/src/sgml/pltcl.sgml -->
 
  <chapter id="pltcl">
-  <title>PL/Tcl - Tcl Procedural Language</title>
+  <title>PL/Tcl &mdash; Tcl Procedural Language</title>
 
   <indexterm zone="pltcl">
    <primary>PL/Tcl</primary>
@@ -279,7 +279,7 @@ $$ LANGUAGE pltcl;
      functions will share the same global variables if and only if they are
      executed by the same SQL role.  In an application wherein a single
      session executes code under multiple SQL roles (via <literal>SECURITY
-     DEFINER</literal> functions, use of <command>SET ROLE</command>, etc) you may need to
+     DEFINER</literal> functions, use of <command>SET ROLE</command>, etc.) you may need to
      take explicit steps to ensure that PL/Tcl functions can share data.  To
      do that, make sure that functions that should communicate are owned by
      the same user, and mark them <literal>SECURITY DEFINER</literal>.  You must of
@@ -479,7 +479,7 @@ $$ LANGUAGE pltcl;
       <listitem>
        <para>
         The Tcl script contained in <replaceable>command</replaceable> is
-        executed within a SQL subtransaction.  If the script returns an
+        executed within an SQL subtransaction.  If the script returns an
         error, that entire subtransaction is rolled back before returning the
         error out to the surrounding Tcl code.
         See <xref linkend="pltcl-subtransactions"/> for more details and an
@@ -858,7 +858,7 @@ CREATE EVENT TRIGGER tcl_a_snitch ON ddl_command_start EXECUTE FUNCTION tclsnitc
      PL/Tcl's <function>elog</function> command.  Such errors can be caught
      within Tcl using the Tcl <function>catch</function> command.  If an
      error is not caught but is allowed to propagate out to the top level of
-     execution of the PL/Tcl function, it is reported as a SQL error in the
+     execution of the PL/Tcl function, it is reported as an SQL error in the
      function's calling query.
     </para>
 
@@ -871,7 +871,7 @@ CREATE EVENT TRIGGER tcl_a_snitch ON ddl_command_start EXECUTE FUNCTION tclsnitc
      subtransaction, which is rolled back on error, so that any
      partially-completed operation is automatically cleaned up.)
      Again, if an error propagates out to the top level without being caught,
-     it turns back into a SQL error.
+     it turns back into an SQL error.
     </para>
 
     <para>

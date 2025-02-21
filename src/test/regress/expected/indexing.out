@@ -122,10 +122,11 @@ Partition of: idxparti2
 No partition constraint
 btree, for table "public.idxpart1"
 
--- ALTER TABLE when attaching or detaching an index to a partition.
+-- Forbid ALTER TABLE when attaching or detaching an index to a partition.
 create index idxpart_c on only idxpart (c);
 create index idxpart1_c on idxpart1 (c);
 alter table idxpart_c attach partition idxpart1_c for values from (10) to (20);
+ERROR:  "idxpart_c" is not a partitioned table
 alter index idxpart_c attach partition idxpart1_c;
 select relname, relpartbound from pg_class
   where relname in ('idxpart_c', 'idxpart1_c')
@@ -137,7 +138,8 @@ select relname, relpartbound from pg_class
 (2 rows)
 
 alter table idxpart_c detach partition idxpart1_c;
-ERROR:  "idxpart_c" is not a table
+ERROR:  ALTER action DETACH PARTITION cannot be performed on relation "idxpart_c"
+DETAIL:  This operation is not supported for partitioned indexes.
 drop table idxpart;
 -- If a partition already has an index, don't create a duplicative one
 create table idxpart (a int, b int) partition by range (a, b);
@@ -1289,7 +1291,7 @@ create index idxpart_brin on idxpart using brin(b);
 explain (costs off) select * from idxpart where b = 'abcd';
                 QUERY PLAN                 
 -------------------------------------------
- Bitmap Heap Scan on idxpart1
+ Bitmap Heap Scan on idxpart1 idxpart
    Recheck Cond: (b = 'abcd'::text)
    ->  Bitmap Index Scan on idxpart1_b_idx
          Index Cond: (b = 'abcd'::text)
@@ -1300,7 +1302,7 @@ create index idxpart_spgist on idxpart using spgist(b);
 explain (costs off) select * from idxpart where b = 'abcd';
                 QUERY PLAN                 
 -------------------------------------------
- Bitmap Heap Scan on idxpart1
+ Bitmap Heap Scan on idxpart1 idxpart
    Recheck Cond: (b = 'abcd'::text)
    ->  Bitmap Index Scan on idxpart1_b_idx
          Index Cond: (b = 'abcd'::text)
@@ -1311,7 +1313,7 @@ create index idxpart_gin on idxpart using gin(c);
 explain (costs off) select * from idxpart where c @> array[42];
                   QUERY PLAN                  
 ----------------------------------------------
- Bitmap Heap Scan on idxpart1
+ Bitmap Heap Scan on idxpart1 idxpart
    Recheck Cond: (c @> '{42}'::integer[])
    ->  Bitmap Index Scan on idxpart1_c_idx
          Index Cond: (c @> '{42}'::integer[])

@@ -30,6 +30,7 @@
 #include "parser/parse_type.h"
 #include "pgstat.h"
 #include "tcop/tcopprot.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/memutils.h"
@@ -53,6 +54,10 @@ PG_MODULE_MAGIC;
 /* Hack to deal with Tcl 8.6 const-ification without losing compatibility */
 #ifndef CONST86
 #define CONST86
+#endif
+
+#if !HAVE_TCL_VERSION(8,7)
+typedef int Tcl_Size;
 #endif
 
 /* define our text domain for translations */
@@ -431,14 +436,13 @@ _PG_init(void)
 	 * stdout and stderr on DeleteInterp
 	 ************************************************************/
 	if ((pltcl_hold_interp = Tcl_CreateInterp()) == NULL)
-		elog(ERROR, "could not create master Tcl interpreter");
+		elog(ERROR, "could not create dummy Tcl interpreter");
 	if (Tcl_Init(pltcl_hold_interp) == TCL_ERROR)
-		elog(ERROR, "could not initialize master Tcl interpreter");
+		elog(ERROR, "could not initialize dummy Tcl interpreter");
 
 	/************************************************************
 	 * Create the hash table for working interpreters
 	 ************************************************************/
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(pltcl_interp_desc);
 	pltcl_interp_htab = hash_create("PL/Tcl interpreters",
@@ -449,7 +453,6 @@ _PG_init(void)
 	/************************************************************
 	 * Create the hash table for function lookup
 	 ************************************************************/
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(pltcl_proc_key);
 	hash_ctl.entrysize = sizeof(pltcl_proc_ptr);
 	pltcl_proc_htab = hash_create("PL/Tcl functions",
@@ -475,6 +478,9 @@ _PG_init(void)
 							   PGC_SUSET, 0,
 							   NULL, NULL, NULL);
 
+	MarkGUCPrefixReserved("pltcl");
+	MarkGUCPrefixReserved("pltclu");
+
 	pltcl_pm_init_done = true;
 }
 
@@ -488,14 +494,14 @@ pltcl_init_interp(pltcl_interp_desc *interp_desc, Oid prolang, bool pltrusted)
 	char		interpname[32];
 
 	/************************************************************
-	 * Create the Tcl interpreter as a slave of pltcl_hold_interp.
+	 * Create the Tcl interpreter subsidiary to pltcl_hold_interp.
 	 * Note: Tcl automatically does Tcl_Init in the untrusted case,
 	 * and it's not wanted in the trusted case.
 	 ************************************************************/
-	snprintf(interpname, sizeof(interpname), "slave_%u", interp_desc->user_id);
+	snprintf(interpname, sizeof(interpname), "subsidiary_%u", interp_desc->user_id);
 	if ((interp = Tcl_CreateSlave(pltcl_hold_interp, interpname,
 								  pltrusted ? 1 : 0)) == NULL)
-		elog(ERROR, "could not create slave Tcl interpreter");
+		elog(ERROR, "could not create subsidiary Tcl interpreter");
 
 	/************************************************************
 	 * Initialize the query hash table associated with interpreter
@@ -592,7 +598,6 @@ call_pltcl_start_proc(Oid prolang, bool pltrusted)
 	const char *gucname;
 	ErrorContextCallback errcallback;
 	List	   *namelist;
-	Oid			fargtypes[1];	/* dummy */
 	Oid			procOid;
 	HeapTuple	procTup;
 	Form_pg_proc procStruct;
@@ -616,7 +621,7 @@ call_pltcl_start_proc(Oid prolang, bool pltrusted)
 
 	/* Parse possibly-qualified identifier and look up the function */
 	namelist = stringToQualifiedNameList(start_proc);
-	procOid = LookupFuncName(namelist, 0, fargtypes, false);
+	procOid = LookupFuncName(namelist, 0, NULL, false);
 
 	/* Current user must have permission to call function */
 	aclresult = pg_proc_aclcheck(procOid, GetUserId(), ACL_EXECUTE);
@@ -718,7 +723,7 @@ pltclu_call_handler(PG_FUNCTION_ARGS)
 static Datum
 pltcl_handler(PG_FUNCTION_ARGS, bool pltrusted)
 {
-	Datum		retval;
+	Datum		retval = (Datum) 0;
 	pltcl_call_state current_call_state;
 	pltcl_call_state *save_call_state;
 
@@ -765,9 +770,13 @@ pltcl_handler(PG_FUNCTION_ARGS, bool pltrusted)
 			retval = pltcl_func_handler(fcinfo, &current_call_state, pltrusted);
 		}
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		/* Restore static pointer, then clean up the prodesc refcount if any */
+		/*
+		 * (We're being paranoid in case an error is thrown in context
+		 * deletion)
+		 */
 		pltcl_current_call_state = save_call_state;
 		if (current_call_state.prodesc != NULL)
 		{
@@ -775,19 +784,8 @@ pltcl_handler(PG_FUNCTION_ARGS, bool pltrusted)
 			if (--current_call_state.prodesc->fn_refcount == 0)
 				MemoryContextDelete(current_call_state.prodesc->fn_cxt);
 		}
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	/* Restore static pointer, then clean up the prodesc refcount if any */
-	/* (We're being paranoid in case an error is thrown in context deletion) */
-	pltcl_current_call_state = save_call_state;
-	if (current_call_state.prodesc != NULL)
-	{
-		Assert(current_call_state.prodesc->fn_refcount > 0);
-		if (--current_call_state.prodesc->fn_refcount == 0)
-			MemoryContextDelete(current_call_state.prodesc->fn_cxt);
-	}
 
 	return retval;
 }
@@ -835,11 +833,15 @@ pltcl_func_handler(PG_FUNCTION_ARGS, pltcl_call_state *call_state,
 	{
 		ReturnSetInfo *rsi = (ReturnSetInfo *) fcinfo->resultinfo;
 
-		if (!rsi || !IsA(rsi, ReturnSetInfo) ||
-			(rsi->allowedModes & SFRM_Materialize) == 0)
+		if (!rsi || !IsA(rsi, ReturnSetInfo))
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 					 errmsg("set-valued function called in context that cannot accept a set")));
+
+		if (!(rsi->allowedModes & SFRM_Materialize))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("materialize mode required, but it is not allowed in this context")));
 
 		call_state->rsi = rsi;
 		call_state->tuple_store_cxt = rsi->econtext->ecxt_per_query_memory;
@@ -990,7 +992,7 @@ pltcl_func_handler(PG_FUNCTION_ARGS, pltcl_call_state *call_state,
 		HeapTuple	tup;
 		Tcl_Obj    *resultObj;
 		Tcl_Obj   **resultObjv;
-		int			resultObjc;
+		Tcl_Size	resultObjc;
 
 		/*
 		 * Set up data about result type.  XXX it's tempting to consider
@@ -1066,7 +1068,7 @@ pltcl_trigger_handler(PG_FUNCTION_ARGS, pltcl_call_state *call_state,
 	int			tcl_rc;
 	int			i;
 	const char *result;
-	int			result_Objc;
+	Tcl_Size	result_Objc;
 	Tcl_Obj   **result_Objv;
 	int			rc PG_USED_FOR_ASSERTS_ONLY;
 
@@ -1248,7 +1250,6 @@ pltcl_trigger_handler(PG_FUNCTION_ARGS, pltcl_call_state *call_state,
 		for (i = 0; i < trigdata->tg_trigger->tgnargs; i++)
 			Tcl_ListObjAppendElement(NULL, tcl_cmd,
 									 Tcl_NewStringObj(utf_e2u(trigdata->tg_trigger->tgargs[i]), -1));
-
 	}
 	PG_CATCH();
 	{
@@ -1343,7 +1344,8 @@ pltcl_event_trigger_handler(PG_FUNCTION_ARGS, pltcl_call_state *call_state,
 	Tcl_ListObjAppendElement(NULL, tcl_cmd,
 							 Tcl_NewStringObj(utf_e2u(tdata->event), -1));
 	Tcl_ListObjAppendElement(NULL, tcl_cmd,
-							 Tcl_NewStringObj(utf_e2u(tdata->tag), -1));
+							 Tcl_NewStringObj(utf_e2u(GetCommandTagName(tdata->tag)),
+											  -1));
 
 	tcl_rc = Tcl_EvalObjEx(interp, tcl_cmd, (TCL_EVAL_DIRECT | TCL_EVAL_GLOBAL));
 
@@ -1545,7 +1547,7 @@ compile_pltcl_function(Oid fn_oid, Oid tgreloid,
 					rettype == RECORDOID)
 					 /* okay */ ;
 				else if (rettype == TRIGGEROID ||
-						 rettype == EVTTRIGGEROID)
+						 rettype == EVENT_TRIGGEROID)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("trigger functions can only be called as triggers")));
@@ -1641,7 +1643,7 @@ compile_pltcl_function(Oid fn_oid, Oid tgreloid,
 
 		/************************************************************
 		 * prefix procedure body with
-		 * upvar #0 <internal_procname> GD
+		 * upvar #0 <internal_proname> GD
 		 * and with appropriate setting of arguments
 		 ************************************************************/
 		Tcl_DStringAppend(&proc_internal_body, "upvar #0 ", -1);
@@ -2014,7 +2016,7 @@ pltcl_quote(ClientData cdata, Tcl_Interp *interp,
 	char	   *tmp;
 	const char *cp1;
 	char	   *cp2;
-	int			length;
+	Tcl_Size	length;
 
 	/************************************************************
 	 * Check call syntax
@@ -2208,7 +2210,7 @@ pltcl_returnnext(ClientData cdata, Tcl_Interp *interp,
 		if (prodesc->fn_retistuple)
 		{
 			Tcl_Obj   **rowObjv;
-			int			rowObjc;
+			Tcl_Size	rowObjc;
 
 			/* result should be a list, so break it down */
 			if (Tcl_ListObjGetElements(interp, objv[1], &rowObjc, &rowObjv) == TCL_ERROR)
@@ -2451,6 +2453,7 @@ pltcl_process_SPI_result(Tcl_Interp *interp,
 		case SPI_OK_INSERT:
 		case SPI_OK_DELETE:
 		case SPI_OK_UPDATE:
+		case SPI_OK_MERGE:
 			Tcl_SetObjResult(interp, Tcl_NewWideIntObj(ntuples));
 			break;
 
@@ -2548,7 +2551,7 @@ pltcl_SPI_prepare(ClientData cdata, Tcl_Interp *interp,
 				  int objc, Tcl_Obj *const objv[])
 {
 	volatile MemoryContext plan_cxt = NULL;
-	int			nargs;
+	Tcl_Size	nargs;
 	Tcl_Obj   **argsObj;
 	pltcl_query_desc *qdesc;
 	int			i;
@@ -2685,7 +2688,7 @@ pltcl_SPI_execute_plan(ClientData cdata, Tcl_Interp *interp,
 	const char *arrayname = NULL;
 	Tcl_Obj    *loop_body = NULL;
 	int			count = 0;
-	int			callObjc;
+	Tcl_Size	callObjc;
 	Tcl_Obj   **callObjv = NULL;
 	Datum	   *argvalues;
 	MemoryContext oldcontext = CurrentMemoryContext;
@@ -2764,8 +2767,7 @@ pltcl_SPI_execute_plan(ClientData cdata, Tcl_Interp *interp,
 		if (strlen(nulls) != qdesc->nargs)
 		{
 			Tcl_SetObjResult(interp,
-							 Tcl_NewStringObj(
-											  "length of nulls string doesn't match number of arguments",
+							 Tcl_NewStringObj("length of nulls string doesn't match number of arguments",
 											  -1));
 			return TCL_ERROR;
 		}
@@ -2780,9 +2782,8 @@ pltcl_SPI_execute_plan(ClientData cdata, Tcl_Interp *interp,
 		if (i >= objc)
 		{
 			Tcl_SetObjResult(interp,
-							 Tcl_NewStringObj(
-											  "argument list length doesn't match number of arguments for query"
-											  ,-1));
+							 Tcl_NewStringObj("argument list length doesn't match number of arguments for query",
+											  -1));
 			return TCL_ERROR;
 		}
 
@@ -2798,9 +2799,8 @@ pltcl_SPI_execute_plan(ClientData cdata, Tcl_Interp *interp,
 		if (callObjc != qdesc->nargs)
 		{
 			Tcl_SetObjResult(interp,
-							 Tcl_NewStringObj(
-											  "argument list length doesn't match number of arguments for query"
-											  ,-1));
+							 Tcl_NewStringObj("argument list length doesn't match number of arguments for query",
+											  -1));
 			return TCL_ERROR;
 		}
 	}
@@ -3032,7 +3032,7 @@ pltcl_set_tuple_values(Tcl_Interp *interp, const char *arrayname,
 	const char *nullname = NULL;
 
 	/************************************************************
-	 * Prepare pointers for Tcl_SetVar2() below
+	 * Prepare pointers for Tcl_SetVar2Ex() below
 	 ************************************************************/
 	if (arrayname == NULL)
 	{

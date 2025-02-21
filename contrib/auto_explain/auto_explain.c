@@ -3,7 +3,7 @@
  * auto_explain.c
  *
  *
- * Copyright (c) 2008-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2008-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/auto_explain/auto_explain.c
@@ -16,6 +16,7 @@
 
 #include "access/parallel.h"
 #include "commands/explain.h"
+#include "common/pg_prng.h"
 #include "executor/instrument.h"
 #include "jit/jit.h"
 #include "utils/guc.h"
@@ -27,6 +28,7 @@ static int	auto_explain_log_min_duration = -1; /* msec or -1 */
 static bool auto_explain_log_analyze = false;
 static bool auto_explain_log_verbose = false;
 static bool auto_explain_log_buffers = false;
+static bool auto_explain_log_wal = false;
 static bool auto_explain_log_triggers = false;
 static bool auto_explain_log_timing = true;
 static bool auto_explain_log_settings = false;
@@ -75,7 +77,6 @@ static ExecutorFinish_hook_type prev_ExecutorFinish = NULL;
 static ExecutorEnd_hook_type prev_ExecutorEnd = NULL;
 
 void		_PG_init(void);
-void		_PG_fini(void);
 
 static void explain_ExecutorStart(QueryDesc *queryDesc, int eflags);
 static void explain_ExecutorRun(QueryDesc *queryDesc,
@@ -141,6 +142,17 @@ _PG_init(void)
 							 "Log buffers usage.",
 							 NULL,
 							 &auto_explain_log_buffers,
+							 false,
+							 PGC_SUSET,
+							 0,
+							 NULL,
+							 NULL,
+							 NULL);
+
+	DefineCustomBoolVariable("auto_explain.log_wal",
+							 "Log WAL usage.",
+							 NULL,
+							 &auto_explain_log_wal,
 							 false,
 							 PGC_SUSET,
 							 0,
@@ -218,7 +230,7 @@ _PG_init(void)
 							 NULL,
 							 NULL);
 
-	EmitWarningsOnPlaceholders("auto_explain");
+	MarkGUCPrefixReserved("auto_explain");
 
 	/* Install hooks. */
 	prev_ExecutorStart = ExecutorStart_hook;
@@ -229,19 +241,6 @@ _PG_init(void)
 	ExecutorFinish_hook = explain_ExecutorFinish;
 	prev_ExecutorEnd = ExecutorEnd_hook;
 	ExecutorEnd_hook = explain_ExecutorEnd;
-}
-
-/*
- * Module unload callback
- */
-void
-_PG_fini(void)
-{
-	/* Uninstall hooks. */
-	ExecutorStart_hook = prev_ExecutorStart;
-	ExecutorRun_hook = prev_ExecutorRun;
-	ExecutorFinish_hook = prev_ExecutorFinish;
-	ExecutorEnd_hook = prev_ExecutorEnd;
 }
 
 /*
@@ -263,8 +262,7 @@ explain_ExecutorStart(QueryDesc *queryDesc, int eflags)
 	if (nesting_level == 0)
 	{
 		if (auto_explain_log_min_duration >= 0 && !IsParallelWorker())
-			current_query_sampled = (random() < auto_explain_sample_rate *
-									 ((double) MAX_RANDOM_VALUE + 1));
+			current_query_sampled = (pg_prng_double(&pg_global_prng_state) < auto_explain_sample_rate);
 		else
 			current_query_sampled = false;
 	}
@@ -280,6 +278,8 @@ explain_ExecutorStart(QueryDesc *queryDesc, int eflags)
 				queryDesc->instrument_options |= INSTRUMENT_ROWS;
 			if (auto_explain_log_buffers)
 				queryDesc->instrument_options |= INSTRUMENT_BUFFERS;
+			if (auto_explain_log_wal)
+				queryDesc->instrument_options |= INSTRUMENT_WAL;
 		}
 	}
 
@@ -300,7 +300,7 @@ explain_ExecutorStart(QueryDesc *queryDesc, int eflags)
 			MemoryContext oldcxt;
 
 			oldcxt = MemoryContextSwitchTo(queryDesc->estate->es_query_cxt);
-			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL);
+			queryDesc->totaltime = InstrAlloc(1, INSTRUMENT_ALL, false);
 			MemoryContextSwitchTo(oldcxt);
 		}
 	}
@@ -320,12 +320,10 @@ explain_ExecutorRun(QueryDesc *queryDesc, ScanDirection direction,
 			prev_ExecutorRun(queryDesc, direction, count, execute_once);
 		else
 			standard_ExecutorRun(queryDesc, direction, count, execute_once);
-		nesting_level--;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		nesting_level--;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 }
@@ -343,12 +341,10 @@ explain_ExecutorFinish(QueryDesc *queryDesc)
 			prev_ExecutorFinish(queryDesc);
 		else
 			standard_ExecutorFinish(queryDesc);
-		nesting_level--;
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		nesting_level--;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 }
@@ -385,6 +381,7 @@ explain_ExecutorEnd(QueryDesc *queryDesc)
 			es->analyze = (queryDesc->instrument_options && auto_explain_log_analyze);
 			es->verbose = auto_explain_log_verbose;
 			es->buffers = (es->analyze && auto_explain_log_buffers);
+			es->wal = (es->analyze && auto_explain_log_wal);
 			es->timing = (es->analyze && auto_explain_log_timing);
 			es->summary = es->analyze;
 			es->format = auto_explain_log_format;

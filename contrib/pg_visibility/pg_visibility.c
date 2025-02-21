@@ -3,7 +3,7 @@
  * pg_visibility.c
  *	  display visibility map information and page-level visibility bits
  *
- * Copyright (c) 2016-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2022, PostgreSQL Global Development Group
  *
  *	  contrib/pg_visibility/pg_visibility.c
  *-------------------------------------------------------------------------
@@ -13,11 +13,13 @@
 #include "access/heapam.h"
 #include "access/htup_details.h"
 #include "access/visibilitymap.h"
+#include "access/xloginsert.h"
 #include "catalog/pg_type.h"
 #include "catalog/storage_xlog.h"
 #include "funcapi.h"
 #include "miscadmin.h"
 #include "storage/bufmgr.h"
+#include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/smgr.h"
 #include "utils/rel.h"
@@ -383,6 +385,9 @@ pg_truncate_visibility_map(PG_FUNCTION_ARGS)
 {
 	Oid			relid = PG_GETARG_OID(0);
 	Relation	rel;
+	ForkNumber	fork;
+	BlockNumber block;
+	BlockNumber old_block;
 
 	rel = relation_open(relid, AccessExclusiveLock);
 
@@ -390,12 +395,24 @@ pg_truncate_visibility_map(PG_FUNCTION_ARGS)
 	check_relation_relkind(rel);
 
 	/* Forcibly reset cached file size */
-	RelationGetSmgr(rel)->smgr_vm_nblocks = InvalidBlockNumber;
+	RelationGetSmgr(rel)->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] = InvalidBlockNumber;
 
-	visibilitymap_truncate(rel, 0);
+	/* Compute new and old size before entering critical section. */
+	fork = VISIBILITYMAP_FORKNUM;
+	block = visibilitymap_prepare_truncate(rel, 0);
+	old_block = BlockNumberIsValid(block) ? smgrnblocks(RelationGetSmgr(rel), fork) : 0;
+
+	/*
+	 * WAL-logging, buffer dropping, file truncation must be atomic and all on
+	 * one side of a checkpoint.  See RelationTruncate() for discussion.
+	 */
+	Assert((MyProc->delayChkptFlags & (DELAY_CHKPT_START | DELAY_CHKPT_COMPLETE)) == 0);
+	MyProc->delayChkptFlags |= DELAY_CHKPT_START | DELAY_CHKPT_COMPLETE;
+	START_CRIT_SECTION();
 
 	if (RelationNeedsWAL(rel))
 	{
+		XLogRecPtr	lsn;
 		xl_smgr_truncate xlrec;
 
 		xlrec.blkno = 0;
@@ -405,8 +422,16 @@ pg_truncate_visibility_map(PG_FUNCTION_ARGS)
 		XLogBeginInsert();
 		XLogRegisterData((char *) &xlrec, sizeof(xlrec));
 
-		XLogInsert(RM_SMGR_ID, XLOG_SMGR_TRUNCATE | XLR_SPECIAL_REL_UPDATE);
+		lsn = XLogInsert(RM_SMGR_ID,
+						 XLOG_SMGR_TRUNCATE | XLR_SPECIAL_REL_UPDATE);
+		XLogFlush(lsn);
 	}
+
+	if (BlockNumberIsValid(block))
+		smgrtruncate2(RelationGetSmgr(rel), &fork, 1, &old_block, &block);
+
+	END_CRIT_SECTION();
+	MyProc->delayChkptFlags &= ~(DELAY_CHKPT_START | DELAY_CHKPT_COMPLETE);
 
 	/*
 	 * Release the lock right away, not at commit time.
@@ -418,7 +443,7 @@ pg_truncate_visibility_map(PG_FUNCTION_ARGS)
 	 * here and when we sent the messages at our eventual commit.  However,
 	 * we're currently only sending a non-transactional smgr invalidation,
 	 * which will have been posted to shared memory immediately from within
-	 * visibilitymap_truncate.  Therefore, there should be no race here.
+	 * smgr_truncate.  Therefore, there should be no race here.
 	 *
 	 * The reason why it's desirable to release the lock early here is because
 	 * of the possibility that someone will need to use this to blow away many
@@ -556,16 +581,13 @@ collect_corrupt_items(Oid relid, bool all_visible, bool all_frozen)
 	BufferAccessStrategy bstrategy = GetAccessStrategy(BAS_BULKREAD);
 	TransactionId OldestXmin = InvalidTransactionId;
 
-	if (all_visible)
-	{
-		/* Don't pass rel; that will fail in recovery. */
-		OldestXmin = GetOldestXmin(NULL, PROCARRAY_FLAGS_VACUUM);
-	}
-
 	rel = relation_open(relid, AccessShareLock);
 
 	/* Only some relkinds have a visibility map */
 	check_relation_relkind(rel);
+
+	if (all_visible)
+		OldestXmin = GetOldestNonRemovableTransactionId(rel);
 
 	nblocks = RelationGetNumberOfBlocks(rel);
 
@@ -672,11 +694,12 @@ collect_corrupt_items(Oid relid, bool all_visible, bool all_frozen)
 				 * From a concurrency point of view, it sort of sucks to
 				 * retake ProcArrayLock here while we're holding the buffer
 				 * exclusively locked, but it should be safe against
-				 * deadlocks, because surely GetOldestXmin() should never take
-				 * a buffer lock. And this shouldn't happen often, so it's
-				 * worth being careful so as to avoid false positives.
+				 * deadlocks, because surely
+				 * GetOldestNonRemovableTransactionId() should never take a
+				 * buffer lock. And this shouldn't happen often, so it's worth
+				 * being careful so as to avoid false positives.
 				 */
-				RecomputedOldestXmin = GetOldestXmin(NULL, PROCARRAY_FLAGS_VACUUM);
+				RecomputedOldestXmin = GetOldestNonRemovableTransactionId(rel);
 
 				if (!TransactionIdPrecedes(OldestXmin, RecomputedOldestXmin))
 					record_corrupt_item(items, &tuple.t_self);
@@ -771,11 +794,10 @@ tuple_all_visible(HeapTuple tup, TransactionId OldestXmin, Buffer buffer)
 static void
 check_relation_relkind(Relation rel)
 {
-	if (rel->rd_rel->relkind != RELKIND_RELATION &&
-		rel->rd_rel->relkind != RELKIND_MATVIEW &&
-		rel->rd_rel->relkind != RELKIND_TOASTVALUE)
+	if (!RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind))
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table, materialized view, or TOAST table",
-						RelationGetRelationName(rel))));
+				 errmsg("relation \"%s\" is of wrong relation kind",
+						RelationGetRelationName(rel)),
+				 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 }

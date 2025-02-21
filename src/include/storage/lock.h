@@ -4,7 +4,7 @@
  *	  POSTGRES low-level lock mechanism
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/lock.h
@@ -18,11 +18,11 @@
 #error "lock.h may not be included from frontend code"
 #endif
 
-#include "storage/lockdefs.h"
 #include "storage/backendid.h"
+#include "storage/lockdefs.h"
 #include "storage/lwlock.h"
 #include "storage/shmem.h"
-
+#include "utils/timestamp.h"
 
 /* struct PGPROC is declared in proc.h, but must forward-reference it */
 typedef struct PGPROC PGPROC;
@@ -34,14 +34,14 @@ typedef struct PROC_QUEUE
 } PROC_QUEUE;
 
 /* GUC variables */
-extern int	max_locks_per_xact;
+extern PGDLLIMPORT int max_locks_per_xact;
 
 #ifdef LOCK_DEBUG
-extern int	Trace_lock_oidmin;
-extern bool Trace_locks;
-extern bool Trace_userlocks;
-extern int	Trace_lock_table;
-extern bool Debug_deadlocks;
+extern PGDLLIMPORT int Trace_lock_oidmin;
+extern PGDLLIMPORT bool Trace_locks;
+extern PGDLLIMPORT bool Trace_userlocks;
+extern PGDLLIMPORT int Trace_lock_table;
+extern PGDLLIMPORT bool Debug_deadlocks;
 #endif							/* LOCK_DEBUG */
 
 
@@ -141,6 +141,7 @@ typedef enum LockTagType
 {
 	LOCKTAG_RELATION,			/* whole relation */
 	LOCKTAG_RELATION_EXTEND,	/* the right to extend a relation */
+	LOCKTAG_DATABASE_FROZEN_IDS,	/* pg_database.datfrozenxid */
 	LOCKTAG_PAGE,				/* one page of a relation */
 	LOCKTAG_TUPLE,				/* one physical tuple */
 	LOCKTAG_TRANSACTION,		/* transaction (for waiting for xact done) */
@@ -154,7 +155,7 @@ typedef enum LockTagType
 
 #define LOCKTAG_LAST_TYPE	LOCKTAG_DATABASE_FROZEN_IDS
 
-extern const char *const LockTagTypeNames[];
+extern PGDLLIMPORT const char *const LockTagTypeNames[];
 
 /*
  * The LOCKTAG struct is defined with malice aforethought to fit into 16
@@ -314,6 +315,7 @@ typedef struct LOCK
 } LOCK;
 
 #define LOCK_LOCKMETHOD(lock) ((LOCKMETHODID) (lock).tag.locktag_lockmethodid)
+#define LOCK_LOCKTAG(lock) ((LockTagType) (lock).tag.locktag_type)
 
 
 /*
@@ -432,6 +434,7 @@ typedef struct LOCALLOCK
 } LOCALLOCK;
 
 #define LOCALLOCK_LOCKMETHOD(llock) ((llock).tag.lock.locktag_lockmethodid)
+#define LOCALLOCK_LOCKTAG(llock) ((LockTagType) (llock).tag.lock.locktag_type)
 
 
 /*
@@ -446,6 +449,8 @@ typedef struct LockInstanceData
 	LOCKMODE	waitLockMode;	/* lock awaited by this PGPROC, if any */
 	BackendId	backend;		/* backend ID of this PGPROC */
 	LocalTransactionId lxid;	/* local transaction ID of this PGPROC */
+	TimestampTz waitStart;		/* time at which this PGPROC started waiting
+								 * for lock */
 	int			pid;			/* pid of this PGPROC */
 	int			leaderPid;		/* pid of group leader; = pid if no group */
 	bool		fastpath;		/* taken via fastpath? */
@@ -561,13 +566,16 @@ extern void LockReleaseCurrentOwner(LOCALLOCK **locallocks, int nlocks);
 extern void LockReassignCurrentOwner(LOCALLOCK **locallocks, int nlocks);
 extern bool LockHeldByMe(const LOCKTAG *locktag, LOCKMODE lockmode);
 extern bool LockOrStrongerHeldByMe(const LOCKTAG *locktag, LOCKMODE lockmode);
+#ifdef USE_ASSERT_CHECKING
+extern HTAB *GetLockMethodLocalHash(void);
+#endif
 extern bool LockHasWaiters(const LOCKTAG *locktag,
 						   LOCKMODE lockmode, bool sessionLock);
 extern VirtualTransactionId *GetLockConflicts(const LOCKTAG *locktag,
 											  LOCKMODE lockmode, int *countp);
 extern void AtPrepare_Locks(void);
 extern void PostPrepare_Locks(TransactionId xid);
-extern int	LockCheckConflicts(LockMethod lockMethodTable,
+extern bool LockCheckConflicts(LockMethod lockMethodTable,
 							   LOCKMODE lockmode,
 							   LOCK *lock, PROCLOCK *proclock);
 extern void GrantLock(LOCK *lock, PROCLOCK *proclock, LOCKMODE lockmode);
@@ -610,4 +618,4 @@ extern void VirtualXactLockTableInsert(VirtualTransactionId vxid);
 extern void VirtualXactLockTableCleanup(void);
 extern bool VirtualXactLock(VirtualTransactionId vxid, bool wait);
 
-#endif							/* LOCK_H */
+#endif							/* LOCK_H_ */

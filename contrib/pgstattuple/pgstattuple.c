@@ -173,7 +173,7 @@ pgstattuple(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use pgstattuple functions"))));
+				 errmsg("must be superuser to use pgstattuple functions")));
 
 	/* open relation */
 	relrv = makeRangeVarFromNameList(textToQualifiedNameList(relname));
@@ -213,7 +213,7 @@ pgstattuplebyid(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use pgstattuple functions"))));
+				 errmsg("must be superuser to use pgstattuple functions")));
 
 	/* open relation */
 	rel = relation_open(relid, AccessShareLock);
@@ -252,70 +252,58 @@ pgstat_relation(Relation rel, FunctionCallInfo fcinfo)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot access temporary tables of other sessions")));
 
-	switch (rel->rd_rel->relkind)
+	if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind) ||
+		rel->rd_rel->relkind == RELKIND_SEQUENCE)
 	{
-		case RELKIND_RELATION:
-		case RELKIND_MATVIEW:
-		case RELKIND_TOASTVALUE:
-		case RELKIND_SEQUENCE:
-			return pgstat_heap(rel, fcinfo);
-		case RELKIND_INDEX:
-			/* see pgstatindex_impl */
-			if (!rel->rd_index->indisvalid)
-				ereport(ERROR,
-						(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
-						 errmsg("index \"%s\" is not valid",
-								RelationGetRelationName(rel))));
+		return pgstat_heap(rel, fcinfo);
+	}
+	else if (rel->rd_rel->relkind == RELKIND_INDEX)
+	{
+		/* see pgstatindex_impl */
+		if (!rel->rd_index->indisvalid)
+			ereport(ERROR,
+					(errcode(ERRCODE_OBJECT_NOT_IN_PREREQUISITE_STATE),
+					 errmsg("index \"%s\" is not valid",
+							RelationGetRelationName(rel))));
 
-			switch (rel->rd_rel->relam)
-			{
-				case BTREE_AM_OID:
-					return pgstat_index(rel, BTREE_METAPAGE + 1,
-										pgstat_btree_page, fcinfo);
-				case HASH_AM_OID:
-					return pgstat_index(rel, HASH_METAPAGE + 1,
-										pgstat_hash_page, fcinfo);
-				case GIST_AM_OID:
-					return pgstat_index(rel, GIST_ROOT_BLKNO + 1,
-										pgstat_gist_page, fcinfo);
-				case GIN_AM_OID:
-					err = "gin index";
-					break;
-				case SPGIST_AM_OID:
-					err = "spgist index";
-					break;
-				case BRIN_AM_OID:
-					err = "brin index";
-					break;
-				default:
-					err = "unknown index";
-					break;
-			}
-			break;
-		case RELKIND_VIEW:
-			err = "view";
-			break;
-		case RELKIND_COMPOSITE_TYPE:
-			err = "composite type";
-			break;
-		case RELKIND_FOREIGN_TABLE:
-			err = "foreign table";
-			break;
-		case RELKIND_PARTITIONED_TABLE:
-			err = "partitioned table";
-			break;
-		case RELKIND_PARTITIONED_INDEX:
-			err = "partitioned index";
-			break;
-		default:
-			err = "unknown";
-			break;
+		switch (rel->rd_rel->relam)
+		{
+			case BTREE_AM_OID:
+				return pgstat_index(rel, BTREE_METAPAGE + 1,
+									pgstat_btree_page, fcinfo);
+			case HASH_AM_OID:
+				return pgstat_index(rel, HASH_METAPAGE + 1,
+									pgstat_hash_page, fcinfo);
+			case GIST_AM_OID:
+				return pgstat_index(rel, GIST_ROOT_BLKNO + 1,
+									pgstat_gist_page, fcinfo);
+			case GIN_AM_OID:
+				err = "gin index";
+				break;
+			case SPGIST_AM_OID:
+				err = "spgist index";
+				break;
+			case BRIN_AM_OID:
+				err = "brin index";
+				break;
+			default:
+				err = "unknown index";
+				break;
+		}
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("index \"%s\" (%s) is not supported",
+						RelationGetRelationName(rel), err)));
+	}
+	else
+	{
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("cannot get tuple-level statistics for relation \"%s\"",
+						RelationGetRelationName(rel)),
+				 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 	}
 
-	ereport(ERROR,
-			(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-			 errmsg("\"%s\" (%s) is not supported",
-					RelationGetRelationName(rel), err)));
 	return 0;					/* should not happen */
 }
 
@@ -335,7 +323,11 @@ pgstat_heap(Relation rel, FunctionCallInfo fcinfo)
 	pgstattuple_type stat = {0};
 	SnapshotData SnapshotDirty;
 
-	if (rel->rd_rel->relam != HEAP_TABLE_AM_OID)
+	/*
+	 * Sequences always use heap AM, but they don't show that in the catalogs.
+	 */
+	if (rel->rd_rel->relkind != RELKIND_SEQUENCE &&
+		rel->rd_rel->relam != HEAP_TABLE_AM_OID)
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("only heap AM is supported")));
@@ -434,10 +426,10 @@ pgstat_btree_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 	{
 		BTPageOpaque opaque;
 
-		opaque = (BTPageOpaque) PageGetSpecialPointer(page);
+		opaque = BTPageGetOpaque(page);
 		if (P_IGNORE(opaque))
 		{
-			/* recyclable page */
+			/* deleted or half-dead page */
 			stat->free_space += BLCKSZ;
 		}
 		else if (P_ISLEAF(opaque))
@@ -447,7 +439,7 @@ pgstat_btree_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 		}
 		else
 		{
-			/* root or node */
+			/* internal page */
 		}
 	}
 
@@ -471,7 +463,7 @@ pgstat_hash_page(pgstattuple_type *stat, Relation rel, BlockNumber blkno,
 	{
 		HashPageOpaque opaque;
 
-		opaque = (HashPageOpaque) PageGetSpecialPointer(page);
+		opaque = HashPageGetOpaque(page);
 		switch (opaque->hasho_flag & LH_PAGE_TYPE)
 		{
 			case LH_UNUSED_PAGE:

@@ -44,11 +44,10 @@
 #define TEXTDOMAIN PG_TEXTDOMAIN("plperl")
 
 /* perl stuff */
-#include "plperl.h"
-#include "plperl_helpers.h"
-
 /* string literal macros defining chunks of perl code */
 #include "perlchunks.h"
+#include "plperl.h"
+#include "plperl_helpers.h"
 /* defines PLPERL_SET_OPMASK */
 #include "plperl_opmask.h"
 
@@ -338,7 +337,7 @@ hek2cstr(HE *he)
 	SAVETMPS;
 
 	/*-------------------------
-	 * Unfortunately,  while HeUTF8 is true for most things > 256, for values
+	 * Unfortunately, while HeUTF8 is true for most things > 256, for values
 	 * 128..255 it's not, but perl will treat them as unicode code points if
 	 * the utf8 flag is not set ( see The "Unicode Bug" in perldoc perlunicode
 	 * for more)
@@ -457,12 +456,11 @@ _PG_init(void)
 							   PGC_SUSET, 0,
 							   NULL, NULL, NULL);
 
-	EmitWarningsOnPlaceholders("plperl");
+	MarkGUCPrefixReserved("plperl");
 
 	/*
 	 * Create hash tables.
 	 */
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(Oid);
 	hash_ctl.entrysize = sizeof(plperl_interp_desc);
 	plperl_interp_hash = hash_create("PL/Perl interpreters",
@@ -470,7 +468,6 @@ _PG_init(void)
 									 &hash_ctl,
 									 HASH_ELEM | HASH_BLOBS);
 
-	memset(&hash_ctl, 0, sizeof(hash_ctl));
 	hash_ctl.keysize = sizeof(plperl_proc_key);
 	hash_ctl.entrysize = sizeof(plperl_proc_ptr);
 	plperl_proc_hash = hash_create("PL/Perl procedures",
@@ -584,13 +581,12 @@ select_perl_context(bool trusted)
 	{
 		HASHCTL		hash_ctl;
 
-		memset(&hash_ctl, 0, sizeof(hash_ctl));
 		hash_ctl.keysize = NAMEDATALEN;
 		hash_ctl.entrysize = sizeof(plperl_query_entry);
 		interp_desc->query_hash = hash_create("PL/Perl queries",
 											  32,
 											  &hash_ctl,
-											  HASH_ELEM);
+											  HASH_ELEM | HASH_STRINGS);
 	}
 
 	/*
@@ -1653,11 +1649,8 @@ plperl_trigger_build_args(FunctionCallInfo fcinfo)
 	tdata = (TriggerData *) fcinfo->context;
 	tupdesc = tdata->tg_relation->rd_att;
 
-	relid = DatumGetCString(
-							DirectFunctionCall1(oidout,
-												ObjectIdGetDatum(tdata->tg_relation->rd_id)
-												)
-		);
+	relid = DatumGetCString(DirectFunctionCall1(oidout,
+												ObjectIdGetDatum(tdata->tg_relation->rd_id)));
 
 	hv_store_string(hv, "name", cstr2sv(tdata->tg_trigger->tgname));
 	hv_store_string(hv, "relid", cstr2sv(relid));
@@ -1762,7 +1755,7 @@ plperl_event_trigger_build_args(FunctionCallInfo fcinfo)
 	tdata = (EventTriggerData *) fcinfo->context;
 
 	hv_store_string(hv, "event", cstr2sv(tdata->event));
-	hv_store_string(hv, "tag", cstr2sv(tdata->tag));
+	hv_store_string(hv, "tag", cstr2sv(GetCommandTagName(tdata->tag)));
 
 	return newRV_noinc((SV *) hv);
 }
@@ -1861,7 +1854,7 @@ PG_FUNCTION_INFO_V1(plperl_call_handler);
 Datum
 plperl_call_handler(PG_FUNCTION_ARGS)
 {
-	Datum		retval;
+	Datum		retval = (Datum) 0;
 	plperl_call_data *volatile save_call_data = current_call_data;
 	plperl_interp_desc *volatile oldinterp = plperl_active_interp;
 	plperl_call_data this_call_data;
@@ -1883,20 +1876,15 @@ plperl_call_handler(PG_FUNCTION_ARGS)
 		else
 			retval = plperl_func_handler(fcinfo);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		current_call_data = save_call_data;
 		activate_interpreter(oldinterp);
 		if (this_call_data.prodesc)
 			decrement_prodesc_refcount(this_call_data.prodesc);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
 
-	current_call_data = save_call_data;
-	activate_interpreter(oldinterp);
-	if (this_call_data.prodesc)
-		decrement_prodesc_refcount(this_call_data.prodesc);
 	return retval;
 }
 
@@ -1979,21 +1967,14 @@ plperl_inline_handler(PG_FUNCTION_ARGS)
 		if (SPI_finish() != SPI_OK_FINISH)
 			elog(ERROR, "SPI_finish() failed");
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		if (desc.reference)
 			SvREFCNT_dec_current(desc.reference);
 		current_call_data = save_call_data;
 		activate_interpreter(oldinterp);
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-
-	if (desc.reference)
-		SvREFCNT_dec_current(desc.reference);
-
-	current_call_data = save_call_data;
-	activate_interpreter(oldinterp);
 
 	error_context_stack = pl_error_context.previous;
 
@@ -2037,11 +2018,9 @@ plperl_validator(PG_FUNCTION_ARGS)
 	/* except for TRIGGER, EVTTRIGGER, RECORD, or VOID */
 	if (functyptype == TYPTYPE_PSEUDO)
 	{
-		/* we assume OPAQUE with no arguments means a trigger */
-		if (proc->prorettype == TRIGGEROID ||
-			(proc->prorettype == OPAQUEOID && proc->pronargs == 0))
+		if (proc->prorettype == TRIGGEROID)
 			is_trigger = true;
-		else if (proc->prorettype == EVTTRIGGEROID)
+		else if (proc->prorettype == EVENT_TRIGGEROID)
 			is_event_trigger = true;
 		else if (proc->prorettype != RECORDOID &&
 				 proc->prorettype != VOIDOID)
@@ -2112,7 +2091,7 @@ plperlu_validator(PG_FUNCTION_ARGS)
 
 
 /*
- * Uses mksafefunc/mkunsafefunc to create a subroutine whose text is
+ * Uses mkfunc to create a subroutine whose text is
  * supplied in s, and returns a reference to it
  */
 static void
@@ -2181,8 +2160,6 @@ plperl_create_sub(plperl_proc_desc *prodesc, const char *s, Oid fn_oid)
 						prodesc->proname)));
 
 	prodesc->reference = subref;
-
-	return;
 }
 
 
@@ -2422,8 +2399,6 @@ plperl_call_perl_event_trigger_func(plperl_proc_desc *desc,
 	PUTBACK;
 	FREETMPS;
 	LEAVE;
-
-	return;
 }
 
 static Datum
@@ -2458,12 +2433,15 @@ plperl_func_handler(PG_FUNCTION_ARGS)
 	if (prodesc->fn_retisset)
 	{
 		/* Check context before allowing the call to go through */
-		if (!rsi || !IsA(rsi, ReturnSetInfo) ||
-			(rsi->allowedModes & SFRM_Materialize) == 0)
+		if (!rsi || !IsA(rsi, ReturnSetInfo))
 			ereport(ERROR,
 					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("set-valued function called in context that "
-							"cannot accept a set")));
+					 errmsg("set-valued function called in context that cannot accept a set")));
+
+		if (!(rsi->allowedModes & SFRM_Materialize))
+			ereport(ERROR,
+					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+					 errmsg("materialize mode required, but it is not allowed in this context")));
 	}
 
 	activate_interpreter(prodesc->interp);
@@ -2881,7 +2859,7 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 					rettype == RECORDOID)
 					 /* okay */ ;
 				else if (rettype == TRIGGEROID ||
-						 rettype == EVTTRIGGEROID)
+						 rettype == EVENT_TRIGGEROID)
 					ereport(ERROR,
 							(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 							 errmsg("trigger functions can only be called "
@@ -2896,9 +2874,7 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 			prodesc->result_oid = rettype;
 			prodesc->fn_retisset = procStruct->proretset;
 			prodesc->fn_retistuple = type_is_rowtype(rettype);
-
-			prodesc->fn_retisarray =
-				(typeStruct->typlen == -1 && typeStruct->typelem);
+			prodesc->fn_retisarray = IsTrueArrayType(typeStruct);
 
 			fmgr_info_cxt(typeStruct->typinput,
 						  &(prodesc->result_in_func),
@@ -2944,7 +2920,7 @@ compile_plperl_function(Oid fn_oid, bool is_trigger, bool is_event_trigger)
 				}
 
 				/* Identify array-type arguments */
-				if (typeStruct->typelem != 0 && typeStruct->typlen == -1)
+				if (IsTrueArrayType(typeStruct))
 					prodesc->arg_arraytype[i] = argtype;
 				else
 					prodesc->arg_arraytype[i] = InvalidOid;

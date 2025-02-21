@@ -68,7 +68,7 @@
    cluster's data directory.
    (<acronym>HBA</acronym> stands for host-based authentication.) A default
    <filename>pg_hba.conf</filename> file is installed when the data
-   directory is initialized by <command>initdb</command>.  It is
+   directory is initialized by <xref linkend="app-initdb"/>.  It is
    possible to place the authentication configuration file elsewhere,
    however; see the <xref linkend="guc-hba-file"/> configuration parameter.
   </para>
@@ -77,13 +77,15 @@
    The general format of the <filename>pg_hba.conf</filename> file is
    a set of records, one per line. Blank lines are ignored, as is any
    text after the <literal>#</literal> comment character.
-   Records cannot be continued across lines.
+   A record can be continued onto the next line by ending the line with
+   a backslash. (Backslashes are not special except at the end of a line.)
    A record is made
    up of a number of fields which are separated by spaces and/or tabs.
    Fields can contain white space if the field value is double-quoted.
    Quoting one of the keywords in a database, user, or address field (e.g.,
    <literal>all</literal> or <literal>replication</literal>) makes the word lose its special
    meaning, and just match a database, user, or host with that name.
+   Backslash line continuation applies even within quoted text or comments.
   </para>
 
   <para>
@@ -227,8 +229,10 @@ hostnogssenc  <replaceable>database</replaceable>  <replaceable>user</replaceabl
        members of the role, directly or indirectly, and not just by
        virtue of being a superuser.
        The value <literal>replication</literal> specifies that the record
-       matches if a physical replication connection is requested (note that
-       replication connections do not specify any particular database).
+       matches if a physical replication connection is requested, however, it
+       doesn't match with logical replication connections. Note that physical
+       replication connections do not specify any particular database whereas
+       logical replication connections do specify it.
        Otherwise, this is the name of
        a specific <productname>PostgreSQL</productname> database.
        Multiple database names can be supplied by separating them with
@@ -596,7 +600,7 @@ hostnogssenc  <replaceable>database</replaceable>  <replaceable>user</replaceabl
       </para>
 
       <para>
-       In addition to the method-specific options listed below, there is one
+       In addition to the method-specific options listed below, there is a
        method-independent authentication option <literal>clientcert</literal>, which
        can be specified in any <literal>hostssl</literal> record.
        This option can be set to <literal>verify-ca</literal> or
@@ -609,6 +613,28 @@ hostnogssenc  <replaceable>database</replaceable>  <replaceable>user</replaceabl
        method (see <xref linkend="auth-cert"/>) but enables pairing
        the verification of client certificates with any authentication
        method that supports <literal>hostssl</literal> entries.
+      </para>
+      <para>
+       On any record using client certificate authentication (i.e. one
+       using the <literal>cert</literal> authentication method or one
+       using the <literal>clientcert</literal> option), you can specify
+       which part of the client certificate credentials to match using
+       the <literal>clientname</literal> option. This option can have one
+       of two values. If you specify <literal>clientname=CN</literal>, which
+       is the default, the username is matched against the certificate's
+       <literal>Common Name (CN)</literal>. If instead you specify
+       <literal>clientname=DN</literal> the username is matched against the
+       entire <literal>Distinguished Name (DN)</literal> of the certificate.
+       This option is probably best used in conjunction with a username map.
+       The comparison is done with the <literal>DN</literal> in
+       <ulink url="https://datatracker.ietf.org/doc/html/rfc2253">RFC 2253</ulink>
+       format. To see the <literal>DN</literal> of a client certificate
+       in this format, do
+<programlisting>
+openssl x509 -in myclient.crt -noout -subject -nameopt RFC2253 | sed "s/^subject=//"
+</programlisting>
+        Care needs to be taken when using this option, especially when using
+        regular expression matching against the <literal>DN</literal>.
       </para>
      </listitem>
     </varlistentry>
@@ -815,7 +841,7 @@ local   db1,db2,@demodbs  all                                   md5
 <synopsis>
 <replaceable>map-name</replaceable> <replaceable>system-username</replaceable> <replaceable>database-username</replaceable>
 </synopsis>
-   Comments and whitespace are handled in the same way as in
+   Comments, whitespace and line continuations are handled in the same way as in
    <filename>pg_hba.conf</filename>.  The
    <replaceable>map-name</replaceable> is an arbitrary name that will be used to
    refer to this mapping in <filename>pg_hba.conf</filename>. The other
@@ -870,6 +896,16 @@ mymap   /^(.*)@otherdomain\.com$   guest
    (using <literal>pg_ctl reload</literal>, calling the SQL function
    <function>pg_reload_conf()</function>, or using <literal>kill
    -HUP</literal>) to make it re-read the file.
+  </para>
+
+  <para>
+   The system view
+   <link linkend="view-pg-ident-file-mappings"><structname>pg_ident_file_mappings</structname></link>
+   can be helpful for pre-testing changes to the
+   <filename>pg_ident.conf</filename> file, or for diagnosing problems if
+   loading of the file did not have the desired effects.  Rows in the view with
+   non-null <structfield>error</structfield> fields indicate problems in the
+   corresponding lines of the file.
   </para>
 
   <para>
@@ -940,7 +976,8 @@ omicron         bryanh                  guest1
     <listitem>
      <para>
       <link linkend="auth-ident">Ident authentication</link>, which
-      relies on an <quote>Identification Protocol</quote> (RFC 1413)
+      relies on an <quote>Identification Protocol</quote>
+      (<ulink url="https://datatracker.ietf.org/doc/html/rfc1413">RFC 1413</ulink>)
       service on the client's machine.  (On local Unix-socket connections,
       this is treated as peer authentication.)
      </para>
@@ -1439,7 +1476,7 @@ omicron         bryanh                  guest1
       <listitem>
        <para>
         Allows for mapping between system and database user names. See
-        <xref linkend="auth-username-maps"/> for details.  For a SSPI/Kerberos
+        <xref linkend="auth-username-maps"/> for details.  For an SSPI/Kerberos
         principal, such as <literal>username@EXAMPLE.COM</literal> (or, less
         commonly, <literal>username/hostbased@EXAMPLE.COM</literal>), the
         user name used for mapping is
@@ -1490,7 +1527,7 @@ omicron         bryanh                  guest1
    </note>
 
    <para>
-    The following configuration options are supported for <productname>ident</productname>:
+    The following configuration options are supported for <literal>ident</literal>:
     <variablelist>
      <varlistentry>
       <term><literal>map</literal></term>
@@ -1506,7 +1543,8 @@ omicron         bryanh                  guest1
 
    <para>
     The <quote>Identification Protocol</quote> is described in
-    RFC 1413. Virtually every Unix-like
+    <ulink url="https://datatracker.ietf.org/doc/html/rfc1413">RFC 1413</ulink>.
+    Virtually every Unix-like
     operating system ships with an ident server that listens on TCP
     port 113 by default. The basic functionality of an ident server
     is to answer questions like <quote>What user initiated the
@@ -1563,7 +1601,7 @@ omicron         bryanh                  guest1
    </para>
 
    <para>
-    The following configuration options are supported for <productname>peer</productname>:
+    The following configuration options are supported for <literal>peer</literal>:
     <variablelist>
      <varlistentry>
       <term><literal>map</literal></term>
@@ -1674,8 +1712,8 @@ omicron         bryanh                  guest1
        <para>
         Set to 1 to make the connection between PostgreSQL and the LDAP server
         use TLS encryption.  This uses the <literal>StartTLS</literal>
-        operation per RFC 4513.  See also the <literal>ldapscheme</literal>
-        option for an alternative.
+        operation per <ulink url="https://datatracker.ietf.org/doc/html/rfc4513">RFC 4513</ulink>.
+        See also the <literal>ldapscheme</literal> option for an alternative.
        </para>
       </listitem>
      </varlistentry>
@@ -1769,7 +1807,8 @@ omicron         bryanh                  guest1
        <term><literal>ldapurl</literal></term>
        <listitem>
         <para>
-         An RFC 4516 LDAP URL.  This is an alternative way to write some of the
+         An <ulink url="https://datatracker.ietf.org/doc/html/rfc4516">RFC 4516</ulink>
+         LDAP URL.  This is an alternative way to write some of the
          other LDAP options in a more compact and standard form.  The format is
 <synopsis>
 ldap[s]://<replaceable>host</replaceable>[:<replaceable>port</replaceable>]/<replaceable>basedn</replaceable>[?[<replaceable>attribute</replaceable>][?[<replaceable>scope</replaceable>][?[<replaceable>filter</replaceable>]]]]
@@ -1830,7 +1869,8 @@ ldap[s]://<replaceable>host</replaceable>[:<replaceable>port</replaceable>]/<rep
      If <productname>PostgreSQL</productname> was compiled with
      <productname>OpenLDAP</productname> as the LDAP client library, the
      <literal>ldapserver</literal> setting may be omitted.  In that case, a
-     list of host names and ports is looked up via RFC 2782 DNS SRV records.
+     list of host names and ports is looked up via
+     <ulink url="https://datatracker.ietf.org/doc/html/rfc2782">RFC 2782</ulink> DNS SRV records.
      The name <literal>_ldap._tcp.DOMAIN</literal> is looked up, where
      <literal>DOMAIN</literal> is extracted from <literal>ldapbasedn</literal>.
    </para>

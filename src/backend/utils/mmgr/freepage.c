@@ -42,7 +42,7 @@
  * where memory fragmentation is very severe, only a tiny fraction of
  * the pages under management are consumed by this btree.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -164,7 +164,7 @@ static void FreePagePushSpanLeader(FreePageManager *fpm, Size first_page,
 static Size FreePageManagerLargestContiguous(FreePageManager *fpm);
 static void FreePageManagerUpdateLargest(FreePageManager *fpm);
 
-#if FPM_EXTRA_ASSERTS
+#ifdef FPM_EXTRA_ASSERTS
 static Size sum_free_pages(FreePageManager *fpm);
 #endif
 
@@ -434,7 +434,7 @@ FreePageManagerDump(FreePageManager *fpm)
 
 	/* Dump general stuff. */
 	appendStringInfo(&buf, "metadata: self %zu max contiguous pages = %zu\n",
-					 fpm->self.relptr_off, fpm->contiguous_pages);
+					 relptr_offset(fpm->self), fpm->contiguous_pages);
 
 	/* Dump btree. */
 	if (fpm->btree_depth > 0)
@@ -742,8 +742,8 @@ FreePageBtreeConsolidate(FreePageManager *fpm, FreePageBtree *btp)
 
 	/*
 	 * If we can fit our keys onto our left sibling's page, consolidate. In
-	 * this case, we move our keys onto the other page rather than visca
-	 * versa, to avoid having to adjust ancestor keys.
+	 * this case, we move our keys onto the other page rather than vice versa,
+	 * to avoid having to adjust ancestor keys.
 	 */
 	np = FreePageBtreeFindLeftSibling(base, btp);
 	if (np != NULL && btp->hdr.nused + np->hdr.nused <= max)
@@ -1269,7 +1269,7 @@ FreePageManagerDumpBtree(FreePageManager *fpm, FreePageBtree *btp,
 		if (btp->hdr.magic == FREE_PAGE_INTERNAL_MAGIC)
 			appendStringInfo(buf, " %zu->%zu",
 							 btp->u.internal_key[index].first_page,
-							 btp->u.internal_key[index].child.relptr_off / FPM_PAGE_SIZE);
+							 relptr_offset(btp->u.internal_key[index].child) / FPM_PAGE_SIZE);
 		else
 			appendStringInfo(buf, " %zu(%zu)",
 							 btp->u.leaf_key[index].first_page,
@@ -1692,7 +1692,7 @@ FreePageManagerPutInternal(FreePageManager *fpm, Size first_page, Size npages,
 
 			/*
 			 * The act of allocating pages to recycle may have invalidated the
-			 * results of our previous btree reserch, so repeat it. (We could
+			 * results of our previous btree research, so repeat it. (We could
 			 * recheck whether any of our split-avoidance strategies that were
 			 * not viable before now are, but it hardly seems worthwhile, so
 			 * we don't bother. Consolidation can't be possible now if it
@@ -1859,7 +1859,7 @@ FreePagePopSpanLeader(FreePageManager *fpm, Size pageno)
 	{
 		Size		f = Min(span->npages, FPM_NUM_FREELISTS) - 1;
 
-		Assert(fpm->freelist[f].relptr_off == pageno * FPM_PAGE_SIZE);
+		Assert(relptr_offset(fpm->freelist[f]) == pageno * FPM_PAGE_SIZE);
 		relptr_copy(fpm->freelist[f], span->next);
 	}
 }

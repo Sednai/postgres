@@ -15,11 +15,9 @@
 #include <signal.h>
 #include <sys/time.h>
 
-#include "pg_getopt.h"
-
-#include "common/logging.h"
-
 #include "access/xlog_internal.h"
+#include "common/logging.h"
+#include "pg_getopt.h"
 
 const char *progname;
 
@@ -150,24 +148,21 @@ CleanupPriorWALFiles(void)
 
 				rc = unlink(WALFilePath);
 				if (rc != 0)
-				{
-					pg_log_error("could not remove file \"%s\": %m",
-								 WALFilePath);
-					break;
-				}
+					pg_fatal("could not remove file \"%s\": %m",
+							 WALFilePath);
 			}
 		}
 
 		if (errno)
-			pg_log_error("could not read archive location \"%s\": %m",
-						 archiveLocation);
+			pg_fatal("could not read archive location \"%s\": %m",
+					 archiveLocation);
 		if (closedir(xldir))
-			pg_log_error("could not close archive location \"%s\": %m",
-						 archiveLocation);
+			pg_fatal("could not close archive location \"%s\": %m",
+					 archiveLocation);
 	}
 	else
-		pg_log_error("could not open archive location \"%s\": %m",
-					 archiveLocation);
+		pg_fatal("could not open archive location \"%s\": %m",
+				 archiveLocation);
 }
 
 /*
@@ -240,7 +235,7 @@ SetWALFileNameForCleanup(void)
 	if (!fnameOK)
 	{
 		pg_log_error("invalid file name argument");
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 		exit(2);
 	}
 }
@@ -271,7 +266,8 @@ usage(void)
 			 "Or for use as a standalone archive cleaner:\n"
 			 "e.g.\n"
 			 "  pg_archivecleanup /mnt/server/archiverdir 000000010000000000000010.00000020.backup\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }
 
 /*------------ MAIN ----------------------------------------*/
@@ -303,7 +299,7 @@ main(int argc, char **argv)
 		switch (c)
 		{
 			case 'd':			/* Debug mode */
-				pg_logging_set_level(PG_LOG_DEBUG);
+				pg_logging_increase_verbosity();
 				break;
 			case 'n':			/* Dry-Run mode */
 				dryrun = true;
@@ -313,9 +309,9 @@ main(int argc, char **argv)
 													 * from xlogfile names */
 				break;
 			default:
-				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+				/* getopt already emitted a complaint */
+				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 				exit(2);
-				break;
 		}
 	}
 
@@ -334,7 +330,7 @@ main(int argc, char **argv)
 	else
 	{
 		pg_log_error("must specify archive location");
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 		exit(2);
 	}
 
@@ -346,14 +342,14 @@ main(int argc, char **argv)
 	else
 	{
 		pg_log_error("must specify oldest kept WAL file");
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 		exit(2);
 	}
 
 	if (optind < argc)
 	{
 		pg_log_error("too many command-line arguments");
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 		exit(2);
 	}
 

@@ -136,15 +136,21 @@ CREATE DATABASE <replaceable>name</replaceable>;
   </para>
 
   <para>
-   A second database,
-   <literal>template1</literal>,<indexterm><primary>template1</primary></indexterm>
-   is also created during database cluster initialization.  Whenever a
+   Two additional databases,
+   <literal>template1</literal><indexterm><primary>template1</primary></indexterm>
+   and
+   <literal>template0</literal>,<indexterm><primary>template0</primary></indexterm>
+   are also created during database cluster initialization.  Whenever a
    new database is created within the
    cluster, <literal>template1</literal> is essentially cloned.
    This means that any changes you make in <literal>template1</literal> are
    propagated to all subsequently created databases. Because of this,
    avoid creating objects in <literal>template1</literal> unless you want them
-   propagated to every newly created database.  More details
+   propagated to every newly created database.
+   <literal>template0</literal> is meant as a pristine copy of the original
+   contents of <literal>template1</literal>.  It can be cloned instead
+   of <literal>template1</literal> when it is important to make a database
+   without any such site-local additions.  More details
    appear in <xref linkend="manage-ag-templatedbs"/>.
   </para>
 
@@ -223,11 +229,12 @@ createdb -O <replaceable>rolename</replaceable> <replaceable>dbname</replaceable
    should never be changed after the database cluster has been
    initialized.  By instructing
    <command>CREATE DATABASE</command> to copy <literal>template0</literal> instead
-   of <literal>template1</literal>, you can create a <quote>virgin</quote> user
-   database that contains none of the site-local additions in
+   of <literal>template1</literal>, you can create a <quote>pristine</quote> user
+   database (one where no user-defined objects exist and where the system
+   objects have not been altered) that contains none of the site-local additions in
    <literal>template1</literal>.  This is particularly handy when restoring a
    <literal>pg_dump</literal> dump: the dump script should be restored in a
-   virgin database to ensure that one recreates the correct contents
+   pristine database to ensure that one recreates the correct contents
    of the dumped database, without conflicting with objects that
    might have been added to <literal>template1</literal> later on.
   </para>
@@ -411,7 +418,7 @@ dropdb <replaceable class="parameter">dbname</replaceable>
      of data files. They are dependent on metadata contained in the main
      data directory, and therefore cannot be attached to a different
      database cluster or backed up individually.  Similarly, if you lose
-     a tablespace (file deletion, disk failure, etc), the database cluster
+     a tablespace (file deletion, disk failure, etc.), the database cluster
      might become unreadable or unable to start.  Placing a tablespace
      on a temporary file system like a RAM disk risks the reliability of
      the entire cluster.

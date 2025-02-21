@@ -6,7 +6,7 @@
  * See also lsyscache.h, which provides convenience routines for
  * common cache-lookup operations.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
  *
@@ -73,6 +73,8 @@ enum SysCacheIdentifier
 	OPEROID,
 	OPFAMILYAMNAMENSP,
 	OPFAMILYOID,
+	PARAMETERACLNAME,
+	PARAMETERACLOID,
 #ifdef PGXC
 	PGXCCLASSRELID,
 	PGXCGROUPNAME,
@@ -85,9 +87,12 @@ enum SysCacheIdentifier
 	PROCNAMEARGSNSP,
 	PROCOID,
 	PUBLICATIONNAME,
+	PUBLICATIONNAMESPACE,
+	PUBLICATIONNAMESPACEMAP,
 	PUBLICATIONOID,
 	PUBLICATIONREL,
 	PUBLICATIONRELMAP,
+	RANGEMULTIRANGE,
 	RANGETYPE,
 	RELNAMENSP,
 	RELOID,
@@ -143,9 +148,14 @@ extern HeapTuple SearchSysCache4(int cacheId,
 
 extern void ReleaseSysCache(HeapTuple tuple);
 
+extern HeapTuple SearchSysCacheLocked1(int cacheId,
+									   Datum key1);
+
 /* convenience routines */
 extern HeapTuple SearchSysCacheCopy(int cacheId,
 									Datum key1, Datum key2, Datum key3, Datum key4);
+extern HeapTuple SearchSysCacheLockedCopy1(int cacheId,
+										   Datum key1);
 extern bool SearchSysCacheExists(int cacheId,
 								 Datum key1, Datum key2, Datum key3, Datum key4);
 extern Oid	GetSysCacheOid(int cacheId, AttrNumber oidcol,

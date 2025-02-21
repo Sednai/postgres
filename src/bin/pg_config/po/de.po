@@ -1,14 +1,14 @@
 # German message translation file for pg_config
-# Peter Eisentraut <peter@eisentraut.org>, 2004 - 2019.
+# Peter Eisentraut <peter@eisentraut.org>, 2004 - 2021.
 #
 # Use these quotes: »%s«
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: PostgreSQL 12\n"
+"Project-Id-Version: PostgreSQL 14\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2019-08-28 09:13+0000\n"
-"PO-Revision-Date: 2019-08-28 11:27+0200\n"
+"POT-Creation-Date: 2021-04-29 03:16+0000\n"
+"PO-Revision-Date: 2021-04-29 06:58+0200\n"
 "Last-Translator: Peter Eisentraut <peter@eisentraut.org>\n"
 "Language-Team: German <pgsql-translators@postgresql.org>\n"
 "Language: de\n"
@@ -16,50 +16,49 @@ msgstr ""
 "Content-Type: text/plain; charset=UTF-8\n"
 "Content-Transfer-Encoding: 8bit\n"
 
-#: ../../common/config_info.c:130 ../../common/config_info.c:138
-#: ../../common/config_info.c:146 ../../common/config_info.c:154
-#: ../../common/config_info.c:162 ../../common/config_info.c:170
-#: ../../common/config_info.c:178 ../../common/config_info.c:186
-#: ../../common/config_info.c:194
+#: ../../common/config_info.c:134 ../../common/config_info.c:142
+#: ../../common/config_info.c:150 ../../common/config_info.c:158
+#: ../../common/config_info.c:166 ../../common/config_info.c:174
+#: ../../common/config_info.c:182 ../../common/config_info.c:190
 msgid "not recorded"
 msgstr "nicht aufgezeichnet"
 
-#: ../../common/exec.c:138 ../../common/exec.c:255 ../../common/exec.c:301
+#: ../../common/exec.c:136 ../../common/exec.c:253 ../../common/exec.c:299
 #, c-format
 msgid "could not identify current directory: %m"
 msgstr "konnte aktuelles Verzeichnis nicht ermitteln: %m"
 
-#: ../../common/exec.c:157
+#: ../../common/exec.c:155
 #, c-format
 msgid "invalid binary \"%s\""
 msgstr "ungültige Programmdatei »%s«"
 
-#: ../../common/exec.c:207
+#: ../../common/exec.c:205
 #, c-format
 msgid "could not read binary \"%s\""
 msgstr "konnte Programmdatei »%s« nicht lesen"
 
-#: ../../common/exec.c:215
+#: ../../common/exec.c:213
 #, c-format
 msgid "could not find a \"%s\" to execute"
 msgstr "konnte kein »%s« zum Ausführen finden"
 
-#: ../../common/exec.c:271 ../../common/exec.c:310
+#: ../../common/exec.c:269 ../../common/exec.c:308
 #, c-format
 msgid "could not change directory to \"%s\": %m"
 msgstr "konnte nicht in Verzeichnis »%s« wechseln: %m"
 
-#: ../../common/exec.c:288
+#: ../../common/exec.c:286
 #, c-format
 msgid "could not read symbolic link \"%s\": %m"
 msgstr "konnte symbolische Verknüpfung »%s« nicht lesen: %m"
 
-#: ../../common/exec.c:541
+#: ../../common/exec.c:409
 #, c-format
-msgid "pclose failed: %m"
-msgstr "pclose fehlgeschlagen: %m"
+msgid "%s() failed: %m"
+msgstr "%s() fehlgeschlagen: %m"
 
-#: ../../common/exec.c:670 ../../common/exec.c:715 ../../common/exec.c:807
+#: ../../common/exec.c:522 ../../common/exec.c:567 ../../common/exec.c:659
 msgid "out of memory"
 msgstr "Speicher aufgebraucht"
 
@@ -242,20 +241,25 @@ msgstr ""
 
 #: pg_config.c:105
 #, c-format
-msgid "Report bugs to <pgsql-bugs@lists.postgresql.org>.\n"
-msgstr "Berichten Sie Fehler an <pgsql-bugs@lists.postgresql.org>.\n"
+msgid "Report bugs to <%s>.\n"
+msgstr "Berichten Sie Fehler an <%s>.\n"
 
-#: pg_config.c:111
+#: pg_config.c:106
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "%s Homepage: <%s>\n"
+
+#: pg_config.c:112
 #, c-format
 msgid "Try \"%s --help\" for more information.\n"
 msgstr "Versuchen Sie »%s --help« für weitere Informationen.\n"
 
-#: pg_config.c:153
+#: pg_config.c:154
 #, c-format
 msgid "%s: could not find own program executable\n"
 msgstr "%s: konnte eigene Programmdatei nicht finden\n"
 
-#: pg_config.c:180
+#: pg_config.c:181
 #, c-format
 msgid "%s: invalid argument: %s\n"
 msgstr "%s: ungültiges Argument: %s\n"

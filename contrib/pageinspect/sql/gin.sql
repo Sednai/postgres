@@ -37,3 +37,5 @@ SHOW block_size \gset
 SELECT gin_leafpage_items(decode(repeat('00', :block_size), 'hex'));
 SELECT gin_metapage_info(decode(repeat('00', :block_size), 'hex'));
 SELECT gin_page_opaque_info(decode(repeat('00', :block_size), 'hex'));
+
+DROP TABLE test1;

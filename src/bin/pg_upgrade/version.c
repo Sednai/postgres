@@ -3,100 +3,15 @@
  *
  *	Postgres-version-specific routines
  *
- *	Copyright (c) 2010-2019, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2022, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/version.c
  */
 
 #include "postgres_fe.h"
 
-#include "pg_upgrade.h"
-
 #include "catalog/pg_class_d.h"
 #include "fe_utils/string_utils.h"
-
-
-
-/*
- * new_9_0_populate_pg_largeobject_metadata()
- *	new >= 9.0, old <= 8.4
- *	9.0 has a new pg_largeobject permission table
- */
-void
-new_9_0_populate_pg_largeobject_metadata(ClusterInfo *cluster, bool check_mode)
-{
-	int			dbnum;
-	FILE	   *script = NULL;
-	bool		found = false;
-	char		output_path[MAXPGPATH];
-
-	prep_status("Checking for large objects");
-
-	snprintf(output_path, sizeof(output_path), "pg_largeobject.sql");
-
-	for (dbnum = 0; dbnum < cluster->dbarr.ndbs; dbnum++)
-	{
-		PGresult   *res;
-		int			i_count;
-		DbInfo	   *active_db = &cluster->dbarr.dbs[dbnum];
-		PGconn	   *conn = connectToServer(cluster, active_db->db_name);
-
-		/* find if there are any large objects */
-		res = executeQueryOrDie(conn,
-								"SELECT count(*) "
-								"FROM	pg_catalog.pg_largeobject ");
-
-		i_count = PQfnumber(res, "count");
-		if (atoi(PQgetvalue(res, 0, i_count)) != 0)
-		{
-			found = true;
-			if (!check_mode)
-			{
-				PQExpBufferData connectbuf;
-
-				if (script == NULL && (script = fopen_priv(output_path, "w")) == NULL)
-					pg_fatal("could not open file \"%s\": %s\n", output_path,
-							 strerror(errno));
-
-				initPQExpBuffer(&connectbuf);
-				appendPsqlMetaConnect(&connectbuf, active_db->db_name);
-				fputs(connectbuf.data, script);
-				termPQExpBuffer(&connectbuf);
-
-				fprintf(script,
-						"SELECT pg_catalog.lo_create(t.loid)\n"
-						"FROM (SELECT DISTINCT loid FROM pg_catalog.pg_largeobject) AS t;\n");
-			}
-		}
-
-		PQclear(res);
-		PQfinish(conn);
-	}
-
-	if (script)
-		fclose(script);
-
-	if (found)
-	{
-		report_status(PG_WARNING, "warning");
-		if (check_mode)
-			pg_log(PG_WARNING, "\n"
-				   "Your installation contains large objects.  The new database has an\n"
-				   "additional large object permission table.  After upgrading, you will be\n"
-				   "given a command to populate the pg_largeobject_metadata table with\n"
-				   "default permissions.\n\n");
-		else
-			pg_log(PG_WARNING, "\n"
-				   "Your installation contains large objects.  The new database has an\n"
-				   "additional large object permission table, so default permissions must be\n"
-				   "defined for all large objects.  The file\n"
-				   "    %s\n"
-				   "when executed by psql by the database superuser will set the default\n"
-				   "permissions.\n\n",
-				   output_path);
-	}
-	else
-		check_ok();
-}
+#include "pg_upgrade.h"
 
 
 /*
@@ -161,18 +76,11 @@ check_for_data_types_usage(ClusterInfo *cluster,
 						  "				  t.oid = c.reltype AND "
 						  "				  c.oid = a.attrelid AND "
 						  "				  NOT a.attisdropped AND "
-						  "				  a.atttypid = x.oid ",
-						  base_query);
-
-		/* Ranges came in in 9.2 */
-		if (GET_MAJOR_VERSION(cluster->major_version) >= 902)
-			appendPQExpBuffer(&querybuf,
-							  "			UNION ALL "
-			/* ranges containing any type selected so far */
-							  "			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_range r, x "
-							  "			WHERE t.typtype = 'r' AND r.rngtypid = t.oid AND r.rngsubtype = x.oid");
-
-		appendPQExpBuffer(&querybuf,
+						  "				  a.atttypid = x.oid "
+						  "			UNION ALL "
+		/* ranges containing any type selected so far */
+						  "			SELECT t.oid FROM pg_catalog.pg_type t, pg_catalog.pg_range r, x "
+						  "			WHERE t.typtype = 'r' AND r.rngtypid = t.oid AND r.rngsubtype = x.oid"
 						  "	) foo "
 						  ") "
 		/* now look for stored columns of any such type */
@@ -192,7 +100,10 @@ check_for_data_types_usage(ClusterInfo *cluster,
 						  "		n.nspname !~ '^pg_temp_' AND "
 						  "		n.nspname !~ '^pg_toast_temp_' AND "
 		/* exclude system catalogs, too */
-						  "		n.nspname NOT IN ('pg_catalog', 'information_schema')");
+						  "		n.nspname NOT IN ('pg_catalog', 'information_schema')",
+						  base_query);
+
+		res = executeQueryOrDie(conn, "%s", querybuf.data);
 
 		res = executeQueryOrDie(conn, "%s", querybuf.data);
 
@@ -274,16 +185,19 @@ old_9_3_check_for_line_data_type_usage(ClusterInfo *cluster)
 
 	prep_status("Checking for incompatible \"line\" data type");
 
-	snprintf(output_path, sizeof(output_path), "tables_using_line.txt");
+	snprintf(output_path, sizeof(output_path), "%s/%s",
+			 log_opts.basedir,
+			 "tables_using_line.txt");
 
 	if (check_for_data_type_usage(cluster, "pg_catalog.line", output_path))
 	{
 		pg_log(PG_REPORT, "fatal\n");
-		pg_fatal("Your installation contains the \"line\" data type in user tables.  This\n"
-				 "data type changed its internal and input/output format between your old\n"
-				 "and new clusters so this cluster cannot currently be upgraded.  You can\n"
-				 "remove the problem tables and restart the upgrade.  A list of the problem\n"
-				 "columns is in the file:\n"
+		pg_fatal("Your installation contains the \"line\" data type in user tables.\n"
+				 "This data type changed its internal and input/output format\n"
+				 "between your old and new versions so this\n"
+				 "cluster cannot currently be upgraded.  You can\n"
+				 "drop the problem columns and restart the upgrade.\n"
+				 "A list of the problem columns is in the file:\n"
 				 "    %s\n\n", output_path);
 	}
 	else
@@ -311,14 +225,17 @@ old_9_6_check_for_unknown_data_type_usage(ClusterInfo *cluster)
 
 	prep_status("Checking for invalid \"unknown\" user columns");
 
-	snprintf(output_path, sizeof(output_path), "tables_using_unknown.txt");
+	snprintf(output_path, sizeof(output_path), "%s/%s",
+			 log_opts.basedir,
+			 "tables_using_unknown.txt");
 
 	if (check_for_data_type_usage(cluster, "pg_catalog.unknown", output_path))
 	{
 		pg_log(PG_REPORT, "fatal\n");
-		pg_fatal("Your installation contains the \"unknown\" data type in user tables.  This\n"
-				 "data type is no longer allowed in tables, so this cluster cannot currently\n"
-				 "be upgraded.  You can remove the problem tables and restart the upgrade.\n"
+		pg_fatal("Your installation contains the \"unknown\" data type in user tables.\n"
+				 "This data type is no longer allowed in tables, so this\n"
+				 "cluster cannot currently be upgraded.  You can\n"
+				 "drop the problem columns and restart the upgrade.\n"
 				 "A list of the problem columns is in the file:\n"
 				 "    %s\n\n", output_path);
 	}
@@ -453,16 +370,18 @@ old_11_check_for_sql_identifier_data_type_usage(ClusterInfo *cluster)
 
 	prep_status("Checking for invalid \"sql_identifier\" user columns");
 
-	snprintf(output_path, sizeof(output_path), "tables_using_sql_identifier.txt");
+	snprintf(output_path, sizeof(output_path), "%s/%s",
+			 log_opts.basedir,
+			 "tables_using_sql_identifier.txt");
 
 	if (check_for_data_type_usage(cluster, "information_schema.sql_identifier",
 								  output_path))
 	{
 		pg_log(PG_REPORT, "fatal\n");
-		pg_fatal("Your installation contains the \"sql_identifier\" data type in user tables\n"
-				 "and/or indexes.  The on-disk format for this data type has changed, so this\n"
-				 "cluster cannot currently be upgraded.  You can remove the problem tables or\n"
-				 "change the data type to \"name\" and restart the upgrade.\n"
+		pg_fatal("Your installation contains the \"sql_identifier\" data type in user tables.\n"
+				 "The on-disk format for this data type has changed, so this\n"
+				 "cluster cannot currently be upgraded.  You can\n"
+				 "drop the problem columns and restart the upgrade.\n"
 				 "A list of the problem columns is in the file:\n"
 				 "    %s\n\n", output_path);
 	}

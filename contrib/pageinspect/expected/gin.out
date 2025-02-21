@@ -68,3 +68,4 @@ SELECT gin_page_opaque_info(decode(repeat('00', :block_size), 'hex'));
 -[ RECORD 1 ]--------+-
 gin_page_opaque_info | 
 
+DROP TABLE test1;

@@ -7,7 +7,7 @@
  * knowledge of the tuple descriptor. Fixed column widths, NOT NULLness, etc
  * can be taken advantage of.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -210,7 +210,6 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 		v_tupleheaderp =
 			l_load_struct_gep(b, StructHeapTupleTableSlot, v_heapslot, FIELDNO_HEAPTUPLETABLESLOT_TUPLE,
 							  "tupleheader");
-
 	}
 	else if (ops == &TTSOpsMinimalTuple)
 	{
@@ -394,7 +393,6 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 
 			LLVMAddCase(v_switch, v_attno, attcheckattnoblocks[attnum]);
 		}
-
 	}
 	else
 	{
@@ -513,13 +511,13 @@ slot_compile_deform(LLVMJitContext *context, TupleDesc desc,
 		LLVMPositionBuilderAtEnd(b, attcheckalignblocks[attnum]);
 
 		/* determine required alignment */
-		if (att->attalign == 'i')
+		if (att->attalign == TYPALIGN_INT)
 			alignto = ALIGNOF_INT;
-		else if (att->attalign == 'c')
+		else if (att->attalign == TYPALIGN_CHAR)
 			alignto = 1;
-		else if (att->attalign == 'd')
+		else if (att->attalign == TYPALIGN_DOUBLE)
 			alignto = ALIGNOF_DOUBLE;
-		else if (att->attalign == 's')
+		else if (att->attalign == TYPALIGN_SHORT)
 			alignto = ALIGNOF_SHORT;
 		else
 		{

@@ -1,13 +1,16 @@
-# Japanese message translation file for pg_upgrade
-# Copyright (C) 2019 PostgreSQL Global Development Group
-# This file is distributed under the same license as the pg_archivecleanup (PostgreSQL) package.
+# pg_upgrade.po
+#   Japanese message translation file for pg_upgrade
+#
+# Copyright (C) 2011-2022 PostgreSQL Global Development Group
+#
+# This file is distributed under the same license as the PostgreSQL package.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: pg_upgrade (PostgreSQL 12)\n"
+"Project-Id-Version: pg_upgrade (PostgreSQL 15)\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2024-05-20 14:16+0900\n"
-"PO-Revision-Date: 2024-05-20 16:47+0900\n"
+"POT-Creation-Date: 2023-09-26 10:20+0900\n"
+"PO-Revision-Date: 2023-09-26 11:35+0900\n"
 "Last-Translator: Kyotaro Horiguchi <horikyota.ntt@gmail.com>\n"
 "Language-Team: Japan PostgreSQL Users Group <jpug-doc@ml.postgresql.jp>\n"
 "Language: ja\n"
@@ -17,7 +20,7 @@ msgstr ""
 "X-Generator: Poedit 1.8.13\n"
 "Plural-Forms: nplural=1; plural=0;\n"
 
-#: check.c:72
+#: check.c:75
 #, c-format
 msgid ""
 "Performing Consistency Checks on Old Live Server\n"
@@ -26,7 +29,7 @@ msgstr ""
 "元の実行中サーバーの一貫性チェックを実行しています。\n"
 "--------------------------------------------------\n"
 
-#: check.c:78
+#: check.c:81
 #, c-format
 msgid ""
 "Performing Consistency Checks\n"
@@ -35,7 +38,7 @@ msgstr ""
 "整合性チェックを実行しています。\n"
 "-----------------------------\n"
 
-#: check.c:209
+#: check.c:231
 #, c-format
 msgid ""
 "\n"
@@ -44,7 +47,7 @@ msgstr ""
 "\n"
 "* クラスタは互換性があります *\n"
 
-#: check.c:215
+#: check.c:239
 #, c-format
 msgid ""
 "\n"
@@ -55,20 +58,20 @@ msgstr ""
 "この後pg_upgradeが失敗した場合は、続ける前に新しいクラスタを\n"
 "initdbで再作成する必要があります。\n"
 
-#: check.c:251
+#: check.c:280
 #, c-format
 msgid ""
-"Optimizer statistics are not transferred by pg_upgrade so,\n"
-"once you start the new server, consider running:\n"
-"    %s\n"
+"Optimizer statistics are not transferred by pg_upgrade.\n"
+"Once you start the new server, consider running:\n"
+"    %s/vacuumdb %s--all --analyze-in-stages\n"
 "\n"
 msgstr ""
 "オプティマイザーの統計は、pg_upgrade では転送されません。そのため\n"
-"新サーバーを起動した後、%s を動かすことを検討してください。\n"
-"\n"
+"新サーバーを起動した後、以下を行うことを検討してください。\n"
+"    %s/vacuumdb %s--all --analyze-in-stages\n"
 "\n"
 
-#: check.c:257
+#: check.c:286
 #, c-format
 msgid ""
 "Running this script will delete the old cluster's data files:\n"
@@ -77,7 +80,7 @@ msgstr ""
 "このスクリプトを実行すると、旧クラスタのデータファイル %sが削除されます:\n"
 "\n"
 
-#: check.c:262
+#: check.c:291
 #, c-format
 msgid ""
 "Could not create a script to delete the old cluster's data files\n"
@@ -90,225 +93,291 @@ msgstr ""
 "ファイルを削除するためのスクリプトを作成できませんでした。 古い\n"
 "クラスタの内容は手動で削除する必要があります。\n"
 
-#: check.c:272
+#: check.c:303
 #, c-format
 msgid "Checking cluster versions"
 msgstr "クラスタのバージョンを確認しています"
 
-#: check.c:288
+#: check.c:315
 #, c-format
-msgid "This utility can only upgrade from PostgreSQL version 9.0 and later.\n"
-msgstr "このユーティリティでは PostgreSQL 9.0以降のバージョンからのみアップグレードできます。\n"
+msgid "This utility can only upgrade from PostgreSQL version %s and later.\n"
+msgstr "このユーティリティではPostgreSQLバージョン%s 以降のバージョンからのみアップグレードできます。\n"
 
-#: check.c:293
+#: check.c:320
 #, c-format
 msgid "This utility can only upgrade to PostgreSQL version %s.\n"
 msgstr "このユーティリティは、PostgreSQL バージョン %s にのみアップグレードできます。\n"
 
-#: check.c:302
+#: check.c:329
 #, c-format
 msgid "This utility cannot be used to downgrade to older major PostgreSQL versions.\n"
 msgstr "このユーティリティは PostgreSQL の過去のメジャーバージョンにダウングレードする用途では使用できません。\n"
 
-#: check.c:307
+#: check.c:334
 #, c-format
 msgid "Old cluster data and binary directories are from different major versions.\n"
 msgstr "旧クラスタのデータとバイナリのディレクトリは異なるメジャーバージョンのものです。\n"
 
-#: check.c:310
+#: check.c:337
 #, c-format
 msgid "New cluster data and binary directories are from different major versions.\n"
 msgstr "新クラスタのデータとバイナリのディレクトリは異なるメジャーバージョンのものです。\n"
 
-#: check.c:327
-#, c-format
-msgid "When checking a pre-PG 9.1 live old server, you must specify the old server's port number.\n"
-msgstr "現在動作中の PG 9.1 以前の旧サーバをチェックする場合、旧サーバのポート番号を指定する必要があります。\n"
-
-#: check.c:331
+#: check.c:352
 #, c-format
 msgid "When checking a live server, the old and new port numbers must be different.\n"
-msgstr "稼働中のサーバをチェックする場合、新旧のポート番号が異なっている必要があります。\n"
+msgstr "稼働中のサーバーをチェックする場合、新旧のポート番号が異なっている必要があります。\n"
 
-#: check.c:346
+#: check.c:367
 #, c-format
 msgid "encodings for database \"%s\" do not match:  old \"%s\", new \"%s\"\n"
 msgstr "データベース\"%s\"のエンコーディングが一致しません: 旧 \"%s\"、新 \"%s\"\n"
 
-#: check.c:351
+#: check.c:372
 #, c-format
 msgid "lc_collate values for database \"%s\" do not match:  old \"%s\", new \"%s\"\n"
 msgstr "データベース\"%s\"の lc_collate 値が一致しません:旧 \"%s\"、新 \"%s\"\n"
 
-#: check.c:354
+#: check.c:375
 #, c-format
 msgid "lc_ctype values for database \"%s\" do not match:  old \"%s\", new \"%s\"\n"
 msgstr "データベース\"%s\"の lc_ctype 値が一致しません:旧 \"%s\"、新 \"%s\"\n"
 
-#: check.c:427
+#: check.c:378
+#, c-format
+msgid "locale providers for database \"%s\" do not match:  old \"%s\", new \"%s\"\n"
+msgstr "データベース\"%s\"のロケールプロバイダが一致しません:旧 \"%s\"、新 \"%s\"\n"
+
+#: check.c:385
+#, c-format
+msgid "ICU locale values for database \"%s\" do not match:  old \"%s\", new \"%s\"\n"
+msgstr "データベース\"%s\"のICUロケールが一致しません:旧 \"%s\"、新 \"%s\"\n"
+
+#: check.c:460
 #, c-format
 msgid "New cluster database \"%s\" is not empty: found relation \"%s.%s\"\n"
 msgstr "新クラスタのデータベース\"%s\"が空ではありません: リレーション\"%s.%s\"が見つかりました\n"
 
-#: check.c:476
-#, c-format
-msgid "Creating script to analyze new cluster"
-msgstr "新クラスタをANALYZEするためのスクリプトを作成しています"
-
-#: check.c:490 check.c:649 check.c:913 check.c:992 file.c:343 function.c:246
-#: option.c:495 version.c:57 version.c:207 version.c:377 version.c:512
-#, c-format
-msgid "could not open file \"%s\": %s\n"
-msgstr "ファイル \"%s\" をオープンできませんでした: %s\n"
-
-#: check.c:538 check.c:705
-#, c-format
-msgid "could not add execute permission to file \"%s\": %s\n"
-msgstr "ファイル\"%s\"に実行権限を追加できませんでした: %s\n"
-
-#: check.c:568
+#: check.c:512
 #, c-format
 msgid "Checking for new cluster tablespace directories"
-msgstr "新しいクラスタのテーブルスペースディレクトリを確認しています"
+msgstr "新しいクラスタのテーブル空間ディレクトリを確認しています"
 
-#: check.c:579
+#: check.c:523
 #, c-format
 msgid "new cluster tablespace directory already exists: \"%s\"\n"
-msgstr "新しいクラスタのテーブルスペースディレクトリはすでに存在します: \"%s\"\n"
+msgstr "新しいクラスタのテーブル空間ディレクトリはすでに存在します: \"%s\"\n"
 
-#: check.c:612
+#: check.c:556
 #, c-format
 msgid ""
 "\n"
-"WARNING:  new data directory should not be inside the old data directory, e.g. %s\n"
+"WARNING:  new data directory should not be inside the old data directory, i.e. %s\n"
 msgstr ""
 "\n"
-"警告: 新データディレクトリが旧データディレクトリの中にあってはなりません、例えば%s\n"
+"警告: 新データディレクトリが旧データディレクトリの中にあってはなりません、つまり %s\n"
 
-#: check.c:636
+#: check.c:580
 #, c-format
 msgid ""
 "\n"
-"WARNING:  user-defined tablespace locations should not be inside the data directory, e.g. %s\n"
+"WARNING:  user-defined tablespace locations should not be inside the data directory, i.e. %s\n"
 msgstr ""
 "\n"
-"警告: ユーザー定義テーブル空間の場所がデータディレクトリ、例えば %s の中にあってはなりません。\n"
+"警告: ユーザー定義テーブル空間の場所がデータディレクトリ、つまり %s の中にあってはなりません。\n"
 
-#: check.c:646
+#: check.c:590
 #, c-format
 msgid "Creating script to delete old cluster"
 msgstr "旧クラスタを削除するスクリプトを作成しています"
 
-#: check.c:725
+#: check.c:593 check.c:768 check.c:888 check.c:987 check.c:1118 check.c:1197
+#: check.c:1500 file.c:338 function.c:165 option.c:465 version.c:116
+#: version.c:292 version.c:429
+#, c-format
+msgid "could not open file \"%s\": %s\n"
+msgstr "ファイル \"%s\" をオープンできませんでした: %s\n"
+
+#: check.c:644
+#, c-format
+msgid "could not add execute permission to file \"%s\": %s\n"
+msgstr "ファイル\"%s\"に実行権限を追加できませんでした: %s\n"
+
+#: check.c:664
 #, c-format
 msgid "Checking database user is the install user"
 msgstr "データベースユーザーがインストールユーザーかどうかをチェックしています"
 
-#: check.c:741
+#: check.c:680
 #, c-format
 msgid "database user \"%s\" is not the install user\n"
 msgstr "データベースユーザー\"%s\"がインストールユーザーではありません\n"
 
-#: check.c:752
+#: check.c:691
 #, c-format
 msgid "could not determine the number of users\n"
 msgstr "ユーザー数を特定できませんでした\n"
 
-#: check.c:760
+#: check.c:699
 #, c-format
 msgid "Only the install user can be defined in the new cluster.\n"
 msgstr "新クラスタ内で定義できるのはインストールユーザーのみです。\n"
 
-#: check.c:780
+#: check.c:729
 #, c-format
 msgid "Checking database connection settings"
 msgstr "データベース接続の設定を確認しています"
 
-#: check.c:802
+#: check.c:755
 #, c-format
 msgid "template0 must not allow connections, i.e. its pg_database.datallowconn must be false\n"
 msgstr "template0 には接続を許可してはなりません。すなわち、pg_database.datallowconn は false である必要があります。\n"
 
-#: check.c:812
-#, c-format
-msgid "All non-template0 databases must allow connections, i.e. their pg_database.datallowconn must be true\n"
-msgstr "template0 以外のすべてのデータベースは接続を許可する必要があります。すなわち pg_database.datallowconn が true でなければなりません。\n"
-
-#: check.c:837
-#, c-format
-msgid "Checking for prepared transactions"
-msgstr "準備済みトランザクションをチェックしています"
-
-#: check.c:846
-#, c-format
-msgid "The source cluster contains prepared transactions\n"
-msgstr "移行元クラスタに準備済みトランザクションがあります\n"
-
-#: check.c:848
-#, c-format
-msgid "The target cluster contains prepared transactions\n"
-msgstr "移行先クラスタに準備済みトランザクションがあります\n"
-
-#: check.c:874
-#, c-format
-msgid "Checking for contrib/isn with bigint-passing mismatch"
-msgstr "bigint を渡す際にミスマッチが発生する contrib/isn をチェックしています"
-
-#: check.c:935 check.c:1014 check.c:1071 check.c:1130 check.c:1164 check.c:1193
-#: function.c:268 version.c:281 version.c:318 version.c:461
+#: check.c:785 check.c:910 check.c:1012 check.c:1138 check.c:1219 check.c:1278
+#: check.c:1339 check.c:1404 check.c:1523 function.c:187 version.c:192
+#: version.c:232 version.c:378
 #, c-format
 msgid "fatal\n"
 msgstr "致命的\n"
 
-#: check.c:936
+#: check.c:786
+#, c-format
+msgid ""
+"All non-template0 databases must allow connections, i.e. their\n"
+"pg_database.datallowconn must be true.  Your installation contains\n"
+"non-template0 databases with their pg_database.datallowconn set to\n"
+"false.  Consider allowing connection for all non-template0 databases\n"
+"or drop the databases which do not allow connections.  A list of\n"
+"databases with the problem is in the file:\n"
+"    %s\n"
+"\n"
+msgstr ""
+"template0ではないすべてのデータベースは接続を許可しなければなりません、つまり\n"
+"pg_database.datallowconnがtrueでなければなりません。このクラスタには\n"
+"pg_database.datallowconnがfalseとなっているtemplate0以外のデータベースが\n"
+"存在しています。template0以外のすべてのデータベースへの接続を許可するか、接続が\n"
+"許可されないデータベースをすべて削除することを検討してください。問題のあるデータベースの\n"
+"一覧が以下のファイルにあります:\n"
+"    %s\n"
+"\n"
+
+#: check.c:811
+#, c-format
+msgid "Checking for prepared transactions"
+msgstr "準備済みトランザクションをチェックしています"
+
+#: check.c:820
+#, c-format
+msgid "The source cluster contains prepared transactions\n"
+msgstr "移行元クラスタに準備済みトランザクションがあります\n"
+
+#: check.c:822
+#, c-format
+msgid "The target cluster contains prepared transactions\n"
+msgstr "移行先クラスタに準備済みトランザクションがあります\n"
+
+#: check.c:848
+#, c-format
+msgid "Checking for contrib/isn with bigint-passing mismatch"
+msgstr "bigint を渡す際にミスマッチが発生する contrib/isn をチェックしています"
+
+#: check.c:911
 #, c-format
 msgid ""
 "Your installation contains \"contrib/isn\" functions which rely on the\n"
 "bigint data type.  Your old and new clusters pass bigint values\n"
 "differently so this cluster cannot currently be upgraded.  You can\n"
-"manually upgrade databases that use \"contrib/isn\" facilities and remove\n"
-"\"contrib/isn\" from the old cluster and restart the upgrade.  A list of\n"
-"the problem functions is in the file:\n"
+"manually dump databases in the old cluster that use \"contrib/isn\"\n"
+"facilities, drop them, perform the upgrade, and then restore them.  A\n"
+"list of the problem functions is in the file:\n"
 "    %s\n"
 "\n"
 msgstr ""
 "このクラスタには、bigint データ型に依存する「contrib/isn」の関数が\n"
 "含まれています。新旧のクラスタ間でのbigint値の受け渡し方法が異なるため、\n"
 "現時点ではこのクラスタをアップグレードすることはできません。\n"
-"「contrib/isn」の関数を使うデータベースを手動でアップグレードし、\n"
-"旧クラスタから「contrib/isn」を削除した後、アップグレードを継続してください。 \n"
+"旧クラスタ中の「contrib/isn」の関数等を使うデータベースを手動でダンプして、\n"
+"それらを削除してからアップグレードを実行し、その後削除したデータベースを\n"
+"リストアすることができます。 \n"
 "問題のある関数の一覧は以下のファイルにあります:\n"
 "    %s\n"
 "\n"
 
-#: check.c:960
+#: check.c:934
+#, c-format
+msgid "Checking for user-defined postfix operators"
+msgstr "ユーザー定義の後置演算子を確認しています"
+
+#: check.c:1013
+#, c-format
+msgid ""
+"Your installation contains user-defined postfix operators, which are not\n"
+"supported anymore.  Consider dropping the postfix operators and replacing\n"
+"them with prefix operators or function calls.\n"
+"A list of user-defined postfix operators is in the file:\n"
+"    %s\n"
+"\n"
+msgstr ""
+"このクラスタにはユーザー定義の後置演算子が存在しますが、これは今後\n"
+"サポートされません。後置演算子を削除するか、前置演算子あるいは関数\n"
+"呼び出しで置き換えることを検討してください:\n"
+"以下のファイルにユーザー定義後置演算子の一覧があります:\n"
+"    %s\n"
+"\n"
+
+#: check.c:1037
+#, c-format
+msgid "Checking for incompatible polymorphic functions"
+msgstr "非互換の多態関数を確認しています"
+
+#: check.c:1139
+#, c-format
+msgid ""
+"Your installation contains user-defined objects that refer to internal\n"
+"polymorphic functions with arguments of type \"anyarray\" or \"anyelement\".\n"
+"These user-defined objects must be dropped before upgrading and restored\n"
+"afterwards, changing them to refer to the new corresponding functions with\n"
+"arguments of type \"anycompatiblearray\" and \"anycompatible\".\n"
+"A list of the problematic objects is in the file:\n"
+"    %s\n"
+"\n"
+msgstr ""
+"このクラスタには、\"anyarray\"または\"anyelement\"型の引数を持つ内部多態関数を\n"
+"参照するユーザー定義のオブジェクトが含まれています。これらのユーザー定義オブジェクトは\n"
+"アップグレード前に削除して、のちに\"anycompatiblearray\"および\"anycompatible\"を\n"
+"引数とする対応する新しい関数を参照するように変更して復元する必要があります。\n"
+"問題となるオブジェクトの一覧は以下のファイルにあります:\n"
+"    %s\n"
+"\n"
+
+#: check.c:1164
 #, c-format
 msgid "Checking for tables WITH OIDS"
 msgstr "WITH OIDS宣言されたテーブルをチェックしています"
 
-#: check.c:1015
+#: check.c:1220
 #, c-format
 msgid ""
-"Your installation contains tables declared WITH OIDS, which is not supported\n"
-"anymore. Consider removing the oid column using\n"
+"Your installation contains tables declared WITH OIDS, which is not\n"
+"supported anymore.  Consider removing the oid column using\n"
 "    ALTER TABLE ... SET WITHOUT OIDS;\n"
 "A list of tables with the problem is in the file:\n"
 "    %s\n"
 "\n"
 msgstr ""
-"このクラスタにはWITH OIDS宣言されたテーブルが存在しますが、これは今後サポートされません。\n"
-"以下のコマンドでoidカラムを削除することを検討してください:\n"
+"このクラスタにはWITH OIDS宣言されたテーブルが存在しますが、これは今後\n"
+"サポートされません。以下のコマンドでoidカラムを削除することを検討してください:\n"
 "    ALTER TABLE ... SET WITHOUT OIDS;\n"
 "以下のファイルにこの問題を抱えるテーブルの一覧があります:\n"
 "    %s\n"
 "\n"
 
-#: check.c:1043
+#: check.c:1248
 #, c-format
 msgid "Checking for system-defined composite types in user tables"
-msgstr "ユーザーテーブル中のシステム定義の複合型を確認しています"
+msgstr "ユーザーテーブル内のシステム定義複合型を確認しています"
 
-#: check.c:1072
+#: check.c:1279
 #, c-format
 msgid ""
 "Your installation contains system-defined composite type(s) in user tables.\n"
@@ -319,43 +388,49 @@ msgid ""
 "    %s\n"
 "\n"
 msgstr ""
-"このクラスタではユーザーテーブルにシステム定義の複合型が含まれています。\n"
-"これらの型のOIDはPostgreSQLバージョン間で不変ではないため、このクラスタは\n"
-"アップグレードできません。問題の列を削除した後、アップグレードを再実行できます。\n"
+"このクラスタ内のユーザーテーブルには、システム定義の複合データ型が含まれています。\n"
+"これらのデータ型のOIDはPostgreSQLのバージョン間にわたって不変ではないため、\n"
+"このクラスタは現時点ではアップグレードできません。問題の列を削除したのちに\n"
+"アップグレードを再実行することができます。\n"
 "問題のある列の一覧は、以下のファイルにあります: \n"
 "    %s\n"
 "\n"
 
-#: check.c:1100
+#: check.c:1307
 #, c-format
 msgid "Checking for reg* data types in user tables"
 msgstr "ユーザーテーブル内の reg * データ型をチェックしています"
 
-#: check.c:1131
+#: check.c:1340
 #, c-format
 msgid ""
 "Your installation contains one of the reg* data types in user tables.\n"
 "These data types reference system OIDs that are not preserved by\n"
 "pg_upgrade, so this cluster cannot currently be upgraded.  You can\n"
-"remove the problem tables and restart the upgrade.  A list of the problem\n"
-"columns is in the file:\n"
+"drop the problem columns and restart the upgrade.\n"
+"A list of the problem columns is in the file:\n"
 "    %s\n"
 "\n"
 msgstr ""
-"このクラスタではユーザテーブルにreg*データ型のひとつが含まれています。\n"
+"このクラスタではユーザーテーブルにreg*データ型のひとつが含まれています。\n"
 "これらのデータ型はシステムOIDを参照しますが、これは pg_upgradeでは\n"
 "保存されないため、現時点ではこのクラスタをアップグレードすることはできません。\n"
-"問題のテーブルを削除したのち、アップグレードを再実行できます。\n"
-"問題になる列の一覧は以下のファイルにあります:\n"
+"問題の列を削除したのち、アップグレードを再実行できます。\n"
+"問題のある列の一覧は以下のファイルにあります:\n"
 "    %s\n"
 "\n"
 
-#: check.c:1155
+#: check.c:1364
 #, c-format
 msgid "Checking for removed \"%s\" data type in user tables"
 msgstr "ユーザーテーブル中で使用されている削除された\"%s\"データ型をチェックしています"
 
-#: check.c:1165
+#: check.c:1373
+#, c-format
+msgid "fatal"
+msgstr "致命的"
+
+#: check.c:1374
 #, c-format
 msgid ""
 "Your installation contains the \"%s\" data type in user tables.\n"
@@ -373,55 +448,81 @@ msgstr ""
 "    %s\n"
 "\n"
 
-#: check.c:1187
+#: check.c:1396
 #, c-format
 msgid "Checking for incompatible \"jsonb\" data type"
 msgstr "互換性のない\"jsonb\"データ型をチェックしています"
 
-#: check.c:1194
+#: check.c:1405
 #, c-format
 msgid ""
 "Your installation contains the \"jsonb\" data type in user tables.\n"
-"The internal format of \"jsonb\" changed during 9.4 beta so this cluster cannot currently\n"
-"be upgraded.  You can remove the problem tables and restart the upgrade.  A list\n"
-"of the problem columns is in the file:\n"
+"The internal format of \"jsonb\" changed during 9.4 beta so this\n"
+"cluster cannot currently be upgraded.  You can\n"
+"drop the problem columns and restart the upgrade.\n"
+"A list of the problem columns is in the file:\n"
 "    %s\n"
 "\n"
 msgstr ""
-"このクラスタではユーザテーブルに\"jsonb\"データ型が含まれています。\n"
+"このクラスタではユーザーテーブルに\"jsonb\"データ型が含まれています。\n"
 "この型の内部フォーマットは9.4ベータの間に変更されているため、現時点ではこの\n"
 "クラスタをアップグレードすることはできません。\n"
-"問題のテーブルを削除したのち、アップグレードを再実行できます。\n"
-"問題になる列の一覧は以下のファイルにあります:\n"
+"問題の列を削除したのち、アップグレードを再実行できます。\n"
+"問題のある列の一覧は以下のファイルにあります:\n"
 "    %s\n"
 "\n"
 
-#: check.c:1215
+#: check.c:1427
 #, c-format
 msgid "Checking for roles starting with \"pg_\""
 msgstr "'pg_' で始まるロールをチェックしています"
 
-#: check.c:1225
+#: check.c:1437
 #, c-format
 msgid "The source cluster contains roles starting with \"pg_\"\n"
 msgstr "移行元クラスタに 'pg_' で始まるロールが含まれています\n"
 
-#: check.c:1227
+#: check.c:1439
 #, c-format
 msgid "The target cluster contains roles starting with \"pg_\"\n"
 msgstr "移行先クラスタに \"pg_\" で始まるロールが含まれています\n"
 
-#: check.c:1253
+#: check.c:1460
+#, c-format
+msgid "Checking for user-defined encoding conversions"
+msgstr "ユーザー定義のエンコーディング変換を確認しています"
+
+#: check.c:1524
+#, c-format
+msgid ""
+"Your installation contains user-defined encoding conversions.\n"
+"The conversion function parameters changed in PostgreSQL version 14\n"
+"so this cluster cannot currently be upgraded.  You can remove the\n"
+"encoding conversions in the old cluster and restart the upgrade.\n"
+"A list of user-defined encoding conversions is in the file:\n"
+"    %s\n"
+"\n"
+msgstr ""
+"このクラスタにはユーザー定義のエンコーディング変換が含まれています。\n"
+"変換関数のパラメータがPostgreSQLバージョン14で変更されているため、\n"
+"現時点ではこのクラスタをアップグレードすることはできません。\n"
+"旧クラスタ内のそれらのエンコーディング変換を削除したのち、アップグレードを\n"
+"再実行できます。\n"
+"ユーザー定義のエンコーディング変換の一覧は以下のファイルにあります:\n"
+"    %s\n"
+"\n"
+
+#: check.c:1551
 #, c-format
 msgid "failed to get the current locale\n"
 msgstr "現在のロケールを取得できませんでした。\n"
 
-#: check.c:1262
+#: check.c:1560
 #, c-format
 msgid "failed to get system locale name for \"%s\"\n"
 msgstr "\"%s\"のシステムロケール名を取得できませんでした。\n"
 
-#: check.c:1268
+#: check.c:1566
 #, c-format
 msgid "failed to restore old locale \"%s\"\n"
 msgstr "古いロケール\"%s\"を復元できませんでした。\n"
@@ -466,8 +567,8 @@ msgstr "移行元クラスタにクラスタ状態情報がありません:\n"
 msgid "The target cluster lacks cluster state information:\n"
 msgstr "移行先クラスタにクラスタ状態情報がありません:\n"
 
-#: controldata.c:209 dump.c:51 pg_upgrade.c:336 pg_upgrade.c:373
-#: relfilenode.c:248 util.c:80
+#: controldata.c:209 dump.c:50 pg_upgrade.c:440 pg_upgrade.c:477
+#: relfilenode.c:231 server.c:34
 #, c-format
 msgid "%s"
 msgstr "%s"
@@ -488,117 +589,117 @@ msgstr "%d: pg_resetwal で問題発生\n"
 msgid "%d: controldata retrieval problem\n"
 msgstr "%d: 制御情報の取得で問題発生\n"
 
-#: controldata.c:557
+#: controldata.c:571
 #, c-format
 msgid "The source cluster lacks some required control information:\n"
 msgstr "移行元クラスタに必要な制御情報の一部がありません:\n"
 
-#: controldata.c:560
+#: controldata.c:574
 #, c-format
 msgid "The target cluster lacks some required control information:\n"
 msgstr "移行先クラスタに必要な制御情報の一部がありません:\n"
 
-#: controldata.c:563
+#: controldata.c:577
 #, c-format
 msgid "  checkpoint next XID\n"
 msgstr "  チェックポイントにおける次の XID\n"
 
-#: controldata.c:566
+#: controldata.c:580
 #, c-format
 msgid "  latest checkpoint next OID\n"
 msgstr "  最新のチェックポイントにおける次の OID\n"
 
-#: controldata.c:569
+#: controldata.c:583
 #, c-format
 msgid "  latest checkpoint next MultiXactId\n"
 msgstr "  最新のチェックポイントにおける次の MultiXactId\n"
 
-#: controldata.c:573
+#: controldata.c:587
 #, c-format
 msgid "  latest checkpoint oldest MultiXactId\n"
 msgstr "  最新のチェックポイントにおける最古の MultiXactId\n"
 
-#: controldata.c:576
+#: controldata.c:590
 #, c-format
 msgid "  latest checkpoint oldestXID\n"
 msgstr "  最新のチェックポイントにおける最古のXID\n"
 
-#: controldata.c:579
+#: controldata.c:593
 #, c-format
 msgid "  latest checkpoint next MultiXactOffset\n"
 msgstr "  最新のチェックポイントにおける次の MultiXactOffset\n"
 
-#: controldata.c:582
+#: controldata.c:596
 #, c-format
 msgid "  first WAL segment after reset\n"
 msgstr "  リセット後の最初の WAL セグメント\n"
 
-#: controldata.c:585
+#: controldata.c:599
 #, c-format
 msgid "  float8 argument passing method\n"
 msgstr "  float8引数の引き渡し方法\n"
 
-#: controldata.c:588
+#: controldata.c:602
 #, c-format
 msgid "  maximum alignment\n"
 msgstr "  最大アラインメント\n"
 
-#: controldata.c:591
+#: controldata.c:605
 #, c-format
 msgid "  block size\n"
 msgstr "  ブロックサイズ\n"
 
-#: controldata.c:594
+#: controldata.c:608
 #, c-format
 msgid "  large relation segment size\n"
 msgstr "  リレーションセグメントのサイズ\n"
 
-#: controldata.c:597
+#: controldata.c:611
 #, c-format
 msgid "  WAL block size\n"
 msgstr "  WAL のブロックサイズ\n"
 
-#: controldata.c:600
+#: controldata.c:614
 #, c-format
 msgid "  WAL segment size\n"
 msgstr "  WAL のセグメント サイズ\n"
 
-#: controldata.c:603
+#: controldata.c:617
 #, c-format
 msgid "  maximum identifier length\n"
 msgstr "  識別子の最大長\n"
 
-#: controldata.c:606
+#: controldata.c:620
 #, c-format
 msgid "  maximum number of indexed columns\n"
 msgstr "  インデックス対象カラムの最大数\n"
 
-#: controldata.c:609
+#: controldata.c:623
 #, c-format
 msgid "  maximum TOAST chunk size\n"
 msgstr "  最大の TOAST チャンクサイズ\n"
 
-#: controldata.c:613
+#: controldata.c:627
 #, c-format
 msgid "  large-object chunk size\n"
 msgstr "  ラージオブジェクトのチャンクサイズ\n"
 
-#: controldata.c:616
+#: controldata.c:630
 #, c-format
 msgid "  dates/times are integers?\n"
-msgstr "  日付/時間が整数？\n"
+msgstr "  日付/時間が整数?\n"
 
-#: controldata.c:620
+#: controldata.c:634
 #, c-format
 msgid "  data checksum version\n"
 msgstr "  データチェックサムのバージョン\n"
 
-#: controldata.c:622
+#: controldata.c:636
 #, c-format
 msgid "Cannot continue without required control information, terminating\n"
 msgstr "必要な制御情報がないので続行できません。終了しています\n"
 
-#: controldata.c:637
+#: controldata.c:651
 #, c-format
 msgid ""
 "old and new pg_controldata alignments are invalid or do not match\n"
@@ -607,27 +708,47 @@ msgstr ""
 "新旧のpg_controldataのアラインメントが不正であるかかまたは一致しません\n"
 "一方のクラスタが32ビットで、他方が64ビットである可能性が高いです\n"
 
-#: controldata.c:641
+#: controldata.c:655
 #, c-format
 msgid "old and new pg_controldata block sizes are invalid or do not match\n"
 msgstr "新旧の pg_controldata におけるブロックサイズが有効でないかまたは一致しません\n"
 
-#: controldata.c:644
+#: controldata.c:658
 #, c-format
 msgid "old and new pg_controldata maximum relation segment sizes are invalid or do not match\n"
 msgstr "新旧の pg_controldata におけるリレーションの最大セグメントサイズが有効でないか一致しません\n"
 
-#: controldata.c:647
+#: controldata.c:661
 #, c-format
 msgid "old and new pg_controldata WAL block sizes are invalid or do not match\n"
 msgstr "新旧の pg_controldata における WAL ブロックサイズが有効でないか一致しません\n"
 
-#: controldata.c:650
+#: controldata.c:664
 #, c-format
 msgid "old and new pg_controldata WAL segment sizes are invalid or do not match\n"
 msgstr "新旧の pg_controldata における WAL セグメントサイズが有効でないか一致しません\n"
 
-#: controldata.c:653
+#: controldata.c:667
+#, c-format
+msgid "old and new pg_controldata maximum identifier lengths are invalid or do not match\n"
+msgstr "新旧の pg_controldata における識別子の最大長が有効でないか一致しません\n"
+
+#: controldata.c:670
+#, c-format
+msgid "old and new pg_controldata maximum indexed columns are invalid or do not match\n"
+msgstr "新旧の pg_controldata におけるインデックス付き列の最大数が有効でないか一致しません\n"
+
+#: controldata.c:673
+#, c-format
+msgid "old and new pg_controldata maximum TOAST chunk sizes are invalid or do not match\n"
+msgstr "新旧の pg_controldata における TOAST チャンクサイズの最大値が有効でないか一致しません\n"
+
+#: controldata.c:678
+#, c-format
+msgid "old and new pg_controldata large-object chunk sizes are invalid or do not match\n"
+msgstr "新旧の pg_controldata におけるラージオブジェクトのチャンクサイズが有効でないかまたは一致しません\n"
+
+#: controldata.c:681
 #, c-format
 msgid "old and new pg_controldata maximum identifier lengths are invalid or do not match\n"
 msgstr "新旧の pg_controldata における識別子の最大長が有効でないか一致しません\n"
@@ -652,32 +773,32 @@ msgstr "新旧の pg_controldata におけるラージオブジェクトのチ�
 msgid "old and new pg_controldata date/time storage types do not match\n"
 msgstr "新旧の pg_controldata における日付/時刻型データの保存バイト数が一致しません\n"
 
-#: controldata.c:680
+#: controldata.c:694
 #, c-format
 msgid "old cluster does not use data checksums but the new one does\n"
 msgstr "旧クラスタではデータチェックサムを使用していませんが、新クラスタでは使用しています\n"
 
-#: controldata.c:683
+#: controldata.c:697
 #, c-format
 msgid "old cluster uses data checksums but the new one does not\n"
 msgstr "旧クラスタではデータチェックサムを使用していますが、新クラスタでは使用していません\n"
 
-#: controldata.c:685
+#: controldata.c:699
 #, c-format
 msgid "old and new cluster pg_controldata checksum versions do not match\n"
 msgstr "新旧の pg_controldata 間でチェックサムのバージョンが一致しません\n"
 
-#: controldata.c:696
+#: controldata.c:710
 #, c-format
 msgid "Adding \".old\" suffix to old global/pg_control"
 msgstr "旧の global/pg_control に \".old\" サフィックスを追加しています"
 
-#: controldata.c:701
+#: controldata.c:715
 #, c-format
 msgid "Unable to rename %s to %s.\n"
 msgstr "%s の名前を %s に変更できません。\n"
 
-#: controldata.c:704
+#: controldata.c:718
 #, c-format
 msgid ""
 "\n"
@@ -694,42 +815,42 @@ msgstr ""
 "することができなくなります。\n"
 "\n"
 
-#: dump.c:22
+#: dump.c:20
 #, c-format
 msgid "Creating dump of global objects"
 msgstr "グローバルオブジェクトのダンプを作成しています"
 
-#: dump.c:33
+#: dump.c:32
 #, c-format
-msgid "Creating dump of database schemas\n"
-msgstr "データベーススキーマのダンプを作成しています。\n"
+msgid "Creating dump of database schemas"
+msgstr "データベーススキーマのダンプを作成しています。"
 
-#: exec.c:44
+#: exec.c:45
 #, c-format
 msgid "could not get pg_ctl version data using %s: %s\n"
 msgstr "%s を使って pg_ctl のバージョンデータを取得できませんでした。: %s\n"
 
-#: exec.c:50
+#: exec.c:51
 #, c-format
 msgid "could not get pg_ctl version output from %s\n"
 msgstr "pg_ctl のバージョン出力を %s から取得できませんでした。\n"
 
-#: exec.c:104 exec.c:108
+#: exec.c:108 exec.c:112
 #, c-format
 msgid "command too long\n"
 msgstr "コマンドが長すぎます\n"
 
-#: exec.c:110 util.c:38 util.c:226
+#: exec.c:114 util.c:37 util.c:310
 #, c-format
 msgid "%s\n"
 msgstr "%s\n"
 
-#: exec.c:149 option.c:220
+#: exec.c:153 pg_upgrade.c:279
 #, c-format
 msgid "could not open log file \"%s\": %m\n"
 msgstr "ログファイル\"%s\"をオープンできませんでした: %m\n"
 
-#: exec.c:178
+#: exec.c:182
 #, c-format
 msgid ""
 "\n"
@@ -738,12 +859,12 @@ msgstr ""
 "\n"
 "*失敗*"
 
-#: exec.c:181
+#: exec.c:185
 #, c-format
 msgid "There were problems executing \"%s\"\n"
 msgstr "\"%s\"を実行していて問題が発生しました\n"
 
-#: exec.c:184
+#: exec.c:188
 #, c-format
 msgid ""
 "Consult the last few lines of \"%s\" or \"%s\" for\n"
@@ -752,7 +873,7 @@ msgstr ""
 "失敗の原因については\"%s\"または\"%s\"の最後の数行を参照してください。\n"
 "\n"
 
-#: exec.c:189
+#: exec.c:193
 #, c-format
 msgid ""
 "Consult the last few lines of \"%s\" for\n"
@@ -761,117 +882,124 @@ msgstr ""
 "失敗の原因については、\"%s\"の最後の数行を参照してください。\n"
 "\n"
 
-#: exec.c:204 option.c:229
+#: exec.c:208 pg_upgrade.c:289
 #, c-format
 msgid "could not write to log file \"%s\": %m\n"
-msgstr "ログファイル\"%s\"に書き込めませんでした。\n"
+msgstr "ログファイル\"%s\"に書き込めませんでした: %m\n"
 
-#: exec.c:230
+#: exec.c:234
 #, c-format
 msgid "could not open file \"%s\" for reading: %s\n"
 msgstr "ファイル\"%s\"を読み取り用としてオープンできませんでした:%s\n"
 
-#: exec.c:257
+#: exec.c:261
 #, c-format
 msgid "You must have read and write access in the current directory.\n"
 msgstr "カレントディレクトリに対して読み書き可能なアクセス権が必要です。\n"
 
-#: exec.c:310 exec.c:372 exec.c:427
+#: exec.c:314 exec.c:380
 #, c-format
 msgid "check for \"%s\" failed: %s\n"
 msgstr "\"%s\"のチェックに失敗しました: %s\n"
 
-#: exec.c:313 exec.c:375
+#: exec.c:317 exec.c:383
 #, c-format
 msgid "\"%s\" is not a directory\n"
 msgstr "\"%s\"はディレクトリではありません\n"
 
-#: exec.c:430
+#: exec.c:433
 #, c-format
 msgid "check for \"%s\" failed: not a regular file\n"
 msgstr "\"%s\"のチェックに失敗しました：通常ファイルではありません\n"
 
-#: exec.c:442
-#, c-format
-msgid "check for \"%s\" failed: cannot read file (permission denied)\n"
-msgstr "\"%s\"のチェックに失敗しました：ファイルが読めません（権限が拒否されました）\n"
-
-#: exec.c:450
+#: exec.c:436
 #, c-format
 msgid "check for \"%s\" failed: cannot execute (permission denied)\n"
 msgstr "\"%s\"のチェックに失敗しました：実行できません（権限が拒否されました）\n"
 
-#: file.c:48 file.c:68
+#: exec.c:442
+#, c-format
+msgid "check for \"%s\" failed: cannot execute\n"
+msgstr "\"%s\"の確認に失敗しました：実行できません\n"
+
+#: exec.c:452
+#, c-format
+msgid "check for \"%s\" failed: incorrect version: found \"%s\", expected \"%s\"\n"
+msgstr ""
+"\"%s\"の確認に失敗しました: 間違ったバージョン: 検出\"%s\"、想定\"%s\"\n"
+"\n"
+
+#: file.c:43 file.c:63
 #, c-format
 msgid "error while cloning relation \"%s.%s\" (\"%s\" to \"%s\"): %s\n"
 msgstr "リレーション\"%s.%s\"の(\"%s\"から\"%s\"への)クローン中にエラー: %s\n"
 
-#: file.c:55
+#: file.c:50
 #, c-format
 msgid "error while cloning relation \"%s.%s\": could not open file \"%s\": %s\n"
 msgstr "リレーション\"%s.%s\"のクローン中にエラー: ファイル\"%s\"を開けませんでした: %s\n"
 
-#: file.c:60
+#: file.c:55
 #, c-format
 msgid "error while cloning relation \"%s.%s\": could not create file \"%s\": %s\n"
 msgstr "リレーション\"%s.%s\"のクローン中にエラー: ファイル\"%s\"を作成できませんでした: %s\n"
 
-#: file.c:94 file.c:197
+#: file.c:89 file.c:192
 #, c-format
 msgid "error while copying relation \"%s.%s\": could not open file \"%s\": %s\n"
 msgstr "リレーション\"%s.%s\"のコピー中にエラー: ファイル\"%s\"を開けませんでした: %s\n"
 
-#: file.c:99 file.c:206
+#: file.c:94 file.c:201
 #, c-format
 msgid "error while copying relation \"%s.%s\": could not create file \"%s\": %s\n"
 msgstr "リレーション\"%s.%s\"のコピー中にエラー: ファイル\"%s\"を作成できませんでした: %s\n"
 
-#: file.c:113 file.c:230
+#: file.c:108 file.c:225
 #, c-format
 msgid "error while copying relation \"%s.%s\": could not read file \"%s\": %s\n"
 msgstr "リレーション\"%s.%s\"のコピー中にエラー: ファイル\"%s\"を読めませんでした: %s\n"
 
-#: file.c:125 file.c:308
+#: file.c:120 file.c:303
 #, c-format
 msgid "error while copying relation \"%s.%s\": could not write file \"%s\": %s\n"
 msgstr "リレーション\"%s.%s\"のコピー中にエラー: ファイル\"%s\"に書けませんでした: %s\n"
 
-#: file.c:139
+#: file.c:134
 #, c-format
 msgid "error while copying relation \"%s.%s\" (\"%s\" to \"%s\"): %s\n"
 msgstr "リレーション\"%s.%s\"のコピー（\"%s\" -> \"%s\"）中にエラー：%s\n"
 
-#: file.c:158
+#: file.c:153
 #, c-format
 msgid "error while creating link for relation \"%s.%s\" (\"%s\" to \"%s\"): %s\n"
 msgstr "リレーション\"%s.%s\"へのリンク（\"%s\" -> \"%s\"）作成中にエラー：%s\n"
 
-#: file.c:201
+#: file.c:196
 #, c-format
 msgid "error while copying relation \"%s.%s\": could not stat file \"%s\": %s\n"
 msgstr "リレーション\"%s.%s\"のコピー中にエラー: ファイル\"%s\"を stat できませんでした: %s\n"
 
-#: file.c:233
+#: file.c:228
 #, c-format
 msgid "error while copying relation \"%s.%s\": partial page found in file \"%s\"\n"
 msgstr "リレーション\"%s.%s\"のコピー中にエラー: ファイル\"%s\"中に不完全なページがありました\n"
 
-#: file.c:335 file.c:352
+#: file.c:330 file.c:347
 #, c-format
 msgid "could not clone file between old and new data directories: %s\n"
 msgstr "新旧ディレクトリ間のファイルのクローンができませんでした: %s\n"
 
-#: file.c:348
+#: file.c:343
 #, c-format
 msgid "could not create file \"%s\": %s\n"
 msgstr "ファイル\"%s\"を作成できませんでした: %s\n"
 
-#: file.c:359
+#: file.c:354
 #, c-format
 msgid "file cloning not supported on this platform\n"
 msgstr "このプラットフォームではファイルのクローニングはサポートされません\n"
 
-#: file.c:376
+#: file.c:371
 #, c-format
 msgid ""
 "could not create hard link between old and new data directories: %s\n"
@@ -880,71 +1008,22 @@ msgstr ""
 "新旧のデータディレクトリ間でハードリンクを作成できませんでした: %s\n"
 "リンクモードでは、新旧のデータディレクトリが同じファイルシステム上に存在しなければなりません。\n"
 
-#: function.c:116
-#, c-format
-msgid ""
-"\n"
-"The old cluster has a \"plpython_call_handler\" function defined\n"
-"in the \"public\" schema which is a duplicate of the one defined\n"
-"in the \"pg_catalog\" schema.  You can confirm this by executing\n"
-"in psql:\n"
-"\n"
-"    \\df *.plpython_call_handler\n"
-"\n"
-"The \"public\" schema version of this function was created by a\n"
-"pre-8.1 install of plpython, and must be removed for pg_upgrade\n"
-"to complete because it references a now-obsolete \"plpython\"\n"
-"shared object file.  You can remove the \"public\" schema version\n"
-"of this function by running the following command:\n"
-"\n"
-"    DROP FUNCTION public.plpython_call_handler()\n"
-"\n"
-"in each affected database:\n"
-"\n"
-msgstr ""
-"\n"
-"旧クラスタで\"plpython_call_handler\"関数が\"public\"スキーマ内に\n"
-"定義されていますが、これは\"pg_catalog\"スキーマで定義されている\n"
-"ものと重複しています。このことは以下のコマンドをpsqlで実行して確認\n"
-"できます:\n"
-"\n"
-"    \\\\df *.plpython_call_handler\n"
-"\n"
-"\"public\"スキーマの方の関数は8.1以前の環境のplpythonが作成したもので、\n"
-"すでに廃止済みの \"plpython\" 共有オブジェクトファイルを参照している\n"
-"ため、pg_upgrade を完了させるには削除する必要があります。以下のコマンドを\n"
-"影響のあるデータベースで個別に実行することにより\"public\"スキーマの方の\n"
-"関数の削除ができます: \n"
-"\n"
-"    DROP FUNCTION public.plpython_call_handler()\n"
-"\n"
-
-#: function.c:134
-#, c-format
-msgid "    %s\n"
-msgstr "    %s\n"
-
-#: function.c:144
-#, c-format
-msgid "Remove the problem functions from the old cluster to continue.\n"
-msgstr "継続するには、旧クラスタから問題となっている関数を削除してください。\n"
-
-#: function.c:191
+#: function.c:129
 #, c-format
 msgid "Checking for presence of required libraries"
 msgstr "必要なライブラリの有無を確認しています"
 
-#: function.c:248
+#: function.c:167
 #, c-format
 msgid "could not load library \"%s\": %s"
 msgstr "ライブラリ\"%s\"をロードできませんでした: %s"
 
-#: function.c:259 info.c:632
+#: function.c:178
 #, c-format
-msgid "Database: %s\n"
+msgid "In database: %s\n"
 msgstr "データベース: %s\n"
 
-#: function.c:269
+#: function.c:188
 #, c-format
 msgid ""
 "Your installation references loadable libraries that are missing from the\n"
@@ -954,73 +1033,54 @@ msgid ""
 "    %s\n"
 "\n"
 msgstr ""
-"このクラスタには、移行先の環境にはないロード可能ライブラリを参照しています。\n"
+"このクラスタでは、移行先の環境にはないロード可能ライブラリを参照しています。\n"
 "これらのライブラリを移行先の環境に追加するか、もしくは移行元の環境から\n"
 "それらを使っている関数を削除してください。 問題のライブラリの一覧は、\n"
 "以下のファイルに入っています:\n"
 "    %s\n"
 "\n"
 
-#: info.c:133
+#: info.c:125
 #, c-format
 msgid "Relation names for OID %u in database \"%s\" do not match: old name \"%s.%s\", new name \"%s.%s\"\n"
 msgstr "データベース\"%2$s\"で OID %1$u のリレーション名が一致しません: 元の名前 \"%3$s.%4$s\"、新しい名前 \"%5$s.%6$s\"\n"
 
-#: info.c:153
+#: info.c:145
 #, c-format
 msgid "Failed to match up old and new tables in database \"%s\"\n"
 msgstr "データベース\"%s\"で新旧のテーブルの照合に失敗しました\n"
 
-#: info.c:242
+#: info.c:226
 #, c-format
 msgid " which is an index on \"%s.%s\""
 msgstr " これは \"%s.%s\" 上のインデックスです"
 
-#: info.c:252
+#: info.c:236
 #, c-format
 msgid " which is an index on OID %u"
 msgstr " これは OID %u 上のインデックスです"
 
-#: info.c:264
+#: info.c:248
 #, c-format
 msgid " which is the TOAST table for \"%s.%s\""
 msgstr " これは \"%s.%s\" の TOAST テーブルです"
 
-#: info.c:272
+#: info.c:256
 #, c-format
 msgid " which is the TOAST table for OID %u"
 msgstr " これは OID %u の TOAST テーブルです"
 
-#: info.c:276
+#: info.c:260
 #, c-format
 msgid "No match found in old cluster for new relation with OID %u in database \"%s\": %s\n"
 msgstr "データベース\"%2$s\"でOID%1$uを持つ新リレーションに対応するものが旧クラスタ内にありません: %3$s\n"
 
-#: info.c:279
+#: info.c:263
 #, c-format
 msgid "No match found in new cluster for old relation with OID %u in database \"%s\": %s\n"
 msgstr "データベース\"%2$s\"でOID %1$uを持つ旧リレーションに対応するものが新クラスタ内にありません: %3$s\n"
 
-#: info.c:291
-#, c-format
-msgid "mappings for database \"%s\":\n"
-msgstr "データベース\"%s\"のマッピング:\n"
-
-#: info.c:294
-#, c-format
-msgid "%s.%s: %u to %u\n"
-msgstr "%s.%s: %u -> %u\n"
-
-#: info.c:299 info.c:634
-#, c-format
-msgid ""
-"\n"
-"\n"
-msgstr ""
-"\n"
-"\n"
-
-#: info.c:324
+#: info.c:287
 #, c-format
 msgid ""
 "\n"
@@ -1029,7 +1089,7 @@ msgstr ""
 "\n"
 "移行元データベース:\n"
 
-#: info.c:326
+#: info.c:289
 #, c-format
 msgid ""
 "\n"
@@ -1038,67 +1098,86 @@ msgstr ""
 "\n"
 "移行先データベース:\n"
 
-#: info.c:645
+#: info.c:604
+#, c-format
+msgid "Database: %s\n"
+msgstr "データベース: %s\n"
+
+#: info.c:606
+#, c-format
+msgid ""
+"\n"
+"\n"
+msgstr ""
+"\n"
+"\n"
+
+#: info.c:617
 #, c-format
 msgid "relname: %s.%s: reloid: %u reltblspace: %s\n"
 msgstr "relname: %s.%s: reloid: %u reltblspace: %s\n"
 
-#: option.c:102
+#: option.c:100
 #, c-format
 msgid "%s: cannot be run as root\n"
 msgstr "%s: root では実行できません\n"
 
-#: option.c:171
+#: option.c:167
 #, c-format
 msgid "invalid old port number\n"
 msgstr "旧ポート番号が無効です\n"
 
-#: option.c:179
+#: option.c:172
 #, c-format
 msgid "invalid new port number\n"
 msgstr "新ポート番号が無効です\n"
 
-#: option.c:213
+#: option.c:198
 #, c-format
 msgid "Try \"%s --help\" for more information.\n"
 msgstr "詳細は\"%s --help\"を参照してください。\n"
 
-#: option.c:223
+#: option.c:205
+#, c-format
+msgid "too many command-line arguments (first is \"%s\")\n"
+msgstr "コマンドライン引数が多すぎます。(先頭は\"%s\")\n"
+
+#: option.c:208
 #, c-format
 msgid "Running in verbose mode\n"
 msgstr "冗長モードで実行しています\n"
 
-#: option.c:254
+#: option.c:226
 msgid "old cluster binaries reside"
 msgstr "旧クラスタのバイナリが置かれている"
 
-#: option.c:256
+#: option.c:228
 msgid "new cluster binaries reside"
 msgstr "新クラスタのバイナリが置かれている"
 
-#: option.c:258
+#: option.c:230
 msgid "old cluster data resides"
 msgstr "旧クラスタのデータが置かれている"
 
-#: option.c:260
+#: option.c:232
 msgid "new cluster data resides"
 msgstr "新クラスタのデータが置かれている"
 
-#: option.c:262
+#: option.c:234
 msgid "sockets will be created"
 msgstr "ソケットが作成される"
 
-#: option.c:279 option.c:373
+#: option.c:251 option.c:350
 #, c-format
 msgid "could not determine current directory\n"
 msgstr "カレントディレクトリを特定できませんでした\n"
 
-#: option.c:282
+#: option.c:254
 #, c-format
 msgid "cannot run pg_upgrade from inside the new cluster data directory on Windows\n"
 msgstr "Windowsでは、新クラスタのデータディレクトリの中でpg_upgradeを実行することはできません\n"
 
-#: option.c:291
+#: option.c:263
 #, c-format
 msgid ""
 "pg_upgrade upgrades a PostgreSQL cluster to a different major version.\n"
@@ -1107,12 +1186,12 @@ msgstr ""
 "pg_upgradeは、PostgreSQLのクラスタを別のメジャーバージョンにアップグレードします。\n"
 "\n"
 
-#: option.c:292
+#: option.c:264
 #, c-format
 msgid "Usage:\n"
 msgstr "使い方:\n"
 
-#: option.c:293
+#: option.c:265
 #, c-format
 msgid ""
 "  pg_upgrade [OPTION]...\n"
@@ -1121,108 +1200,117 @@ msgstr ""
 "  pg_upgrade [オプション]...\n"
 "\n"
 
-#: option.c:294
+#: option.c:266
 #, c-format
 msgid "Options:\n"
 msgstr "オプション:\n"
 
-#: option.c:295
+#: option.c:267
 #, c-format
 msgid "  -b, --old-bindir=BINDIR       old cluster executable directory\n"
 msgstr "  -b, --old-bindir=BINDIR       旧クラスタの実行ファイルディレクトリ\n"
 
-#: option.c:296
+#: option.c:268
 #, c-format
-msgid "  -B, --new-bindir=BINDIR       new cluster executable directory\n"
-msgstr "  -B, --new-bindir=BINDIR       新クラスタの実行ファイルディレクトリ\n"
+msgid ""
+"  -B, --new-bindir=BINDIR       new cluster executable directory (default\n"
+"                                same directory as pg_upgrade)\n"
+msgstr ""
+"  -B, --new-bindir=BINDIR       新クラスタの実行ファイルディレクトリ(デフォルト\n"
+"                                はpg_upgradeと同じディレクトリ)\n"
 
-#: option.c:297
+#: option.c:270
 #, c-format
 msgid "  -c, --check                   check clusters only, don't change any data\n"
 msgstr "  -c, --check                   クラスタのチェックのみ、データを一切変更しない\n"
 
-#: option.c:298
+#: option.c:271
 #, c-format
 msgid "  -d, --old-datadir=DATADIR     old cluster data directory\n"
 msgstr "  -d, --old-datadir=DATADIR     旧クラスタのデータディレクトリ\n"
 
-#: option.c:299
+#: option.c:272
 #, c-format
 msgid "  -D, --new-datadir=DATADIR     new cluster data directory\n"
 msgstr "  -D, --new-datadir=DATADIR     新クラスタのデータディレクトリ\n"
 
-#: option.c:300
+#: option.c:273
 #, c-format
 msgid "  -j, --jobs=NUM                number of simultaneous processes or threads to use\n"
 msgstr "  -j, --jobs                    使用する同時実行プロセスまたはスレッドの数\n"
 
-#: option.c:301
+#: option.c:274
 #, c-format
 msgid "  -k, --link                    link instead of copying files to new cluster\n"
 msgstr ""
 "  -k, --link                    新クラスタにファイルをコピーする代わりに\n"
 "                                リンクする\n"
 
-#: option.c:302
+#: option.c:275
+#, c-format
+msgid "  -N, --no-sync                 do not wait for changes to be written safely to disk\n"
+msgstr "  -N, --no-sync                 変更のディスクへの確実な書き出しを待機しない\n"
+
+#: option.c:276
 #, c-format
 msgid "  -o, --old-options=OPTIONS     old cluster options to pass to the server\n"
-msgstr "  -o, --old-options=OPTIONS     サーバに渡す旧クラスタのオプション\n"
+msgstr "  -o, --old-options=OPTIONS     サーバーに渡す旧クラスタのオプション\n"
 
-#: option.c:303
+#: option.c:277
 #, c-format
 msgid "  -O, --new-options=OPTIONS     new cluster options to pass to the server\n"
-msgstr "  -O, --new-options=OPTIONS     サーバに渡す新クラスタのオプション\n"
+msgstr "  -O, --new-options=OPTIONS     サーバーに渡す新クラスタのオプション\n"
 
-#: option.c:304
+#: option.c:278
 #, c-format
 msgid "  -p, --old-port=PORT           old cluster port number (default %d)\n"
 msgstr "  -p, --old-port=PORT           旧クラスタのポート番号(デフォルト %d)\n"
 
-#: option.c:305
+#: option.c:279
 #, c-format
 msgid "  -P, --new-port=PORT           new cluster port number (default %d)\n"
 msgstr "  -P, --new-port=PORT           新クラスタのポート番号(デフォルト %d)\n"
 
-#: option.c:306
+#: option.c:280
 #, c-format
 msgid "  -r, --retain                  retain SQL and log files after success\n"
 msgstr "  -r, --retain                  SQLとログファイルを、成功後も消さずに残す\n"
 
-#: option.c:307
+#: option.c:281
 #, c-format
 msgid "  -s, --socketdir=DIR           socket directory to use (default current dir.)\n"
 msgstr ""
 "  -s, --socketdir=DIR           使用するソケットディレクトリ(デフォルトは\n"
 "                                カレントディレクトリ)\n"
 
-#: option.c:308
+#: option.c:282
 #, c-format
 msgid "  -U, --username=NAME           cluster superuser (default \"%s\")\n"
 msgstr "  -U, --username=NAME           クラスタのスーパーユーザー(デフォルト\"%s\")\n"
 
-#: option.c:309
+#: option.c:283
 #, c-format
 msgid "  -v, --verbose                 enable verbose internal logging\n"
 msgstr "  -v, --verbose                 詳細な内部ログを有効化\n"
 
-#: option.c:310
+#: option.c:284
 #, c-format
 msgid "  -V, --version                 display version information, then exit\n"
 msgstr "  -V, --version                 バージョン情報を表示して終了\n"
 
-#: option.c:311
+#: option.c:285
 #, c-format
 msgid "  --clone                       clone instead of copying files to new cluster\n"
 msgstr ""
 "  --clone                       新クラスタにファイルをコピーする代わりに\n"
 "                                クローンする\n"
 
-#: option.c:312
+#: option.c:286
 #, c-format
 msgid "  -?, --help                    show this help, then exit\n"
 msgstr "  -?, --help                    このヘルプを表示して終了\n"
 
-#: option.c:313
+#: option.c:287
 #, c-format
 msgid ""
 "\n"
@@ -1237,7 +1325,7 @@ msgstr ""
 "  旧クラスタのpostmasterをシャットダウンする\n"
 "  新クラスタのpostmasterをシャットダウンする\n"
 
-#: option.c:318
+#: option.c:292
 #, c-format
 msgid ""
 "\n"
@@ -1254,7 +1342,7 @@ msgstr ""
 "  旧バージョンの\"bin\"ディレクトリ (-b BINDIR)\n"
 "  新バージョンの\"bin\"ディレクトリ(-B BINDIR)\n"
 
-#: option.c:324
+#: option.c:298
 #, c-format
 msgid ""
 "\n"
@@ -1267,7 +1355,7 @@ msgstr ""
 "  pg_upgrade -d oldCluster/data -D newCluster/data -b oldCluster/bin -B newCluster/bin\n"
 "または\n"
 
-#: option.c:329
+#: option.c:303
 #, c-format
 msgid ""
 "  $ export PGDATAOLD=oldCluster/data\n"
@@ -1282,7 +1370,7 @@ msgstr ""
 "  $ export PGBINNEW=newCluster/bin\n"
 "  $ pg_upgrade\n"
 
-#: option.c:335
+#: option.c:309
 #, c-format
 msgid ""
 "  C:\\> set PGDATAOLD=oldCluster/data\n"
@@ -1297,16 +1385,21 @@ msgstr ""
 "  C:\\> set PGBINNEW=newCluster/bin\n"
 "  C:\\> pg_upgrade\n"
 
-#: option.c:341
+#: option.c:315
 #, c-format
 msgid ""
 "\n"
-"Report bugs to <pgsql-bugs@lists.postgresql.org>.\n"
+"Report bugs to <%s>.\n"
 msgstr ""
 "\n"
-"不具合は <pgsql-bugs@lists.postgresql.org>まで報告してください。\n"
+"バグは<%s>に報告してください。\n"
 
-#: option.c:377
+#: option.c:316
+#, c-format
+msgid "%s home page: <%s>\n"
+msgstr "%s ホームページ: <%s>\n"
+
+#: option.c:356
 #, c-format
 msgid ""
 "You must identify the directory where the %s.\n"
@@ -1315,62 +1408,62 @@ msgstr ""
 "%sディレクトリを指定する必要があります。\n"
 "コマンドラインオプション %s または環境変数 %s を使用してください。\n"
 
-#: option.c:429
+#: option.c:408
 #, c-format
 msgid "Finding the real data directory for the source cluster"
 msgstr "移行元クラスタの実際のデータディレクトリを探しています"
 
-#: option.c:431
+#: option.c:410
 #, c-format
 msgid "Finding the real data directory for the target cluster"
 msgstr "移行先クラスタの実際のデータディレクトリを探しています"
 
-#: option.c:443
+#: option.c:422
 #, c-format
 msgid "could not get data directory using %s: %s\n"
 msgstr "%s を使ってデータディレクトリを取得できませんでした。: %s\n"
 
-#: option.c:503
+#: option.c:473
 #, c-format
 msgid "could not read line %d from file \"%s\": %s\n"
 msgstr "ファイル\"%2$s\"の%1$d行目を読み取れませんでした: %3$s\n"
 
-#: option.c:521
+#: option.c:490
 #, c-format
 msgid "user-supplied old port number %hu corrected to %hu\n"
 msgstr "ユーザー指定の旧ポート番号 %hu は %hu に訂正されました\n"
 
-#: parallel.c:128 parallel.c:241
+#: parallel.c:127 parallel.c:238
 #, c-format
 msgid "could not create worker process: %s\n"
 msgstr "ワーカープロセスを作成できませんでした: %s\n"
 
-#: parallel.c:147 parallel.c:262
+#: parallel.c:146 parallel.c:259
 #, c-format
 msgid "could not create worker thread: %s\n"
 msgstr "ワーカースレッドを作成できませんでした: %s\n"
 
-#: parallel.c:305
+#: parallel.c:300
 #, c-format
-msgid "waitpid() failed: %s\n"
-msgstr "waitpid()が失敗しました: %s\n"
+msgid "%s() failed: %s\n"
+msgstr "%s() が失敗しました: %s\n"
 
-#: parallel.c:309
+#: parallel.c:304
 #, c-format
 msgid "child process exited abnormally: status %d\n"
 msgstr "子プロセスが異常終了しました: ステータス %d\n"
 
-#: parallel.c:324
+#: parallel.c:319
 #, c-format
 msgid "child worker exited abnormally: %s\n"
 msgstr "子ワーカーが異常終了しました: %s\n"
 
-#: pg_upgrade.c:109
+#: pg_upgrade.c:102
 #, c-format
 msgid "could not read permissions of directory \"%s\": %s\n"
 msgstr "ディレクトリ\"%s\"の権限を読み取れませんでした: %s\n"
 
-#: pg_upgrade.c:126
+#: pg_upgrade.c:134
 #, c-format
 msgid ""
 "\n"
@@ -1381,17 +1474,17 @@ msgstr ""
 "アップグレードを実行しています。\n"
 "------------------\n"
 
-#: pg_upgrade.c:169
+#: pg_upgrade.c:177
 #, c-format
 msgid "Setting next OID for new cluster"
 msgstr "新クラスタの、次の OID を設定しています"
 
-#: pg_upgrade.c:176
+#: pg_upgrade.c:186
 #, c-format
 msgid "Sync data directory to disk"
 msgstr "データディレクトリをディスクに同期します"
 
-#: pg_upgrade.c:188
+#: pg_upgrade.c:198
 #, c-format
 msgid ""
 "\n"
@@ -1402,7 +1495,23 @@ msgstr ""
 "アップグレードが完了しました\n"
 "----------------\n"
 
-#: pg_upgrade.c:234
+#: pg_upgrade.c:231 pg_upgrade.c:244 pg_upgrade.c:251 pg_upgrade.c:258
+#: pg_upgrade.c:276 pg_upgrade.c:287
+#, c-format
+msgid "directory path for new cluster is too long\n"
+msgstr "新クラスタのディレクトリ・パスが長すぎます\n"
+
+#: pg_upgrade.c:265 pg_upgrade.c:267 pg_upgrade.c:269 pg_upgrade.c:271
+#, c-format
+msgid "could not create directory \"%s\": %m\n"
+msgstr "ディレクトリ\"%s\"を作成できませんでした: %m\n"
+
+#: pg_upgrade.c:320
+#, c-format
+msgid "%s: could not find own program executable\n"
+msgstr "%s: 自身のための実行ファイルが見つかりませんでした\n"
+
+#: pg_upgrade.c:346
 #, c-format
 msgid ""
 "There seems to be a postmaster servicing the old cluster.\n"
@@ -1411,7 +1520,7 @@ msgstr ""
 "旧クラスタで稼働中のpostmasterがあるようです。\n"
 "そのpostmasterをシャットダウンしたのちにやり直してください。\n"
 
-#: pg_upgrade.c:247
+#: pg_upgrade.c:359
 #, c-format
 msgid ""
 "There seems to be a postmaster servicing the new cluster.\n"
@@ -1420,142 +1529,132 @@ msgstr ""
 "新クラスタで稼働中のpostmasterがあるようです。\n"
 "そのpostmasterをシャットダウンしたのちやり直してください。\n"
 
-#: pg_upgrade.c:253
-#, c-format
-msgid "%s: could not find own program executable\n"
-msgstr "%s: 自身のための実行ファイルが見つかりませんでした\n"
-
-#: pg_upgrade.c:270
+#: pg_upgrade.c:373
 #, c-format
 msgid "Analyzing all rows in the new cluster"
 msgstr "新クラスタ内のすべての行を分析しています"
 
-#: pg_upgrade.c:283
+#: pg_upgrade.c:386
 #, c-format
 msgid "Freezing all rows in the new cluster"
 msgstr "新クラスタ内のすべての行を凍結しています"
 
-#: pg_upgrade.c:303
+#: pg_upgrade.c:406
 #, c-format
 msgid "Restoring global objects in the new cluster"
 msgstr "新クラスタ内のグローバルオブジェクトを復元しています"
 
-#: pg_upgrade.c:318
+#: pg_upgrade.c:422
 #, c-format
-msgid "Restoring database schemas in the new cluster\n"
-msgstr "新クラスタ内のデータベーススキーマを復元しています\n"
+msgid "Restoring database schemas in the new cluster"
+msgstr "新クラスタ内にデータベーススキーマを復元しています"
 
-#: pg_upgrade.c:424
+#: pg_upgrade.c:528
 #, c-format
 msgid "Deleting files from new %s"
 msgstr "新しい %s からファイルを削除しています"
 
-#: pg_upgrade.c:428
+#: pg_upgrade.c:532
 #, c-format
 msgid "could not delete directory \"%s\"\n"
 msgstr "ディレクトリ\"%s\"を削除できませんでした\n"
 
-#: pg_upgrade.c:447
+#: pg_upgrade.c:551
 #, c-format
 msgid "Copying old %s to new server"
 msgstr "旧の %s を新サーバーにコピーしています"
 
-#: pg_upgrade.c:473
+#: pg_upgrade.c:577
 #, c-format
 msgid "Setting oldest XID for new cluster"
-msgstr "新クラスタに最古のXIDを設定しています"
+msgstr "新クラスタの、最古のXIDを設定しています"
 
-#: pg_upgrade.c:481
+#: pg_upgrade.c:585
 #, c-format
 msgid "Setting next transaction ID and epoch for new cluster"
 msgstr "新クラスタの、次のトランザクションIDと基点を設定しています"
 
-#: pg_upgrade.c:511
+#: pg_upgrade.c:615
 #, c-format
 msgid "Setting next multixact ID and offset for new cluster"
 msgstr "新クラスタの、次のmultixact IDとオフセットを設定しています"
 
-#: pg_upgrade.c:535
+#: pg_upgrade.c:639
 #, c-format
 msgid "Setting oldest multixact ID in new cluster"
 msgstr "新クラスタの最古のmultixact IDを設定しています"
 
-#: pg_upgrade.c:555
+#: pg_upgrade.c:659
 #, c-format
 msgid "Resetting WAL archives"
 msgstr "WAL アーカイブをリセットしています"
 
-#: pg_upgrade.c:598
+#: pg_upgrade.c:702
 #, c-format
 msgid "Setting frozenxid and minmxid counters in new cluster"
 msgstr "新クラスタのfrozenxidとminmxidカウンタを設定しています"
 
-#: pg_upgrade.c:600
+#: pg_upgrade.c:704
 #, c-format
 msgid "Setting minmxid counter in new cluster"
 msgstr "新クラスタのminmxidカウンタを設定しています"
 
-#: relfilenode.c:36
+#: relfilenode.c:35
 #, c-format
-msgid "Cloning user relation files\n"
-msgstr "ユーザーリレーションをクローニングしています\n"
+msgid "Cloning user relation files"
+msgstr "ユーザーリレーションファイルをクローニングしています"
 
-#: relfilenode.c:39
+#: relfilenode.c:38
 #, c-format
-msgid "Copying user relation files\n"
-msgstr "ユーザーリレーションのファイルをコピーしています\n"
+msgid "Copying user relation files"
+msgstr "ユーザーリレーションのファイルをコピーしています"
 
-#: relfilenode.c:42
+#: relfilenode.c:41
 #, c-format
-msgid "Linking user relation files\n"
-msgstr "ユーザーリレーションのファイルをリンクしています\n"
+msgid "Linking user relation files"
+msgstr "ユーザーリレーションのファイルをリンクしています"
 
-#: relfilenode.c:118
+#: relfilenode.c:115
 #, c-format
 msgid "old database \"%s\" not found in the new cluster\n"
 msgstr "新クラスタ内に旧データベース\"%s\"が見つかりません\n"
 
-#: relfilenode.c:235
+#: relfilenode.c:218
 #, c-format
 msgid "error while checking for file existence \"%s.%s\" (\"%s\" to \"%s\"): %s\n"
 msgstr "\"%s.%s\"ファイル (\"%s\" -> \"%s\")の存在を確認中にエラー: %s\n"
 
-#: relfilenode.c:253
+#: relfilenode.c:236
 #, c-format
 msgid "rewriting \"%s\" to \"%s\"\n"
 msgstr "\"%s\"を\"%s\"に書き換えています\n"
 
-#: relfilenode.c:261
+#: relfilenode.c:244
 #, c-format
 msgid "cloning \"%s\" to \"%s\"\n"
 msgstr "\"%s\"から\"%s\"へクローニングしています\n"
 
-#: relfilenode.c:266
+#: relfilenode.c:249
 #, c-format
 msgid "copying \"%s\" to \"%s\"\n"
 msgstr "\"%s\"を\"%s\"にコピーしています\n"
 
-#: relfilenode.c:271
+#: relfilenode.c:254
 #, c-format
 msgid "linking \"%s\" to \"%s\"\n"
 msgstr "\"%s\"から\"%s\"へリンクを作成しています\n"
 
-#: server.c:34
-#, c-format
-msgid "connection to database failed: %s"
-msgstr "データベースへの接続に失敗しました: %s"
-
-#: server.c:40 server.c:142 util.c:136 util.c:166
+#: server.c:39 server.c:143 util.c:220 util.c:250
 #, c-format
 msgid "Failure, exiting\n"
 msgstr "失敗しました、終了しています\n"
 
-#: server.c:132
+#: server.c:133
 #, c-format
 msgid "executing: %s\n"
 msgstr "実行中: %s\n"
 
-#: server.c:138
+#: server.c:139
 #, c-format
 msgid ""
 "SQL command failed\n"
@@ -1566,26 +1665,26 @@ msgstr ""
 "%s\n"
 "%s"
 
-#: server.c:168
+#: server.c:169
 #, c-format
 msgid "could not open version file \"%s\": %m\n"
 msgstr "バージョンファイル\"%s\"をオープンできませんでした: %m\n"
 
-#: server.c:172
+#: server.c:173
 #, c-format
 msgid "could not parse version file \"%s\"\n"
 msgstr "バージョンファイル\"%s\"をパースできませんでした\n"
 
-#: server.c:298
+#: server.c:291
 #, c-format
 msgid ""
 "\n"
-"connection to database failed: %s"
+"%s"
 msgstr ""
 "\n"
-"データベースへの接続に失敗しました: %s"
+"%s"
 
-#: server.c:303
+#: server.c:295
 #, c-format
 msgid ""
 "could not connect to source postmaster started with the command:\n"
@@ -1594,7 +1693,7 @@ msgstr ""
 "以下のコマンドで起動した移行元postmasterに接続できませんでした:\n"
 "%s\n"
 
-#: server.c:307
+#: server.c:299
 #, c-format
 msgid ""
 "could not connect to target postmaster started with the command:\n"
@@ -1603,25 +1702,25 @@ msgstr ""
 "以下のコマンドで起動した移行先postmasterに接続できませんでした:\n"
 "%s\n"
 
-#: server.c:321
+#: server.c:313
 #, c-format
 msgid "pg_ctl failed to start the source server, or connection failed\n"
-msgstr "pg_ctl が移行元サーバの起動に失敗した、あるいは接続に失敗しました\n"
+msgstr "pg_ctl が移行元サーバーの起動に失敗した、あるいは接続に失敗しました\n"
 
-#: server.c:323
+#: server.c:315
 #, c-format
 msgid "pg_ctl failed to start the target server, or connection failed\n"
-msgstr "pg_ctl が移行先サーバの起動に失敗した、あるいは接続に失敗しました\n"
+msgstr "pg_ctl が移行先サーバーの起動に失敗した、あるいは接続に失敗しました\n"
 
-#: server.c:368
+#: server.c:360
 #, c-format
 msgid "out of memory\n"
 msgstr "メモリ不足です\n"
 
-#: server.c:381
+#: server.c:373
 #, c-format
 msgid "libpq environment variable %s has a non-local server value: %s\n"
-msgstr "libpq の環境変数 %s で、ローカルでないサーバ値が設定されています: %s\n"
+msgstr "libpq の環境変数 %s で、ローカルでないサーバー値が設定されています: %s\n"
 
 #: tablespace.c:28
 #, c-format
@@ -1632,137 +1731,101 @@ msgstr ""
 "テーブル空間を使用している場合、同じシステムカタログバージョン間での\n"
 "アップグレードはできません。\n"
 
-#: tablespace.c:87
+#: tablespace.c:83
 #, c-format
 msgid "tablespace directory \"%s\" does not exist\n"
 msgstr "テーブル空間のディレクトリ\"%s\"が存在しません\n"
 
-#: tablespace.c:91
+#: tablespace.c:87
 #, c-format
 msgid "could not stat tablespace directory \"%s\": %s\n"
 msgstr "テーブル空間のディレクトリ\"%s\"を stat できませんでした: %s\n"
 
-#: tablespace.c:96
+#: tablespace.c:92
 #, c-format
 msgid "tablespace path \"%s\" is not a directory\n"
 msgstr "テーブル空間のパス\"%s\"がディレクトリではありません\n"
 
-#: util.c:50
-#, c-format
-msgid " "
-msgstr " "
-
-#: util.c:83
+#: util.c:52 util.c:55 util.c:127 util.c:160
 #, c-format
 msgid "%-*s"
 msgstr "%-*s"
 
-#: util.c:175
+#: util.c:95
+#, c-format
+msgid "could not access directory \"%s\": %m\n"
+msgstr "ディレクトリ\"%s\"にアクセスできませんでした: %m\n"
+
+#: util.c:158
+#, c-format
+msgid "%-*s\n"
+msgstr "%-*s\n"
+
+#: util.c:259
 #, c-format
 msgid "ok"
 msgstr "ok"
 
-#: version.c:32
-#, c-format
-msgid "Checking for large objects"
-msgstr "ラージオブジェクトをチェックしています"
-
-#: version.c:80 version.c:420
-#, c-format
-msgid "warning"
-msgstr "警告"
-
-#: version.c:82
-#, c-format
-msgid ""
-"\n"
-"Your installation contains large objects.  The new database has an\n"
-"additional large object permission table.  After upgrading, you will be\n"
-"given a command to populate the pg_largeobject_metadata table with\n"
-"default permissions.\n"
-"\n"
-msgstr ""
-"\n"
-"このクラスタにはラージオブジェクトが含まれています。新しいデータベースでは\n"
-"ラージオブジェクトのパーミッションテーブルが追加されています。\n"
-"アップグレードが終わったら、 pg_largeobject_metadata テーブルに\n"
-"デフォルトのパーミッションを投入するためのコマンドが案内されます。\n"
-"\n"
-
-#: version.c:88
-#, c-format
-msgid ""
-"\n"
-"Your installation contains large objects.  The new database has an\n"
-"additional large object permission table, so default permissions must be\n"
-"defined for all large objects.  The file\n"
-"    %s\n"
-"when executed by psql by the database superuser will set the default\n"
-"permissions.\n"
-"\n"
-msgstr ""
-"\n"
-"このクラスタにはラージオブジェクトが含まれています。新しいデータベースでは\n"
-"ラージオブジェクトのパーミッションテーブルが追加されており、すべてのラージ\n"
-"オブジェクトについて、デフォルトのパーミッションを定義する必要があります。\n"
-"以下のファイルをpsqlでデータベースのスーパーユーザーとして実行することで\n"
-"デフォルトパーミッションを設定します。\n"
-"    %s\n"
-"\n"
-
-#: version.c:275
+#: version.c:184
 #, c-format
 msgid "Checking for incompatible \"line\" data type"
 msgstr "非互換の \"line\" データ型を確認しています"
 
-#: version.c:282
+#: version.c:193
 #, c-format
 msgid ""
-"Your installation contains the \"line\" data type in user tables.  This\n"
-"data type changed its internal and input/output format between your old\n"
-"and new clusters so this cluster cannot currently be upgraded.  You can\n"
-"remove the problem tables and restart the upgrade.  A list of the problem\n"
-"columns is in the file:\n"
-"    %s\n"
-"\n"
-msgstr ""
-"このクラスタではユーザーテーブルに\"line\"データ型が含まれています。\n"
-"このデータ型は新旧のクラスタ間で内部形式や入出力フォーマットが\n"
-"変更されているため、このクラスタは現時点ではアップグレードできません。\n"
-"問題のテーブルを削除してから、再度アップグレードを実行してください。\n"
-"問題のある列の一覧は、以下のファイルにあります: \n"
-"    %s\n"
-"\n"
-
-#: version.c:312
-#, c-format
-msgid "Checking for invalid \"unknown\" user columns"
-msgstr "無効な\"unknown\"ユーザー列をチェックしています"
-
-#: version.c:319
-#, c-format
-msgid ""
-"Your installation contains the \"unknown\" data type in user tables.  This\n"
-"data type is no longer allowed in tables, so this cluster cannot currently\n"
-"be upgraded.  You can remove the problem tables and restart the upgrade.\n"
+"Your installation contains the \"line\" data type in user tables.\n"
+"This data type changed its internal and input/output format\n"
+"between your old and new versions so this\n"
+"cluster cannot currently be upgraded.  You can\n"
+"drop the problem columns and restart the upgrade.\n"
 "A list of the problem columns is in the file:\n"
 "    %s\n"
 "\n"
 msgstr ""
-"このクラスタではユーザーテーブルに\"unknown\"データ型が含まれています。\n"
+"このクラスタではユーザーテーブルに\"line\"データ型が含まれています。\n"
+"このデータ型は新旧のクラスタ間で内部形式および入出力フォーマットが\n"
+"変更されているため、このクラスタは現時点ではアップグレードできません。\n"
+"問題の列を削除したのちにアップグレードを再実行できます。\n"
+"問題のある列の一覧は、以下のファイルにあります: \n"
+"    %s\n"
+"\n"
+
+#: version.c:224
+#, c-format
+msgid "Checking for invalid \"unknown\" user columns"
+msgstr "無効な\"unknown\"ユーザー列をチェックしています"
+
+#: version.c:233
+#, c-format
+msgid ""
+"Your installation contains the \"unknown\" data type in user tables.\n"
+"This data type is no longer allowed in tables, so this\n"
+"cluster cannot currently be upgraded.  You can\n"
+"drop the problem columns and restart the upgrade.\n"
+"A list of the problem columns is in the file:\n"
+"    %s\n"
+"\n"
+msgstr ""
+"このクラスタではユーザーテーブルに \"unknown\" データ型が含まれています。\n"
 "このデータ型はもはやテーブル内では利用できないため、このクラスタは現時点\n"
-"ではアップグレードできません。問題のテーブルを削除したのち、アップグレードを\n"
+"ではアップグレードできません。問題の列を削除したのち、アップグレードを\n"
 "再実行できます。\n"
 "問題のある列の一覧は、以下のファイルにあります: \n"
 "    %s\n"
 "\n"
 
-#: version.c:342
+#: version.c:257
 #, c-format
 msgid "Checking for hash indexes"
 msgstr "ハッシュインデックスをチェックしています"
 
-#: version.c:422
+#: version.c:335
+#, c-format
+msgid "warning"
+msgstr "警告"
+
+#: version.c:337
 #, c-format
 msgid ""
 "\n"
@@ -1775,10 +1838,10 @@ msgstr ""
 "\n"
 "このクラスタにはハッシュインデックスがあります。このインデックスは新旧のクラスタ間で\n"
 "内部フォーマットが異なるため、REINDEX コマンドを使って再構築する必要があります。\n"
-"アップグレードが終わったら、REINDEX を使った操作方法が表示されます。\n"
+"アップグレードが終わったら、REINDEX を使った操作方法が指示されます。\n"
 "\n"
 
-#: version.c:428
+#: version.c:343
 #, c-format
 msgid ""
 "\n"
@@ -1800,41 +1863,41 @@ msgstr ""
 "それまでは、これらのインデックスは使用されません。\n"
 "\n"
 
-#: version.c:454
+#: version.c:369
 #, c-format
 msgid "Checking for invalid \"sql_identifier\" user columns"
 msgstr "無効な\"sql_identifier\"ユーザー列を確認しています"
 
-#: version.c:462
+#: version.c:379
 #, c-format
 msgid ""
-"Your installation contains the \"sql_identifier\" data type in user tables\n"
-"and/or indexes.  The on-disk format for this data type has changed, so this\n"
-"cluster cannot currently be upgraded.  You can remove the problem tables or\n"
-"change the data type to \"name\" and restart the upgrade.\n"
+"Your installation contains the \"sql_identifier\" data type in user tables.\n"
+"The on-disk format for this data type has changed, so this\n"
+"cluster cannot currently be upgraded.  You can\n"
+"drop the problem columns and restart the upgrade.\n"
 "A list of the problem columns is in the file:\n"
 "    %s\n"
 "\n"
 msgstr ""
-"このクラスタでは”sql_identifier”データ型がユーザーテーブルまたは/および\n"
-"インデックスに含まれています。このデータ型のディスク上での形式は変更されてい\n"
-"ます。問題のあるテーブルを削除するか、データ型を\"name\"に変更してからアップ\n"
-"グレードを再実行することができます。\n"
+"このクラスタではでは”sql_identifier”データ型がユーザーテーブルに含まれています。\n"
+"このデータ型のディスク上での形式は変更されているため、このクラスタは現時点では\n"
+"アップグレードできません。問題のある列を削除した後にアップグレードを再実行する\n"
+"ことができます。\n"
 "問題のある列の一覧は、以下のファイルにあります: \n"
 "    %s\n"
 "\n"
 
-#: version.c:486
+#: version.c:403
 #, c-format
 msgid "Checking for extension updates"
-msgstr "機能拡張の更新を確認しています"
+msgstr "機能拡張のアップデートを確認しています"
 
-#: version.c:538
+#: version.c:455
 #, c-format
 msgid "notice"
 msgstr "注意"
 
-#: version.c:539
+#: version.c:456
 #, c-format
 msgid ""
 "\n"
@@ -1846,37 +1909,8 @@ msgid ""
 "\n"
 msgstr ""
 "\n"
-"このクラスタにはALTER EXTENSIONコマンドで更新すべき機能拡張があります。以下のファイル\n"
-"    %s\n"
-"を、psqlを使用してデータベースのスーパーユーザーとして実行することで、これらの機能拡張\n"
-"が更新されます。\n"
-"\n"
-
-#: version.c:454
-#, c-format
-msgid "Checking for extension updates"
-msgstr "機能拡張の更新を確認しています"
-
-#: version.c:506
-#, c-format
-msgid "notice"
-msgstr "注意"
-
-#: version.c:507
-#, c-format
-msgid ""
-"\n"
-"Your installation contains extensions that should be updated\n"
-"with the ALTER EXTENSION command.  The file\n"
-"    %s\n"
-"when executed by psql by the database superuser will update\n"
-"these extensions.\n"
-"\n"
-msgstr ""
-"\n"
-"このクラスタにはALTER EXTENSIONコマンドで更新すべき機能拡張があります。\n"
-"以下のファイル\n"
-"    %s\n"
-"を、psqlを使用してデータベースのスーパーユーザーとして実行することで、これらの機能拡張\n"
-"が更新されます。\n"
+"このクラスタにはALTER EXTENSIONコマンドによるアップデートが必要な機能拡張が\n"
+"あります。以下のファイルをpsqlを使ってデータベースのスーパーユーザーとして実行することで\n"
+"これらの機能拡張をアップデートできます。\n"
+"   %s\n"
 "\n"

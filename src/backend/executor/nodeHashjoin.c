@@ -3,7 +3,7 @@
  * nodeHashjoin.c
  *	  Routines to handle hash join nodes
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -90,9 +90,9 @@
  * PHJ_BUILD_HASHING_INNER so we can skip loading.
  *
  * Initially we try to plan for a single-batch hash join using the combined
- * work_mem of all participants to create a large shared hash table.  If that
+ * hash_mem of all participants to create a large shared hash table.  If that
  * turns out either at planning or execution time to be impossible then we
- * fall back to regular work_mem sized hash tables.
+ * fall back to regular hash_mem sized hash tables.
  *
  * To avoid deadlocks, we never wait for any barrier unless it is known that
  * all other backends attached to it are actively executing the node or have
@@ -348,7 +348,7 @@ ExecHashJoinImpl(PlanState *pstate, bool parallel)
 						if (hashtable->nbatch > 1)
 							ExecParallelHashJoinPartitionOuter(node);
 						BarrierArriveAndWait(build_barrier,
-											 WAIT_EVENT_HASH_BUILD_HASHING_OUTER);
+											 WAIT_EVENT_HASH_BUILD_HASH_OUTER);
 					}
 					else if (BarrierPhase(build_barrier) == PHJ_BUILD_DONE)
 					{
@@ -1157,14 +1157,14 @@ ExecParallelHashJoinNewBatch(HashJoinState *hjstate)
 
 					/* One backend allocates the hash table. */
 					if (BarrierArriveAndWait(batch_barrier,
-											 WAIT_EVENT_HASH_BATCH_ELECTING))
+											 WAIT_EVENT_HASH_BATCH_ELECT))
 						ExecParallelHashTableAlloc(hashtable, batchno);
 					/* Fall through. */
 
 				case PHJ_BATCH_ALLOCATING:
 					/* Wait for allocation to complete. */
 					BarrierArriveAndWait(batch_barrier,
-										 WAIT_EVENT_HASH_BATCH_ALLOCATING);
+										 WAIT_EVENT_HASH_BATCH_ALLOCATE);
 					/* Fall through. */
 
 				case PHJ_BATCH_LOADING:
@@ -1184,7 +1184,7 @@ ExecParallelHashJoinNewBatch(HashJoinState *hjstate)
 					}
 					sts_end_parallel_scan(inner_tuples);
 					BarrierArriveAndWait(batch_barrier,
-										 WAIT_EVENT_HASH_BATCH_LOADING);
+										 WAIT_EVENT_HASH_BATCH_LOAD);
 					/* Fall through. */
 
 				case PHJ_BATCH_PROBING:
@@ -1352,8 +1352,16 @@ ExecReScanHashJoin(HashJoinState *node)
 			/* must destroy and rebuild hash table */
 			HashState  *hashNode = castNode(HashState, innerPlanState(node));
 
-			/* for safety, be sure to clear child plan node's pointer too */
 			Assert(hashNode->hashtable == node->hj_HashTable);
+			/* accumulate stats from old hash table, if wanted */
+			/* (this should match ExecShutdownHash) */
+			if (hashNode->ps.instrument && !hashNode->hinstrument)
+				hashNode->hinstrument = (HashInstrumentation *)
+					palloc0(sizeof(HashInstrumentation));
+			if (hashNode->hinstrument)
+				ExecHashAccumInstrumentation(hashNode->hinstrument,
+											 hashNode->hashtable);
+			/* for safety, be sure to clear child plan node's pointer too */
 			hashNode->hashtable = NULL;
 
 			ExecHashTableDestroy(node->hj_HashTable);
@@ -1516,8 +1524,13 @@ void
 ExecHashJoinReInitializeDSM(HashJoinState *state, ParallelContext *cxt)
 {
 	int			plan_node_id = state->js.ps.plan->plan_node_id;
-	ParallelHashJoinState *pstate =
-	shm_toc_lookup(cxt->toc, plan_node_id, false);
+	ParallelHashJoinState *pstate;
+
+	/* Nothing to do if we failed to create a DSM segment. */
+	if (cxt->seg == NULL)
+		return;
+
+	pstate = shm_toc_lookup(cxt->toc, plan_node_id, false);
 
 	/*
 	 * It would be possible to reuse the shared hash table in single-batch

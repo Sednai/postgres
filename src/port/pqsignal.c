@@ -4,7 +4,7 @@
  *	  reliable BSD-style signal(2) routine stolen from RWW who stole it
  *	  from Stevens...
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -35,6 +35,10 @@
  * Set up a signal handler, with SA_RESTART, for signal "signo"
  *
  * Returns the previous handler.
+ *
+ * Note: the actual name of this function is either pqsignal_fe when
+ * compiled with -DFRONTEND, or pqsignal when compiled without that.
+ * This is to avoid a name collision with libpq's legacy-pqsignal.c.
  */
 pqsigfunc
 pqsignal(int signo, pqsigfunc func)

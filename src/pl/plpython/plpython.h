@@ -2,7 +2,7 @@
  *
  * plpython.h - Python as a procedural language for PostgreSQL
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/pl/plpython/plpython.h
@@ -32,8 +32,7 @@
 #define TEXTDOMAIN PG_TEXTDOMAIN("plpython")
 
 /*
- * Used throughout, and also by the Python 2/3 porting layer, so it's easier to
- * just include it everywhere.
+ * Used throughout, so it's easier to just include it everywhere.
  */
 #include "plpy_util.h"
 

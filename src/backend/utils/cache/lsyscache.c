@@ -3,7 +3,7 @@
  * lsyscache.c
  *	  Convenience routines for common queries in the system catalog cache.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -23,6 +23,7 @@
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
 #include "catalog/pg_amproc.h"
+#include "catalog/pg_cast.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_constraint.h"
 #include "catalog/pg_language.h"
@@ -736,6 +737,55 @@ equality_ops_are_compatible(Oid opno1, Oid opno2)
 	return result;
 }
 
+/*
+ * comparison_ops_are_compatible
+ *		Return true if the two given comparison operators have compatible
+ *		semantics.
+ *
+ * This is trivially true if they are the same operator.  Otherwise,
+ * we look to see if they can be found in the same btree opfamily.
+ * For example, '<' and '>=' ops match if they belong to the same family.
+ *
+ * (This is identical to equality_ops_are_compatible(), except that we
+ * don't bother to examine hash opclasses.)
+ */
+bool
+comparison_ops_are_compatible(Oid opno1, Oid opno2)
+{
+	bool		result;
+	CatCList   *catlist;
+	int			i;
+
+	/* Easy if they're the same operator */
+	if (opno1 == opno2)
+		return true;
+
+	/*
+	 * We search through all the pg_amop entries for opno1.
+	 */
+	catlist = SearchSysCacheList1(AMOPOPID, ObjectIdGetDatum(opno1));
+
+	result = false;
+	for (i = 0; i < catlist->n_members; i++)
+	{
+		HeapTuple	op_tuple = &catlist->members[i]->tuple;
+		Form_pg_amop op_form = (Form_pg_amop) GETSTRUCT(op_tuple);
+
+		if (op_form->amopmethod == BTREE_AM_OID)
+		{
+			if (op_in_opfamily(opno2, op_form->amopfamily))
+			{
+				result = true;
+				break;
+			}
+		}
+	}
+
+	ReleaseSysCacheList(catlist);
+
+	return result;
+}
+
 
 /*				---------- AMPROC CACHES ----------						 */
 
@@ -941,6 +991,66 @@ get_atttypetypmodcoll(Oid relid, AttrNumber attnum,
 	ReleaseSysCache(tp);
 }
 
+/*
+ * get_attoptions
+ *
+ *		Given the relation id and the attribute number,
+ *		return the attribute options text[] datum, if any.
+ */
+Datum
+get_attoptions(Oid relid, int16 attnum)
+{
+	HeapTuple	tuple;
+	Datum		attopts;
+	Datum		result;
+	bool		isnull;
+
+	tuple = SearchSysCache2(ATTNUM,
+							ObjectIdGetDatum(relid),
+							Int16GetDatum(attnum));
+
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "cache lookup failed for attribute %d of relation %u",
+			 attnum, relid);
+
+	attopts = SysCacheGetAttr(ATTNAME, tuple, Anum_pg_attribute_attoptions,
+							  &isnull);
+
+	if (isnull)
+		result = (Datum) 0;
+	else
+		result = datumCopy(attopts, false, -1); /* text[] */
+
+	ReleaseSysCache(tuple);
+
+	return result;
+}
+
+/*				---------- PG_CAST CACHE ----------					 */
+
+/*
+ * get_cast_oid - given two type OIDs, look up a cast OID
+ *
+ * If missing_ok is false, throw an error if the cast is not found.  If
+ * true, just return InvalidOid.
+ */
+Oid
+get_cast_oid(Oid sourcetypeid, Oid targettypeid, bool missing_ok)
+{
+	Oid			oid;
+
+	oid = GetSysCacheOid2(CASTSOURCETARGET, Anum_pg_cast_oid,
+						  ObjectIdGetDatum(sourcetypeid),
+						  ObjectIdGetDatum(targettypeid));
+	if (!OidIsValid(oid) && !missing_ok)
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("cast from type %s to type %s does not exist",
+						format_type_be(sourcetypeid),
+						format_type_be(targettypeid))));
+	return oid;
+}
+
 /*				---------- COLLATION CACHE ----------					 */
 
 /*
@@ -1015,6 +1125,43 @@ get_constraint_name(Oid conoid)
 	}
 	else
 		return NULL;
+}
+
+/*
+ * get_constraint_index
+ *		Given the OID of a unique, primary-key, or exclusion constraint,
+ *		return the OID of the underlying index.
+ *
+ * Returns InvalidOid if the constraint could not be found or is of
+ * the wrong type.
+ *
+ * The intent of this function is to return the index "owned" by the
+ * specified constraint.  Therefore we must check contype, since some
+ * pg_constraint entries (e.g. for foreign-key constraints) store the
+ * OID of an index that is referenced but not owned by the constraint.
+ */
+Oid
+get_constraint_index(Oid conoid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(CONSTROID, ObjectIdGetDatum(conoid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_constraint contup = (Form_pg_constraint) GETSTRUCT(tp);
+		Oid			result;
+
+		if (contup->contype == CONSTRAINT_UNIQUE ||
+			contup->contype == CONSTRAINT_PRIMARY ||
+			contup->contype == CONSTRAINT_EXCLUSION)
+			result = contup->conindid;
+		else
+			result = InvalidOid;
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+		return InvalidOid;
 }
 
 /*				---------- LANGUAGE CACHE ----------					 */
@@ -1281,11 +1428,16 @@ op_hashjoinable(Oid opno, Oid inputtype)
 	TypeCacheEntry *typentry;
 
 	/* As in op_mergejoinable, let the typcache handle the hard cases */
-	/* Eventually we'll need a similar case for record_eq ... */
 	if (opno == ARRAY_EQ_OP)
 	{
 		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
 		if (typentry->hash_proc == F_HASH_ARRAY)
+			result = true;
+	}
+	else if (opno == RECORD_EQ_OP)
+	{
+		typentry = lookup_type_cache(inputtype, TYPECACHE_HASH_PROC);
+		if (typentry->hash_proc == F_HASH_RECORD)
 			result = true;
 	}
 	else
@@ -2226,7 +2378,7 @@ get_typalign(Oid typid)
 		return result;
 	}
 	else
-		return 'i';
+		return TYPALIGN_INT;
 }
 #endif
 
@@ -2246,7 +2398,7 @@ get_typstorage(Oid typid)
 		return result;
 	}
 	else
-		return 'p';
+		return TYPSTORAGE_PLAIN;
 }
 
 /*
@@ -2774,6 +2926,16 @@ type_is_range(Oid typid)
 }
 
 /*
+ * type_is_multirange
+ *	  Returns true if the given type is a multirange type.
+ */
+bool
+type_is_multirange(Oid typid)
+{
+	return (get_typtype(typid) == TYPTYPE_MULTIRANGE);
+}
+
+/*
  * get_type_category_preferred
  *
  *		Given the type OID, fetch its category and preferred-type status.
@@ -2824,8 +2986,9 @@ get_typ_typrelid(Oid typid)
  *
  *		Given the type OID, get the typelem (InvalidOid if not an array type).
  *
- * NB: this only considers varlena arrays to be true arrays; InvalidOid is
- * returned if the input is a fixed-length array type.
+ * NB: this only succeeds for "true" arrays having array_subscript_handler
+ * as typsubscript.  For other types, InvalidOid is returned independently
+ * of whether they have typelem or typsubscript set.
  */
 Oid
 get_element_type(Oid typid)
@@ -2838,7 +3001,7 @@ get_element_type(Oid typid)
 		Form_pg_type typtup = (Form_pg_type) GETSTRUCT(tp);
 		Oid			result;
 
-		if (typtup->typlen == -1)
+		if (IsTrueArrayType(typtup))
 			result = typtup->typelem;
 		else
 			result = InvalidOid;
@@ -2921,7 +3084,7 @@ get_base_element_type(Oid typid)
 			Oid			result;
 
 			/* This test must match get_element_type */
-			if (typTup->typlen == -1)
+			if (IsTrueArrayType(typTup))
 				result = typTup->typelem;
 			else
 				result = InvalidOid;
@@ -3156,6 +3319,61 @@ type_is_collatable(Oid typid)
 }
 
 
+/*
+ * get_typsubscript
+ *
+ *		Given the type OID, return the type's subscripting handler's OID,
+ *		if it has one.
+ *
+ * If typelemp isn't NULL, we also store the type's typelem value there.
+ * This saves some callers an extra catalog lookup.
+ */
+RegProcedure
+get_typsubscript(Oid typid, Oid *typelemp)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(TYPEOID, ObjectIdGetDatum(typid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_type typform = (Form_pg_type) GETSTRUCT(tp);
+		RegProcedure handler = typform->typsubscript;
+
+		if (typelemp)
+			*typelemp = typform->typelem;
+		ReleaseSysCache(tp);
+		return handler;
+	}
+	else
+	{
+		if (typelemp)
+			*typelemp = InvalidOid;
+		return InvalidOid;
+	}
+}
+
+/*
+ * getSubscriptingRoutines
+ *
+ *		Given the type OID, fetch the type's subscripting methods struct.
+ *		Return NULL if type is not subscriptable.
+ *
+ * If typelemp isn't NULL, we also store the type's typelem value there.
+ * This saves some callers an extra catalog lookup.
+ */
+const struct SubscriptRoutines *
+getSubscriptingRoutines(Oid typid, Oid *typelemp)
+{
+	RegProcedure typsubscript = get_typsubscript(typid, typelemp);
+
+	if (!OidIsValid(typsubscript))
+		return NULL;
+
+	return (const struct SubscriptRoutines *)
+		DatumGetPointer(OidFunctionCall0(typsubscript));
+}
+
+
 /*				---------- STATISTICS CACHE ----------					 */
 
 /*
@@ -3271,19 +3489,6 @@ get_attstatsslot(AttStatsSlot *sslot, HeapTuple statstuple,
 
 	sslot->staop = (&stats->staop1)[i];
 	sslot->stacoll = (&stats->stacoll1)[i];
-
-	/*
-	 * XXX Hopefully-temporary hack: if stacoll isn't set, inject the default
-	 * collation.  This won't matter for non-collation-aware datatypes.  For
-	 * those that are, this covers cases where stacoll has not been set.  In
-	 * the short term we need this because some code paths involving type NAME
-	 * do not pass any collation to prefix_selectivity and related functions.
-	 * Even when that's been fixed, it's likely that some add-on typanalyze
-	 * functions won't get the word right away about filling stacoll during
-	 * ANALYZE, so we'll probably need this for awhile.
-	 */
-	if (sslot->stacoll == InvalidOid)
-		sslot->stacoll = DEFAULT_COLLATION_OID;
 
 	if (flags & ATTSTATSSLOT_VALUES)
 	{
@@ -3423,12 +3628,12 @@ char *
 get_namespace_name_or_temp(Oid nspid)
 {
 	if (isTempNamespace(nspid))
-		return "pg_temp";
+		return pstrdup("pg_temp");
 	else
 		return get_namespace_name(nspid);
 }
 
-/*				---------- PG_RANGE CACHE ----------				 */
+/*				---------- PG_RANGE CACHES ----------				 */
 
 /*
  * get_range_subtype
@@ -3481,6 +3686,56 @@ get_range_collation(Oid rangeOid)
 		return InvalidOid;
 }
 
+/*
+ * get_range_multirange
+ *		Returns the multirange type of a given range type
+ *
+ * Returns InvalidOid if the type is not a range type.
+ */
+Oid
+get_range_multirange(Oid rangeOid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(RANGETYPE, ObjectIdGetDatum(rangeOid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_range rngtup = (Form_pg_range) GETSTRUCT(tp);
+		Oid			result;
+
+		result = rngtup->rngmultitypid;
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+		return InvalidOid;
+}
+
+/*
+ * get_multirange_range
+ *		Returns the range type of a given multirange
+ *
+ * Returns InvalidOid if the type is not a multirange.
+ */
+Oid
+get_multirange_range(Oid multirangeOid)
+{
+	HeapTuple	tp;
+
+	tp = SearchSysCache1(RANGEMULTIRANGE, ObjectIdGetDatum(multirangeOid));
+	if (HeapTupleIsValid(tp))
+	{
+		Form_pg_range rngtup = (Form_pg_range) GETSTRUCT(tp);
+		Oid			result;
+
+		result = rngtup->rngtypid;
+		ReleaseSysCache(tp);
+		return result;
+	}
+	else
+		return InvalidOid;
+}
+
 /*				---------- PG_INDEX CACHE ----------				 */
 
 /*
@@ -3495,7 +3750,7 @@ Oid
 get_index_column_opclass(Oid index_oid, int attno)
 {
 	HeapTuple	tuple;
-	Form_pg_index rd_index PG_USED_FOR_ASSERTS_ONLY;
+	Form_pg_index rd_index;
 	Datum		datum;
 	bool		isnull;
 	oidvector  *indclass;
@@ -3541,9 +3796,9 @@ get_index_column_opclass(Oid index_oid, int attno)
 bool
 get_index_isreplident(Oid index_oid)
 {
-	HeapTuple		tuple;
-	Form_pg_index	rd_index;
-	bool			result;
+	HeapTuple	tuple;
+	Form_pg_index rd_index;
+	bool		result;
 
 	tuple = SearchSysCache1(INDEXRELID, ObjectIdGetDatum(index_oid));
 	if (!HeapTupleIsValid(tuple))

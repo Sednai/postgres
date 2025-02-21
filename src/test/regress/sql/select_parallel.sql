@@ -5,9 +5,7 @@
 create function sp_parallel_restricted(int) returns int as
   $$begin return $1; end$$ language plpgsql parallel restricted;
 
--- Serializable isolation would disable parallel query, so explicitly use an
--- arbitrary other level.
-begin isolation level repeatable read;
+begin;
 
 -- encourage use of parallel plans
 set parallel_setup_cost=0;
@@ -431,6 +429,16 @@ ORDER BY 1;
 SELECT * FROM information_schema.foreign_data_wrapper_options
 ORDER BY 1, 2, 3;
 
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT generate_series(1, two), array(select generate_series(1, two))
+  FROM tenk1 ORDER BY tenthous;
+
+-- must disallow pushing sort below gather when pathkey contains an SRF
+EXPLAIN (VERBOSE, COSTS OFF)
+SELECT unnest(ARRAY[]::integer[]) + 1 AS pathkey
+  FROM tenk1 t1 JOIN tenk1 t2 ON TRUE
+  ORDER BY pathkey;
+
 -- test passing expanded-value representations to workers
 CREATE FUNCTION make_some_array(int,int) returns int[] as
 $$declare x int[];
@@ -477,3 +485,34 @@ reset force_parallel_mode;
 drop function set_and_report_role();
 drop function set_role_and_error(int);
 drop role regress_parallel_worker;
+
+-- don't freeze in ParallelFinish while holding an LWLock
+BEGIN;
+
+CREATE FUNCTION my_cmp (int4, int4)
+RETURNS int LANGUAGE sql AS
+$$
+	SELECT
+		CASE WHEN $1 < $2 THEN -1
+				WHEN $1 > $2 THEN  1
+				ELSE 0
+		END;
+$$;
+
+CREATE TABLE parallel_hang (i int4);
+INSERT INTO parallel_hang
+	(SELECT * FROM generate_series(1, 400) gs);
+
+CREATE OPERATOR CLASS int4_custom_ops FOR TYPE int4 USING btree AS
+	OPERATOR 1 < (int4, int4), OPERATOR 2 <= (int4, int4),
+	OPERATOR 3 = (int4, int4), OPERATOR 4 >= (int4, int4),
+	OPERATOR 5 > (int4, int4), FUNCTION 1 my_cmp(int4, int4);
+
+CREATE UNIQUE INDEX parallel_hang_idx
+					ON parallel_hang
+					USING btree (i int4_custom_ops);
+
+SET force_parallel_mode = on;
+DELETE FROM parallel_hang WHERE 380 <= i AND i <= 420;
+
+ROLLBACK;

@@ -4,7 +4,7 @@
  *		Functions for direct access to files
  *
  *
- * Copyright (c) 2004-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2022, PostgreSQL Global Development Group
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
@@ -29,7 +29,9 @@
 #include "mb/pg_wchar.h"
 #include "miscadmin.h"
 #include "postmaster/syslogger.h"
+#include "replication/slot.h"
 #include "storage/fd.h"
+#include "utils/acl.h"
 #include "utils/builtins.h"
 #include "utils/memutils.h"
 #include "utils/syscache.h"
@@ -57,22 +59,19 @@ convert_and_check_filename(text *arg)
 	canonicalize_path(filename);	/* filename can change length here */
 
 	/*
-	 * Members of the 'pg_read_server_files' role are allowed to access any
-	 * files on the server as the PG user, so no need to do any further checks
-	 * here.
+	 * Roles with privileges of the 'pg_read_server_files' role are allowed to
+	 * access any files on the server as the PG user, so no need to do any
+	 * further checks here.
 	 */
-	if (is_member_of_role(GetUserId(), DEFAULT_ROLE_READ_SERVER_FILES))
+	if (has_privs_of_role(GetUserId(), ROLE_PG_READ_SERVER_FILES))
 		return filename;
 
-	/* User isn't a member of the default role, so check if it's allowable */
+	/*
+	 * User isn't a member of the pg_read_server_files role, so check if it's
+	 * allowable
+	 */
 	if (is_absolute_path(filename))
 	{
-		/* Disallow '/a/b/data/..' */
-		if (path_contains_parent_reference(filename))
-			ereport(ERROR,
-					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 (errmsg("reference to parent directory (\"..\") not allowed"))));
-
 		/*
 		 * Allow absolute paths if within DataDir or Log_directory, even
 		 * though Log_directory might be outside DataDir.
@@ -82,12 +81,12 @@ convert_and_check_filename(text *arg)
 			 !path_is_prefix_of_path(Log_directory, filename)))
 			ereport(ERROR,
 					(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-					 (errmsg("absolute path not allowed"))));
+					 errmsg("absolute path not allowed")));
 	}
 	else if (!path_is_relative_and_below_cwd(filename))
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("path must be in or below the current directory"))));
+				 errmsg("path must be in or below the current directory")));
 
 	return filename;
 }
@@ -156,16 +155,15 @@ read_binary_file(const char *filename, int64 seek_offset, int64 bytes_to_read,
 #define MIN_READ_SIZE 4096
 
 			/*
-			 * If not at end of file, and sbuf.len is equal to
-			 * MaxAllocSize - 1, then either the file is too large, or
-			 * there is nothing left to read. Attempt to read one more
-			 * byte to see if the end of file has been reached. If not,
-			 * the file is too large; we'd rather give the error message
-			 * for that ourselves.
+			 * If not at end of file, and sbuf.len is equal to MaxAllocSize -
+			 * 1, then either the file is too large, or there is nothing left
+			 * to read. Attempt to read one more byte to see if the end of
+			 * file has been reached. If not, the file is too large; we'd
+			 * rather give the error message for that ourselves.
 			 */
 			if (sbuf.len == MaxAllocSize - 1)
 			{
-				char	rbuf[1];
+				char		rbuf[1];
 
 				if (fread(rbuf, 1, 1, file) != 0 || !feof(file))
 					ereport(ERROR,
@@ -247,10 +245,10 @@ pg_read_file(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to read files with adminpack 1.0"),
+				 errmsg("must be superuser to read files with adminpack 1.0"),
 		/* translator: %s is a SQL function name */
-				  errhint("Consider using %s, which is part of core, instead.",
-						  "pg_read_file()"))));
+				 errhint("Consider using %s, which is part of core, instead.",
+						 "pg_read_file()")));
 
 	/* handle optional arguments */
 	if (PG_NARGS() >= 3)
@@ -354,7 +352,7 @@ pg_read_binary_file(PG_FUNCTION_ARGS)
 
 /*
  * Wrapper functions for the 1 and 3 argument variants of pg_read_file_v2()
- * and pg_binary_read_file().
+ * and pg_read_binary_file().
  *
  * These are necessary to pass the sanity check in opr_sanity, which checks
  * that all built-in functions that share the implementing C function take
@@ -479,12 +477,8 @@ pg_ls_dir(PG_FUNCTION_ARGS)
 	char	   *location;
 	bool		missing_ok = false;
 	bool		include_dot_dirs = false;
-	bool		randomAccess;
-	TupleDesc	tupdesc;
-	Tuplestorestate *tupstore;
 	DIR		   *dirdesc;
 	struct dirent *de;
-	MemoryContext oldcontext;
 
 	location = convert_and_check_filename(PG_GETARG_TEXT_PP(0));
 
@@ -497,29 +491,7 @@ pg_ls_dir(PG_FUNCTION_ARGS)
 			include_dot_dirs = PG_GETARG_BOOL(2);
 	}
 
-	/* check to see if caller supports us returning a tuplestore */
-	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("set-valued function called in context that cannot accept a set")));
-	if (!(rsinfo->allowedModes & SFRM_Materialize))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("materialize mode required, but it is not allowed in this context")));
-
-	/* The tupdesc and tuplestore must be created in ecxt_per_query_memory */
-	oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
-
-	tupdesc = CreateTemplateTupleDesc(1);
-	TupleDescInitEntry(tupdesc, (AttrNumber) 1, "pg_ls_dir", TEXTOID, -1, 0);
-
-	randomAccess = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
-	tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
-	rsinfo->returnMode = SFRM_Materialize;
-	rsinfo->setResult = tupstore;
-	rsinfo->setDesc = tupdesc;
-
-	MemoryContextSwitchTo(oldcontext);
+	InitMaterializedSRF(fcinfo, MAT_SRF_USE_EXPECTED_DESC);
 
 	dirdesc = AllocateDir(location);
 	if (!dirdesc)
@@ -543,7 +515,8 @@ pg_ls_dir(PG_FUNCTION_ARGS)
 		values[0] = CStringGetTextDatum(de->d_name);
 		nulls[0] = false;
 
-		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc,
+							 values, nulls);
 	}
 
 	FreeDir(dirdesc);
@@ -573,36 +546,10 @@ static Datum
 pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir, bool missing_ok)
 {
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
-	bool		randomAccess;
-	TupleDesc	tupdesc;
-	Tuplestorestate *tupstore;
 	DIR		   *dirdesc;
 	struct dirent *de;
-	MemoryContext oldcontext;
 
-	/* check to see if caller supports us returning a tuplestore */
-	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
-		ereport(ERROR,
-				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-				 errmsg("set-valued function called in context that cannot accept a set")));
-	if (!(rsinfo->allowedModes & SFRM_Materialize))
-		ereport(ERROR,
-				(errcode(ERRCODE_SYNTAX_ERROR),
-				 errmsg("materialize mode required, but it is not allowed in this context")));
-
-	/* The tupdesc and tuplestore must be created in ecxt_per_query_memory */
-	oldcontext = MemoryContextSwitchTo(rsinfo->econtext->ecxt_per_query_memory);
-
-	if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
-		elog(ERROR, "return type must be a row type");
-
-	randomAccess = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
-	tupstore = tuplestore_begin_heap(randomAccess, false, work_mem);
-	rsinfo->returnMode = SFRM_Materialize;
-	rsinfo->setResult = tupstore;
-	rsinfo->setDesc = tupdesc;
-
-	MemoryContextSwitchTo(oldcontext);
+	InitMaterializedSRF(fcinfo, 0);
 
 	/*
 	 * Now walk the directory.  Note that we must do this within a single SRF
@@ -650,7 +597,7 @@ pg_ls_dir_files(FunctionCallInfo fcinfo, const char *dir, bool missing_ok)
 		values[2] = TimestampTzGetDatum(time_t_to_timestamptz(attrib.st_mtime));
 		memset(nulls, 0, sizeof(nulls));
 
-		tuplestore_putvalues(tupstore, tupdesc, values, nulls);
+		tuplestore_putvalues(rsinfo->setResult, rsinfo->setDesc, values, nulls);
 	}
 
 	FreeDir(dirdesc);
@@ -716,4 +663,47 @@ Datum
 pg_ls_archive_statusdir(PG_FUNCTION_ARGS)
 {
 	return pg_ls_dir_files(fcinfo, XLOGDIR "/archive_status", true);
+}
+
+/*
+ * Function to return the list of files in the pg_logical/snapshots directory.
+ */
+Datum
+pg_ls_logicalsnapdir(PG_FUNCTION_ARGS)
+{
+	return pg_ls_dir_files(fcinfo, "pg_logical/snapshots", false);
+}
+
+/*
+ * Function to return the list of files in the pg_logical/mappings directory.
+ */
+Datum
+pg_ls_logicalmapdir(PG_FUNCTION_ARGS)
+{
+	return pg_ls_dir_files(fcinfo, "pg_logical/mappings", false);
+}
+
+/*
+ * Function to return the list of files in the pg_replslot/<replication_slot>
+ * directory.
+ */
+Datum
+pg_ls_replslotdir(PG_FUNCTION_ARGS)
+{
+	text	   *slotname_t;
+	char		path[MAXPGPATH];
+	char	   *slotname;
+
+	slotname_t = PG_GETARG_TEXT_PP(0);
+
+	slotname = text_to_cstring(slotname_t);
+
+	if (!SearchNamedReplicationSlot(slotname, true))
+		ereport(ERROR,
+				(errcode(ERRCODE_UNDEFINED_OBJECT),
+				 errmsg("replication slot \"%s\" does not exist",
+						slotname)));
+
+	snprintf(path, sizeof(path), "pg_replslot/%s", slotname);
+	return pg_ls_dir_files(fcinfo, path, false);
 }

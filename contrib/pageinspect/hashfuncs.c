@@ -2,7 +2,7 @@
  * hashfuncs.c
  *		Functions to investigate the content of HASH indexes
  *
- * Copyright (c) 2017-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2017-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		contrib/pageinspect/hashfuncs.c
@@ -10,15 +10,15 @@
 
 #include "postgres.h"
 
-#include "pageinspect.h"
-
 #include "access/hash.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
-#include "catalog/pg_type.h"
 #include "catalog/pg_am.h"
+#include "catalog/pg_type.h"
 #include "funcapi.h"
 #include "miscadmin.h"
+#include "pageinspect.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/rel.h"
 
@@ -74,7 +74,7 @@ verify_hash_page(bytea *raw_page, int flags)
 							   (int) MAXALIGN(sizeof(HashPageOpaqueData)),
 							   (int) PageGetSpecialSize(page))));
 
-		pageopaque = (HashPageOpaque) PageGetSpecialPointer(page);
+		pageopaque = HashPageGetOpaque(page);
 		if (pageopaque->hasho_page_id != HASHO_PAGE_ID)
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
@@ -156,7 +156,7 @@ static void
 GetHashPageStatistics(Page page, HashPageStat *stat)
 {
 	OffsetNumber maxoff = PageGetMaxOffsetNumber(page);
-	HashPageOpaque opaque = (HashPageOpaque) PageGetSpecialPointer(page);
+	HashPageOpaque opaque = HashPageGetOpaque(page);
 	int			off;
 
 	stat->dead_items = stat->live_items = 0;
@@ -200,7 +200,7 @@ hash_page_type(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use raw page functions"))));
+				 errmsg("must be superuser to use raw page functions")));
 
 	page = verify_hash_page(raw_page, 0);
 
@@ -208,7 +208,7 @@ hash_page_type(PG_FUNCTION_ARGS)
 		type = "unused";
 	else
 	{
-		opaque = (HashPageOpaque) PageGetSpecialPointer(page);
+		opaque = HashPageGetOpaque(page);
 
 		/* page type (flags) */
 		pagetype = opaque->hasho_flag & LH_PAGE_TYPE;
@@ -248,7 +248,7 @@ hash_page_stats(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use raw page functions"))));
+				 errmsg("must be superuser to use raw page functions")));
 
 	page = verify_hash_page(raw_page, LH_BUCKET_PAGE | LH_OVERFLOW_PAGE);
 
@@ -315,7 +315,7 @@ hash_page_items(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use raw page functions"))));
+				 errmsg("must be superuser to use raw page functions")));
 
 	if (SRF_IS_FIRSTCALL())
 	{
@@ -379,11 +379,8 @@ hash_page_items(PG_FUNCTION_ARGS)
 
 		SRF_RETURN_NEXT(fctx, result);
 	}
-	else
-	{
-		pfree(uargs);
-		SRF_RETURN_DONE(fctx);
-	}
+
+	SRF_RETURN_DONE(fctx);
 }
 
 /* ------------------------------------------------
@@ -398,7 +395,7 @@ Datum
 hash_bitmap_info(PG_FUNCTION_ARGS)
 {
 	Oid			indexRelid = PG_GETARG_OID(0);
-	uint64		ovflblkno = PG_GETARG_INT64(1);
+	int64		ovflblkno = PG_GETARG_INT64(1);
 	HashMetaPage metap;
 	Buffer		metabuf,
 				mapbuf;
@@ -420,7 +417,7 @@ hash_bitmap_info(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use raw page functions"))));
+				 errmsg("must be superuser to use raw page functions")));
 
 	indexRel = relation_open(indexRelid, AccessShareLock);
 
@@ -435,11 +432,16 @@ hash_bitmap_info(PG_FUNCTION_ARGS)
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot access temporary tables of other sessions")));
 
+	if (ovflblkno < 0 || ovflblkno > MaxBlockNumber)
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+				 errmsg("invalid block number")));
+
 	if (ovflblkno >= RelationGetNumberOfBlocks(indexRel))
 		ereport(ERROR,
 				(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-				 errmsg("block number " UINT64_FORMAT " is out of range for relation \"%s\"",
-						ovflblkno, RelationGetRelationName(indexRel))));
+				 errmsg("block number %lld is out of range for relation \"%s\"",
+						(long long int) ovflblkno, RelationGetRelationName(indexRel))));
 
 	/* Read the metapage so we can determine which bitmap page to use */
 	metabuf = _hash_getbuf(indexRel, HASH_METAPAGE, HASH_READ, LH_META_PAGE);
@@ -533,7 +535,7 @@ hash_metapage_info(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 (errmsg("must be superuser to use raw page functions"))));
+				 errmsg("must be superuser to use raw page functions")));
 
 	page = verify_hash_page(raw_page, LH_META_PAGE);
 
@@ -567,14 +569,18 @@ hash_metapage_info(PG_FUNCTION_ARGS)
 	values[j++] = PointerGetDatum(construct_array(spares,
 												  HASH_MAX_SPLITPOINTS,
 												  INT8OID,
-												  8, FLOAT8PASSBYVAL, 'd'));
+												  sizeof(int64),
+												  FLOAT8PASSBYVAL,
+												  TYPALIGN_DOUBLE));
 
 	for (i = 0; i < HASH_MAX_BITMAPS; i++)
 		mapp[i] = Int64GetDatum((int64) metad->hashm_mapp[i]);
 	values[j++] = PointerGetDatum(construct_array(mapp,
 												  HASH_MAX_BITMAPS,
 												  INT8OID,
-												  8, FLOAT8PASSBYVAL, 'd'));
+												  sizeof(int64),
+												  FLOAT8PASSBYVAL,
+												  TYPALIGN_DOUBLE));
 
 	tuple = heap_form_tuple(tupleDesc, values, nulls);
 

@@ -303,8 +303,6 @@ BEGIN
         RAISE NOTICE 'END: command_tag=% type=% identity=%',
             r.command_tag, r.object_type, r.object_identity;
     END LOOP;
-EXCEPTION WHEN SQLSTATE 'XX000' THEN
-	RAISE NOTICE 'END: got internal exception';
 END; $$;
 CREATE EVENT TRIGGER regress_event_trigger_report_end ON ddl_command_end
   EXECUTE PROCEDURE event_trigger_report_end();
@@ -380,6 +378,11 @@ alter table rewriteme
  add column onemore int default 0,
  add column another int default -1,
  alter column foo type numeric(10,4);
+
+-- matview rewrite when changing access method
+CREATE MATERIALIZED VIEW heapmv USING heap AS SELECT 1 AS a;
+ALTER MATERIALIZED VIEW heapmv SET ACCESS METHOD heap2;
+DROP MATERIALIZED VIEW heapmv;
 
 -- shouldn't trigger a table_rewrite event
 alter table rewriteme alter column foo type numeric(12,4);

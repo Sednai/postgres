@@ -4,7 +4,7 @@
  *	  Sort the items of a dump into a safe order for dumping
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -15,11 +15,10 @@
  */
 #include "postgres_fe.h"
 
+#include "catalog/pg_class_d.h"
 #include "pg_backup_archiver.h"
 #include "pg_backup_utils.h"
 #include "pg_dump.h"
-
-#include "catalog/pg_class_d.h"
 
 /*
  * Sort priority for database object types.
@@ -49,53 +48,112 @@
  * POST_DATA objects must sort after DO_POST_DATA_BOUNDARY, and DATA objects
  * must sort between them.
  */
+
+/* This enum lists the priority levels in order */
+enum dbObjectTypePriorities
+{
+	PRIO_NAMESPACE = 1,
+	PRIO_PROCLANG,
+	PRIO_COLLATION,
+	PRIO_TRANSFORM,
+	PRIO_EXTENSION,
+	PRIO_TYPE,					/* used for DO_TYPE and DO_SHELL_TYPE */
+	PRIO_CAST,
+	PRIO_FUNC,
+	PRIO_AGG,
+	PRIO_ACCESS_METHOD,
+	PRIO_OPERATOR,
+	PRIO_OPFAMILY,				/* used for DO_OPFAMILY and DO_OPCLASS */
+	PRIO_CONVERSION,
+	PRIO_TSPARSER,
+	PRIO_TSTEMPLATE,
+	PRIO_TSDICT,
+	PRIO_TSCONFIG,
+	PRIO_FDW,
+	PRIO_FOREIGN_SERVER,
+	PRIO_TABLE,
+	PRIO_TABLE_ATTACH,
+	PRIO_DUMMY_TYPE,
+	PRIO_ATTRDEF,
+	PRIO_BLOB,
+	PRIO_PRE_DATA_BOUNDARY,		/* boundary! */
+	PRIO_TABLE_DATA,
+	PRIO_SEQUENCE_SET,
+	PRIO_BLOB_DATA,
+	PRIO_POST_DATA_BOUNDARY,	/* boundary! */
+	PRIO_CONSTRAINT,
+	PRIO_INDEX,
+	PRIO_INDEX_ATTACH,
+	PRIO_STATSEXT,
+	PRIO_RULE,
+	PRIO_TRIGGER,
+	PRIO_FK_CONSTRAINT,
+	PRIO_POLICY,
+	PRIO_PUBLICATION,
+	PRIO_PUBLICATION_REL,
+	PRIO_PUBLICATION_TABLE_IN_SCHEMA,
+	PRIO_SUBSCRIPTION,
+	PRIO_DEFAULT_ACL,			/* done in ACL pass */
+	PRIO_EVENT_TRIGGER,			/* must be next to last! */
+	PRIO_REFRESH_MATVIEW		/* must be last! */
+};
+
+/* This table is indexed by enum DumpableObjectType */
 static const int dbObjectTypePriority[] =
 {
-	1,							/* DO_NAMESPACE */
-	4,							/* DO_EXTENSION */
-	5,							/* DO_TYPE */
-	5,							/* DO_SHELL_TYPE */
-	7,							/* DO_FUNC */
-	8,							/* DO_AGG */
-	9,							/* DO_OPERATOR */
-	9,							/* DO_ACCESS_METHOD */
-	10,							/* DO_OPCLASS */
-	10,							/* DO_OPFAMILY */
-	3,							/* DO_COLLATION */
-	11,							/* DO_CONVERSION */
-	18,							/* DO_TABLE */
-	20,							/* DO_ATTRDEF */
-	28,							/* DO_INDEX */
-	29,							/* DO_INDEX_ATTACH */
-	30,							/* DO_STATSEXT */
-	31,							/* DO_RULE */
-	32,							/* DO_TRIGGER */
-	27,							/* DO_CONSTRAINT */
-	33,							/* DO_FK_CONSTRAINT */
-	2,							/* DO_PROCLANG */
-	6,							/* DO_CAST */
-	23,							/* DO_TABLE_DATA */
-	24,							/* DO_SEQUENCE_SET */
-	19,							/* DO_DUMMY_TYPE */
-	12,							/* DO_TSPARSER */
-	14,							/* DO_TSDICT */
-	13,							/* DO_TSTEMPLATE */
-	15,							/* DO_TSCONFIG */
-	16,							/* DO_FDW */
-	17,							/* DO_FOREIGN_SERVER */
-	38,							/* DO_DEFAULT_ACL --- done in ACL pass */
-	3,							/* DO_TRANSFORM */
-	21,							/* DO_BLOB */
-	25,							/* DO_BLOB_DATA */
-	22,							/* DO_PRE_DATA_BOUNDARY */
-	26,							/* DO_POST_DATA_BOUNDARY */
-	39,							/* DO_EVENT_TRIGGER --- next to last! */
-	40,							/* DO_REFRESH_MATVIEW --- last! */
-	34,							/* DO_POLICY */
-	35,							/* DO_PUBLICATION */
-	36,							/* DO_PUBLICATION_REL */
-	37							/* DO_SUBSCRIPTION */
+	PRIO_NAMESPACE,				/* DO_NAMESPACE */
+	PRIO_EXTENSION,				/* DO_EXTENSION */
+	PRIO_TYPE,					/* DO_TYPE */
+	PRIO_TYPE,					/* DO_SHELL_TYPE */
+	PRIO_FUNC,					/* DO_FUNC */
+	PRIO_AGG,					/* DO_AGG */
+	PRIO_OPERATOR,				/* DO_OPERATOR */
+	PRIO_ACCESS_METHOD,			/* DO_ACCESS_METHOD */
+	PRIO_OPFAMILY,				/* DO_OPCLASS */
+	PRIO_OPFAMILY,				/* DO_OPFAMILY */
+	PRIO_COLLATION,				/* DO_COLLATION */
+	PRIO_CONVERSION,			/* DO_CONVERSION */
+	PRIO_TABLE,					/* DO_TABLE */
+	PRIO_TABLE_ATTACH,			/* DO_TABLE_ATTACH */
+	PRIO_ATTRDEF,				/* DO_ATTRDEF */
+	PRIO_INDEX,					/* DO_INDEX */
+	PRIO_INDEX_ATTACH,			/* DO_INDEX_ATTACH */
+	PRIO_STATSEXT,				/* DO_STATSEXT */
+	PRIO_RULE,					/* DO_RULE */
+	PRIO_TRIGGER,				/* DO_TRIGGER */
+	PRIO_CONSTRAINT,			/* DO_CONSTRAINT */
+	PRIO_FK_CONSTRAINT,			/* DO_FK_CONSTRAINT */
+	PRIO_PROCLANG,				/* DO_PROCLANG */
+	PRIO_CAST,					/* DO_CAST */
+	PRIO_TABLE_DATA,			/* DO_TABLE_DATA */
+	PRIO_SEQUENCE_SET,			/* DO_SEQUENCE_SET */
+	PRIO_DUMMY_TYPE,			/* DO_DUMMY_TYPE */
+	PRIO_TSPARSER,				/* DO_TSPARSER */
+	PRIO_TSDICT,				/* DO_TSDICT */
+	PRIO_TSTEMPLATE,			/* DO_TSTEMPLATE */
+	PRIO_TSCONFIG,				/* DO_TSCONFIG */
+	PRIO_FDW,					/* DO_FDW */
+	PRIO_FOREIGN_SERVER,		/* DO_FOREIGN_SERVER */
+	PRIO_DEFAULT_ACL,			/* DO_DEFAULT_ACL */
+	PRIO_TRANSFORM,				/* DO_TRANSFORM */
+	PRIO_BLOB,					/* DO_BLOB */
+	PRIO_BLOB_DATA,				/* DO_BLOB_DATA */
+	PRIO_PRE_DATA_BOUNDARY,		/* DO_PRE_DATA_BOUNDARY */
+	PRIO_POST_DATA_BOUNDARY,	/* DO_POST_DATA_BOUNDARY */
+	PRIO_EVENT_TRIGGER,			/* DO_EVENT_TRIGGER */
+	PRIO_REFRESH_MATVIEW,		/* DO_REFRESH_MATVIEW */
+	PRIO_POLICY,				/* DO_POLICY */
+	PRIO_PUBLICATION,			/* DO_PUBLICATION */
+	PRIO_PUBLICATION_REL,		/* DO_PUBLICATION_REL */
+	PRIO_PUBLICATION_TABLE_IN_SCHEMA,	/* DO_PUBLICATION_TABLE_IN_SCHEMA */
+	PRIO_SUBSCRIPTION			/* DO_SUBSCRIPTION */
 };
+
+StaticAssertDecl(lengthof(dbObjectTypePriority) == (DO_SUBSCRIPTION + 1),
+				 "array length mismatch");
+
+StaticAssertDecl(lengthof(dbObjectTypePriority) == (DO_SUBSCRIPTION + 1),
+				 "array length mismatch");
 
 static DumpId preDataBoundId;
 static DumpId postDataBoundId;
@@ -364,13 +422,13 @@ TopoSort(DumpableObject **objs,
 		obj = objs[i];
 		j = obj->dumpId;
 		if (j <= 0 || j > maxDumpId)
-			fatal("invalid dumpId %d", j);
+			pg_fatal("invalid dumpId %d", j);
 		idMap[j] = i;
 		for (j = 0; j < obj->nDeps; j++)
 		{
 			k = obj->dependencies[j];
 			if (k <= 0 || k > maxDumpId)
-				fatal("invalid dependency %d", k);
+				pg_fatal("invalid dependency %d", k);
 			beforeConstraints[k]++;
 		}
 	}
@@ -603,7 +661,7 @@ findDependencyLoops(DumpableObject **objs, int nObjs, int totObjs)
 
 	/* We'd better have fixed at least one loop */
 	if (!fixedloop)
-		fatal("could not identify dependency loop");
+		pg_fatal("could not identify dependency loop");
 
 	free(workspace);
 	free(searchFailed);
@@ -814,6 +872,28 @@ repairMatViewBoundaryMultiLoop(DumpableObject *boundaryobj,
 }
 
 /*
+ * If a function is involved in a multi-object loop, we can't currently fix
+ * that by splitting it into two DumpableObjects.  As a stopgap, we try to fix
+ * it by dropping the constraint that the function be dumped in the pre-data
+ * section.  This is sufficient to handle cases where a function depends on
+ * some unique index, as can happen if it has a GROUP BY for example.
+ */
+static void
+repairFunctionBoundaryMultiLoop(DumpableObject *boundaryobj,
+								DumpableObject *nextobj)
+{
+	/* remove boundary's dependency on object after it in loop */
+	removeObjectDependency(boundaryobj, nextobj->dumpId);
+	/* if that object is a function, mark it as postponed into post-data */
+	if (nextobj->objType == DO_FUNC)
+	{
+		FuncInfo   *nextinfo = (FuncInfo *) nextobj;
+
+		nextinfo->postponed_def = true;
+	}
+}
+
+/*
  * Because we make tables depend on their CHECK constraints, while there
  * will be an automatic dependency in the other direction, we need to break
  * the loop.  If there are no other objects in the loop then we can remove
@@ -1007,6 +1087,28 @@ repairDependencyLoop(DumpableObject **loop,
 		}
 	}
 
+	/* Indirect loop involving function and data boundary */
+	if (nLoop > 2)
+	{
+		for (i = 0; i < nLoop; i++)
+		{
+			if (loop[i]->objType == DO_FUNC)
+			{
+				for (j = 0; j < nLoop; j++)
+				{
+					if (loop[j]->objType == DO_PRE_DATA_BOUNDARY)
+					{
+						DumpableObject *nextobj;
+
+						nextobj = (j < nLoop - 1) ? loop[j + 1] : loop[0];
+						repairFunctionBoundaryMultiLoop(loop[j], nextobj);
+						return;
+					}
+				}
+			}
+		}
+	}
+
 	/* Table and CHECK constraint */
 	if (nLoop == 2 &&
 		loop[0]->objType == DO_TABLE &&
@@ -1148,10 +1250,10 @@ repairDependencyLoop(DumpableObject **loop,
 	 * Loop of table with itself --- just ignore it.
 	 *
 	 * (Actually, what this arises from is a dependency of a table column on
-	 * another column, which happens with generated columns; or a dependency
-	 * of a table column on the whole table, which happens with partitioning.
-	 * But we didn't pay attention to sub-object IDs while collecting the
-	 * dependency data, so we can't see that here.)
+	 * another column, which happened with generated columns before v15; or a
+	 * dependency of a table column on the whole table, which happens with
+	 * partitioning.  But we didn't pay attention to sub-object IDs while
+	 * collecting the dependency data, so we can't see that here.)
 	 */
 	if (nLoop == 1)
 	{
@@ -1178,9 +1280,9 @@ repairDependencyLoop(DumpableObject **loop,
 								"there are circular foreign-key constraints among these tables:",
 								nLoop));
 		for (i = 0; i < nLoop; i++)
-			pg_log_generic(PG_LOG_INFO, "  %s", loop[i]->name);
-		pg_log_generic(PG_LOG_INFO, "You might not be able to restore the dump without using --disable-triggers or temporarily dropping the constraints.");
-		pg_log_generic(PG_LOG_INFO, "Consider using a full dump instead of a --data-only dump to avoid this problem.");
+			pg_log_warning_detail("%s", loop[i]->name);
+		pg_log_warning_hint("You might not be able to restore the dump without using --disable-triggers or temporarily dropping the constraints.");
+		pg_log_warning_hint("Consider using a full dump instead of a --data-only dump to avoid this problem.");
 		if (nLoop > 1)
 			removeObjectDependency(loop[0], loop[1]->dumpId);
 		else					/* must be a self-dependency */
@@ -1198,7 +1300,7 @@ repairDependencyLoop(DumpableObject **loop,
 		char		buf[1024];
 
 		describeDumpableObject(loop[i], buf, sizeof(buf));
-		pg_log_generic(PG_LOG_INFO, "  %s", buf);
+		pg_log_warning_detail("%s", buf);
 	}
 
 	if (nLoop > 1)
@@ -1281,6 +1383,11 @@ describeDumpableObject(DumpableObject *obj, char *buf, int bufsize)
 			snprintf(buf, bufsize,
 					 "TABLE %s  (ID %d OID %u)",
 					 obj->name, obj->dumpId, obj->catId.oid);
+			return;
+		case DO_TABLE_ATTACH:
+			snprintf(buf, bufsize,
+					 "TABLE ATTACH %s  (ID %d)",
+					 obj->name, obj->dumpId);
 			return;
 		case DO_ATTRDEF:
 			snprintf(buf, bufsize,
@@ -1426,6 +1533,11 @@ describeDumpableObject(DumpableObject *obj, char *buf, int bufsize)
 		case DO_PUBLICATION_REL:
 			snprintf(buf, bufsize,
 					 "PUBLICATION TABLE (ID %d OID %u)",
+					 obj->dumpId, obj->catId.oid);
+			return;
+		case DO_PUBLICATION_TABLE_IN_SCHEMA:
+			snprintf(buf, bufsize,
+					 "PUBLICATION TABLES IN SCHEMA (ID %d OID %u)",
 					 obj->dumpId, obj->catId.oid);
 			return;
 		case DO_SUBSCRIPTION:

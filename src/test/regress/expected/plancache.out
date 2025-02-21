@@ -284,6 +284,13 @@ insert into test_mode select 1 from generate_series(1,1000) union all select 2;
 create index on test_mode (a);
 analyze test_mode;
 prepare test_mode_pp (int) as select count(*) from test_mode where a = $1;
+select name, generic_plans, custom_plans from pg_prepared_statements
+  where  name = 'test_mode_pp';
+     name     | generic_plans | custom_plans 
+--------------+---------------+--------------
+ test_mode_pp |             0 |            0
+(1 row)
+
 -- up to 5 executions, custom plan is used
 -- explain (costs off) execute test_mode_pp(2);
 -- force generic plan
@@ -315,10 +322,24 @@ execute test_mode_pp(1); -- 4x
   1000
 (1 row)
 
+select name, generic_plans, custom_plans from pg_prepared_statements
+  where  name = 'test_mode_pp';
+     name     | generic_plans | custom_plans 
+--------------+---------------+--------------
+ test_mode_pp |             1 |            5
+(1 row)
+
 execute test_mode_pp(1); -- 5x
  count 
 -------
   1000
+(1 row)
+
+select name, generic_plans, custom_plans from pg_prepared_statements
+  where  name = 'test_mode_pp';
+     name     | generic_plans | custom_plans 
+--------------+---------------+--------------
+ test_mode_pp |             2 |            5
 (1 row)
 
 -- we should now get a really bad plan

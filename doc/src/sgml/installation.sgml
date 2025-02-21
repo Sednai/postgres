@@ -21,7 +21,7 @@ documentation.  See standalone-profile.xsl for details.
   <productname>PostgreSQL</productname> using the source code
   distribution.  If you are installing a pre-packaged distribution,
   such as an RPM or Debian package, ignore this chapter
-  and read the packager's instructions instead.
+  and see <xref linkend="install-binaries" /> instead.
  </para>
 
  <para>
@@ -41,7 +41,7 @@ make
 su
 make install
 adduser postgres
-mkdir /usr/local/pgsql/data
+mkdir -p /usr/local/pgsql/data
 chown postgres /usr/local/pgsql/data
 su - postgres
 /usr/local/pgsql/bin/initdb -D /usr/local/pgsql/data
@@ -77,7 +77,7 @@ su - postgres
        <primary>make</primary>
       </indexterm>
 
-      <acronym>GNU</acronym> <application>make</application> version 3.80 or newer is required; other
+      <acronym>GNU</acronym> <application>make</application> version 3.81 or newer is required; other
       <application>make</application> programs or older <acronym>GNU</acronym> <application>make</application> versions will <emphasis>not</emphasis> work.
       (<acronym>GNU</acronym> <application>make</application> is sometimes installed under
       the name <filename>gmake</filename>.)  To test for <acronym>GNU</acronym>
@@ -196,11 +196,7 @@ su - postgres
       language, you need a <productname>Python</productname>
       installation with the header files and
       the <application>sysconfig</application> module.  The minimum
-      required version is <productname>Python</productname> 2.7.
-      <productname>Python 3</productname> is supported if it's
-      version 3.2 or later; but see
-      <xref linkend="plpython-python23"/>
-      when using Python 3.
+      required version is <productname>Python</productname> 3.2.
      </para>
 
      <para>
@@ -239,7 +235,7 @@ su - postgres
       class="osname">Linux</systemitem>, <systemitem class="osname">NetBSD</systemitem>,
       <systemitem class="osname">Solaris</systemitem>), for other systems you
       can download an add-on package from <ulink
-      url="http://www.gnu.org/software/gettext/"></ulink>.
+      url="https://www.gnu.org/software/gettext/"></ulink>.
       If you are using the <application>Gettext</application> implementation in
       the <acronym>GNU</acronym> C library then you will additionally
       need the <productname>GNU Gettext</productname> package for some
@@ -254,7 +250,7 @@ su - postgres
       encrypted client connections.  <productname>OpenSSL</productname> is
       also required for random number generation on platforms that do not
       have <filename>/dev/urandom</filename> (except Windows).  The minimum
-      version required is 0.9.8.
+      required version is 1.0.1.
      </para>
     </listitem>
 
@@ -263,6 +259,24 @@ su - postgres
       You need <application>Kerberos</application>, <productname>OpenLDAP</productname>,
       and/or <application>PAM</application>, if you want to support authentication
       using those services.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      You need <productname>LZ4</productname>, if you want to support
+      compression of data with that method; see
+      <xref linkend="guc-default-toast-compression"/> and
+      <xref linkend="guc-wal-compression"/>.
+     </para>
+    </listitem>
+
+    <listitem>
+     <para>
+      You need <productname>Zstandard</productname>, if you want to support
+      compression of data with that method; see
+      <xref linkend="guc-wal-compression"/>.
+      The minimum required version is 1.4.0.
      </para>
     </listitem>
 
@@ -331,12 +345,12 @@ su - postgres
 
   <para>
    Also check that you have sufficient disk space. You will need about
-   100 MB for the source tree during compilation and about 20 MB for
+   350 MB for the source tree during compilation and about 60 MB for
    the installation directory. An empty database cluster takes about
-   35 MB; databases take about five times the amount of space that a
+   40 MB; databases take about five times the amount of space that a
    flat text file with the same data would take. If you are going to
    run the regression tests you will temporarily need up to an extra
-   150 MB. Use the <command>df</command> command to check free disk
+   300 MB. Use the <command>df</command> command to check free disk
    space.
   </para>
  </sect1>
@@ -345,28 +359,25 @@ su - postgres
   <title>Getting the Source</title>
 
   <para>
-   The <productname>PostgreSQL</productname> &version; sources can be obtained from the
-   download section of our
-   website: <ulink url="https://www.postgresql.org/download/"></ulink>.  You
-   should get a file named <filename>postgresql-&version;.tar.gz</filename>
-   or <filename>postgresql-&version;.tar.bz2</filename>. After
-   you have obtained the file, unpack it:
+   The <productname>PostgreSQL</productname> source code for released versions
+   can be obtained from the download section of our website:
+   <ulink url="https://www.postgresql.org/ftp/source/"></ulink>.
+   Download the
+   <filename>postgresql-<replaceable>version</replaceable>.tar.gz</filename>
+   or <filename>postgresql-<replaceable>version</replaceable>.tar.bz2</filename>
+   file you're interested in, then unpack it:
 <screen>
-<userinput>gunzip postgresql-&version;.tar.gz</userinput>
-<userinput>tar xf postgresql-&version;.tar</userinput>
+<userinput>tar xf postgresql-<replaceable>version</replaceable>.tar.bz2</userinput>
 </screen>
-   (Use <command>bunzip2</command> instead of <command>gunzip</command> if you
-   have the <filename>.bz2</filename> file.)
    This will create a directory
-   <filename>postgresql-&version;</filename> under the current directory
-   with the <productname>PostgreSQL</productname> sources.
-   Change into that directory for the rest
-   of the installation procedure.
+   <filename>postgresql-<replaceable>version</replaceable></filename> under
+   the current directory with the <productname>PostgreSQL</productname> sources.
+   Change into that directory for the rest of the installation procedure.
   </para>
 
   <para>
-   You can also get the source directly from the version control repository, see
-   <xref linkend="sourcerepo"/>.
+   Alternatively, you can use the Git version control system; see
+   <xref linkend="git"/> for more information.
   </para>
  </sect1>
 
@@ -393,10 +404,14 @@ su - postgres
     This script will run a number of tests to determine values for various
     system dependent variables and detect any quirks of your
     operating system, and finally will create several files in the
-    build tree to record what it found.  You can also run
-    <filename>configure</filename> in a directory outside the source
-    tree, if you want to keep the build directory separate.  This
-    procedure is also called a
+    build tree to record what it found.
+   </para>
+
+   <para>
+    You can also run <filename>configure</filename> in a directory outside
+    the source tree, and then build there, if you want to keep the build
+    directory separate from the original source files.  This procedure is
+    called a
     <indexterm><primary>VPATH</primary></indexterm><firstterm>VPATH</firstterm>
     build.  Here's how:
 <screen>
@@ -416,8 +431,237 @@ su - postgres
 
    <para>
     You can customize the build and installation process by supplying one
-    or more of the following command line options to
-    <filename>configure</filename>:
+    or more command line options to <filename>configure</filename>.
+    Typically you would customize the install location, or the set of
+    optional features that are built.  <filename>configure</filename>
+    has a large number of options, which are described in
+    <xref linkend="configure-options"/>.
+   </para>
+
+   <para>
+    Also, <filename>configure</filename> responds to certain environment
+    variables, as described in <xref linkend="configure-envvars"/>.
+    These provide additional ways to customize the configuration.
+   </para>
+  </step>
+
+  <step id="build">
+   <title>Build</title>
+
+   <para>
+    To start the build, type either of:
+<screen>
+<userinput>make</userinput>
+<userinput>make all</userinput>
+</screen>
+    (Remember to use <acronym>GNU</acronym> <application>make</application>.)
+    The build will take a few minutes depending on your
+    hardware.
+   </para>
+
+  <para>
+   If you want to build everything that can be built, including the
+   documentation (HTML and man pages), and the additional modules
+   (<filename>contrib</filename>), type instead:
+<screen>
+<userinput>make world</userinput>
+</screen>
+  </para>
+
+  <para>
+   If you want to build everything that can be built, including the
+   additional modules (<filename>contrib</filename>), but without
+   the documentation, type instead:
+<screen>
+<userinput>make world-bin</userinput>
+</screen>
+   </para>
+
+   <para>
+    If you want to invoke the build from another makefile rather than
+    manually, you must unset <varname>MAKELEVEL</varname> or set it to zero,
+    for instance like this:
+<programlisting>
+build-postgresql:
+        $(MAKE) -C postgresql MAKELEVEL=0 all
+</programlisting>
+    Failure to do that can lead to strange error messages, typically about
+    missing header files.
+   </para>
+  </step>
+
+  <step>
+   <title>Regression Tests</title>
+
+   <indexterm>
+    <primary>regression test</primary>
+   </indexterm>
+
+   <para>
+    If you want to test the newly built server before you install it,
+    you can run the regression tests at this point. The regression
+    tests are a test suite to verify that <productname>PostgreSQL</productname>
+    runs on your machine in the way the developers expected it
+    to. Type:
+<screen>
+<userinput>make check</userinput>
+</screen>
+    (This won't work as root; do it as an unprivileged user.)
+    See <xref linkend="regress"/> for
+    detailed information about interpreting the test results. You can
+    repeat this test at any later time by issuing the same command.
+   </para>
+  </step>
+
+  <step id="install">
+   <title>Installing the Files</title>
+
+   <note>
+    <para>
+     If you are upgrading an existing system be sure to read
+     <xref linkend="upgrading"/>,
+     which has instructions about upgrading a
+     cluster.
+    </para>
+   </note>
+
+   <para>
+    To install <productname>PostgreSQL</productname> enter:
+<screen>
+<userinput>make install</userinput>
+</screen>
+    This will install files into the directories that were specified
+    in <xref linkend="configure"/>. Make sure that you have appropriate
+    permissions to write into that area. Normally you need to do this
+    step as root. Alternatively, you can create the target
+    directories in advance and arrange for appropriate permissions to
+    be granted.
+   </para>
+
+   <para>
+    To install the documentation (HTML and man pages), enter:
+<screen>
+<userinput>make install-docs</userinput>
+</screen>
+   </para>
+
+   <para>
+    If you built the world above, type instead:
+<screen>
+<userinput>make install-world</userinput>
+</screen>
+    This also installs the documentation.
+   </para>
+
+   <para>
+    If you built the world without the documentation above, type instead:
+<screen>
+<userinput>make install-world-bin</userinput>
+</screen>
+   </para>
+
+   <para>
+    You can use <literal>make install-strip</literal> instead of
+    <literal>make install</literal> to strip the executable files and
+    libraries as they are installed.  This will save some space.  If
+    you built with debugging support, stripping will effectively
+    remove the debugging support, so it should only be done if
+    debugging is no longer needed.  <literal>install-strip</literal>
+    tries to do a reasonable job saving space, but it does not have
+    perfect knowledge of how to strip every unneeded byte from an
+    executable file, so if you want to save all the disk space you
+    possibly can, you will have to do manual work.
+   </para>
+
+   <para>
+    The standard installation provides all the header files needed for client
+    application development as well as for server-side program
+    development, such as custom functions or data types written in C.
+   </para>
+
+   <formalpara>
+    <title>Client-only installation:</title>
+    <para>
+     If you want to install only the client applications and
+     interface libraries, then you can use these commands:
+<screen>
+<userinput>make -C src/bin install</userinput>
+<userinput>make -C src/include install</userinput>
+<userinput>make -C src/interfaces install</userinput>
+<userinput>make -C doc install</userinput>
+</screen>
+    <filename>src/bin</filename> has a few binaries for server-only use,
+    but they are small.
+    </para>
+   </formalpara>
+  </step>
+  </procedure>
+
+  <formalpara>
+   <title>Uninstallation:</title>
+   <para>
+    To undo the installation use the command <command>make
+    uninstall</command>. However, this will not remove any created directories.
+   </para>
+  </formalpara>
+
+  <formalpara>
+   <title>Cleaning:</title>
+
+   <para>
+    After the installation you can free disk space by removing the built
+    files from the source tree with the command <command>make
+    clean</command>. This will preserve the files made by the <command>configure</command>
+    program, so that you can rebuild everything with <command>make</command>
+    later on. To reset the source tree to the state in which it was
+    distributed, use <command>make distclean</command>. If you are going to
+    build for several platforms within the same source tree you must do
+    this and re-configure for each platform.  (Alternatively, use
+    a separate build tree for each platform, so that the source tree
+    remains unmodified.)
+   </para>
+  </formalpara>
+
+  <para>
+   If you perform a build and then discover that your <command>configure</command>
+   options were wrong, or if you change anything that <command>configure</command>
+   investigates (for example, software upgrades), then it's a good
+   idea to do <command>make distclean</command> before reconfiguring and
+   rebuilding.  Without this, your changes in configuration choices
+   might not propagate everywhere they need to.
+  </para>
+
+  <sect2 id="configure-options">
+   <title><filename>configure</filename> Options</title>
+
+   <indexterm zone="configure-options">
+    <primary>configure options</primary>
+   </indexterm>
+
+   <para>
+    <command>configure</command>'s command line options are explained below.
+    This list is not exhaustive (use <literal>./configure --help</literal>
+    to get one that is).  The options not covered here are meant for
+    advanced use-cases such as cross-compilation, and are documented in
+    the standard Autoconf documentation.
+   </para>
+
+   <sect3 id="configure-options-locations">
+    <title>Installation Locations</title>
+
+     <para>
+      These options control where <literal>make install</literal> will put
+      the files.  The <option>--prefix</option> option is sufficient for
+      most cases.  If you have special needs, you can customize the
+      installation subdirectories with the other options described in this
+      section.  Beware however that changing the relative locations of the
+      different subdirectories may render the installation non-relocatable,
+      meaning you won't be able to move it after installation.
+      (The <literal>man</literal> and <literal>doc</literal> locations are
+      not affected by this restriction.)  For relocatable installs, you
+      might want to use the <literal>--disable-rpath</literal> option
+      described later.
+     </para>
 
      <variablelist>
       <varlistentry>
@@ -429,22 +673,6 @@ su - postgres
          files will be installed into various subdirectories; no files
          will ever be installed directly into the
          <replaceable>PREFIX</replaceable> directory.
-        </para>
-
-        <para>
-         If you have special needs, you can also customize the
-         individual subdirectories with the following options. However,
-         if you leave these with their defaults, the installation will be
-         relocatable, meaning you can move the directory after
-         installation. (The <literal>man</literal> and <literal>doc</literal>
-         locations are not affected by this.)
-        </para>
-
-        <para>
-         For relocatable installs, you might want to use
-         <filename>configure</filename>'s <literal>--disable-rpath</literal>
-         option.  Also, you will need to tell the operating system how
-         to find the shared libraries.
         </para>
        </listitem>
       </varlistentry>
@@ -605,56 +833,21 @@ su - postgres
        for dynamically loadable modules.
       </para>
      </note>
-    </para>
+
+   </sect3>
+
+   <sect3 id="configure-options-features">
+    <title><productname>PostgreSQL</productname> Features</title>
 
     <para>
+     The options described in this section enable building of
+     various <productname>PostgreSQL</productname> features that are not
+     built by default.  Most of these are non-default only because they
+     require additional software, as described in
+     <xref linkend="install-requirements"/>.
+    </para>
+
      <variablelist>
-      <varlistentry>
-       <term><option>--with-extra-version=<replaceable>STRING</replaceable></option></term>
-       <listitem>
-        <para>
-         Append <replaceable>STRING</replaceable> to the PostgreSQL version number.  You
-         can use this, for example, to mark binaries built from unreleased Git
-         snapshots or containing custom patches with an extra version string
-         such as a <command>git describe</command> identifier or a
-         distribution package release number.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--with-includes=<replaceable>DIRECTORIES</replaceable></option></term>
-       <listitem>
-        <para>
-         <replaceable>DIRECTORIES</replaceable> is a colon-separated list of
-         directories that will be added to the list the compiler
-         searches for header files. If you have optional packages
-         (such as GNU <application>Readline</application>) installed in a non-standard
-         location,
-         you have to use this option and probably also the corresponding
-         <option>--with-libraries</option> option.
-        </para>
-        <para>
-         Example: <literal>--with-includes=/opt/gnu/include:/usr/sup/include</literal>.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--with-libraries=<replaceable>DIRECTORIES</replaceable></option></term>
-       <listitem>
-        <para>
-         <replaceable>DIRECTORIES</replaceable> is a colon-separated list of
-         directories to search for libraries. You will probably have
-         to use this option (and the corresponding
-         <option>--with-includes</option> option) if you have packages
-         installed in non-standard locations.
-        </para>
-        <para>
-         Example: <literal>--with-libraries=/opt/gnu/lib:/usr/sup/lib</literal>.
-        </para>
-       </listitem>
-      </varlistentry>
 
       <varlistentry>
        <term><option>--enable-nls<optional>=<replaceable>LANGUAGES</replaceable></optional></option></term>
@@ -674,22 +867,7 @@ su - postgres
 
         <para>
          To use this option, you will need an implementation of the
-         <application>Gettext</application> API; see above.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--with-pgport=<replaceable>NUMBER</replaceable></option></term>
-       <listitem>
-        <para>
-         Set <replaceable>NUMBER</replaceable> as the default port number for
-         server and clients. The default is 5432. The port can always
-         be changed later on, but if you specify it here then both
-         server and clients will have the same default compiled in,
-         which can be very convenient.  Usually the only good reason
-         to select a non-default value is if you intend to run multiple
-         <productname>PostgreSQL</productname> servers on the same machine.
+         <application>Gettext</application> API.
         </para>
        </listitem>
       </varlistentry>
@@ -730,38 +908,41 @@ su - postgres
          interfacing to Tcl. This file is normally found automatically
          at a well-known location, but if you want to use a different
          version of Tcl you can specify the directory in which to look
-         for it.
+         for <filename>tclConfig.sh</filename>.
         </para>
        </listitem>
       </varlistentry>
 
       <varlistentry>
-       <term><option>--with-gssapi</option></term>
+       <term><option>--with-icu</option></term>
        <listitem>
         <para>
-         Build with support for GSSAPI authentication. On many
-         systems, the GSSAPI (usually a part of the Kerberos installation)
-         system is not installed in a location
-         that is searched by default (e.g., <filename>/usr/include</filename>,
-         <filename>/usr/lib</filename>), so you must use the options
-         <option>--with-includes</option> and <option>--with-libraries</option> in
-         addition to this option.  <filename>configure</filename> will check
-         for the required header files and libraries to make sure that
-         your GSSAPI installation is sufficient before proceeding.
+         Build with support for
+         the <productname>ICU</productname><indexterm><primary>ICU</primary></indexterm>
+         library, enabling use of ICU collation
+         features<phrase condition="standalone-ignore"> (see
+         <xref linkend="collation"/>)</phrase>.
+         This requires the <productname>ICU4C</productname> package
+         to be installed.  The minimum required version
+         of <productname>ICU4C</productname> is currently 4.2.
         </para>
-       </listitem>
-      </varlistentry>
 
-      <varlistentry>
-       <term><option>--with-krb-srvnam=<replaceable>NAME</replaceable></option></term>
-       <listitem>
         <para>
-         The default name of the Kerberos service principal used
-         by GSSAPI.
-         <literal>postgres</literal> is the default. There's usually no
-         reason to change this unless you have a Windows environment,
-         in which case it must be set to upper case
-         <literal>POSTGRES</literal>.
+         By default,
+         <productname>pkg-config</productname><indexterm><primary>pkg-config</primary></indexterm>
+         will be used to find the required compilation options.  This is
+         supported for <productname>ICU4C</productname> version 4.6 and later.
+         For older versions, or if <productname>pkg-config</productname> is
+         not available, the variables <envar>ICU_CFLAGS</envar>
+         and <envar>ICU_LIBS</envar> can be specified
+         to <filename>configure</filename>, like in this example:
+<programlisting>
+./configure ... --with-icu ICU_CFLAGS='-I/some/where/include' ICU_LIBS='-L/some/where/lib -licui18n -licuuc -licudata'
+</programlisting>
+         (If <productname>ICU4C</productname> is in the default search path
+         for the compiler, then you still need to specify nonempty strings in
+         order to avoid use of <productname>pkg-config</productname>, for
+         example, <literal>ICU_CFLAGS=' '</literal>.)
         </para>
        </listitem>
       </varlistentry>
@@ -783,9 +964,10 @@ su - postgres
          will be used to find the required compilation options.
          <command>llvm-config</command>, and then
          <command>llvm-config-$major-$minor</command> for all supported
-         versions, will be searched on <envar>PATH</envar>. If that would not
-         yield the correct binary, use <envar>LLVM_CONFIG</envar> to specify a
-         path to the correct <command>llvm-config</command>. For example
+         versions, will be searched for in your <envar>PATH</envar>.  If
+         that would not yield the desired program,
+         use <envar>LLVM_CONFIG</envar> to specify a path to the
+         correct <command>llvm-config</command>. For example
 <programlisting>
 ./configure ... --with-llvm LLVM_CONFIG='/path/to/llvm/bin/llvm-config'
 </programlisting>
@@ -802,38 +984,25 @@ su - postgres
       </varlistentry>
 
       <varlistentry>
-       <term><option>--with-icu</option></term>
+       <term><option>--with-lz4</option></term>
        <listitem>
         <para>
-         Build with support for
-         the <productname>ICU</productname><indexterm><primary>ICU</primary></indexterm>
-         library.  This requires the <productname>ICU4C</productname> package
-         to be installed.  The minimum required version
-         of <productname>ICU4C</productname> is currently 4.2.
-        </para>
-
-        <para>
-         By default,
-         <productname>pkg-config</productname><indexterm><primary>pkg-config</primary></indexterm>
-         will be used to find the required compilation options.  This is
-         supported for <productname>ICU4C</productname> version 4.6 and later.
-         For older versions, or if <productname>pkg-config</productname> is
-         not available, the variables <envar>ICU_CFLAGS</envar>
-         and <envar>ICU_LIBS</envar> can be specified
-         to <filename>configure</filename>, like in this example:
-<programlisting>
-./configure ... --with-icu ICU_CFLAGS='-I/some/where/include' ICU_LIBS='-L/some/where/lib -licui18n -licuuc -licudata'
-</programlisting>
-         (If <productname>ICU4C</productname> is in the default search path
-         for the compiler, then you still need to specify a nonempty string in
-         order to avoid use of <productname>pkg-config</productname>, for
-         example, <literal>ICU_CFLAGS=' '</literal>.)
+         Build with <productname>LZ4</productname> compression support.
         </para>
        </listitem>
       </varlistentry>
 
       <varlistentry>
-       <term><option>--with-openssl</option>
+       <term><option>--with-zstd</option></term>
+       <listitem>
+        <para>
+         Build with <productname>Zstandard</productname> compression support.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-ssl=<replaceable>LIBRARY</replaceable></option>
        <indexterm>
         <primary>OpenSSL</primary>
         <seealso>SSL</seealso>
@@ -842,11 +1011,57 @@ su - postgres
        <listitem>
         <para>
          Build with support for <acronym>SSL</acronym> (encrypted)
-         connections. This requires the <productname>OpenSSL</productname>
-         package to be installed.  <filename>configure</filename> will check
-         for the required header files and libraries to make sure that
-         your <productname>OpenSSL</productname> installation is sufficient
+         connections. The only <replaceable>LIBRARY</replaceable>
+         supported is <option>openssl</option>. This requires the
+         <productname>OpenSSL</productname> package to be installed.
+         <filename>configure</filename> will check for the required
+         header files and libraries to make sure that your
+         <productname>OpenSSL</productname> installation is sufficient
          before proceeding.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-openssl</option></term>
+       <listitem>
+        <para>
+         Obsolete equivalent of <literal>--with-ssl=openssl</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-gssapi</option></term>
+       <listitem>
+        <para>
+         Build with support for GSSAPI authentication. On many systems, the
+         GSSAPI system (usually a part of the Kerberos installation) is not
+         installed in a location
+         that is searched by default (e.g., <filename>/usr/include</filename>,
+         <filename>/usr/lib</filename>), so you must use the options
+         <option>--with-includes</option> and <option>--with-libraries</option> in
+         addition to this option.  <filename>configure</filename> will check
+         for the required header files and libraries to make sure that
+         your GSSAPI installation is sufficient before proceeding.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-ldap</option></term>
+       <listitem>
+        <para>
+         Build with <acronym>LDAP</acronym><indexterm><primary>LDAP</primary></indexterm>
+         support for authentication and connection parameter lookup (see
+         <phrase id="install-ldap-links"><xref linkend="libpq-ldap"/> and
+         <xref linkend="auth-ldap"/></phrase> for more information). On Unix,
+         this requires the <productname>OpenLDAP</productname> package to be
+         installed. On Windows, the default <productname>WinLDAP</productname>
+         library is used.  <filename>configure</filename> will check for the required
+         header files and libraries to make sure that your
+         <productname>OpenLDAP</productname> installation is sufficient before
+         proceeding.
         </para>
        </listitem>
       </varlistentry>
@@ -873,59 +1088,16 @@ su - postgres
       </varlistentry>
 
       <varlistentry>
-       <term><option>--with-ldap</option></term>
-       <listitem>
-        <para>
-         Build with <acronym>LDAP</acronym><indexterm><primary>LDAP</primary></indexterm>
-         support for authentication and connection parameter lookup (see
-         <phrase id="install-ldap-links"><xref linkend="libpq-ldap"/> and
-         <xref linkend="auth-ldap"/></phrase> for more information). On Unix,
-         this requires the <productname>OpenLDAP</productname> package to be
-         installed. On Windows, the default <productname>WinLDAP</productname>
-         library is used.  <filename>configure</filename> will check for the required
-         header files and libraries to make sure that your
-         <productname>OpenLDAP</productname> installation is sufficient before
-         proceeding.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
        <term><option>--with-systemd</option></term>
        <listitem>
         <para>
          Build with support
          for <application>systemd</application><indexterm><primary>systemd</primary></indexterm>
-         service notifications.  This improves integration if the server binary
+         service notifications.  This improves integration if the server
          is started under <application>systemd</application> but has no impact
          otherwise<phrase condition="standalone-ignore">; see <xref linkend="server-start"/> for more
          information</phrase>.  <application>libsystemd</application> and the
-         associated header files need to be installed to be able to use this
-         option.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--without-readline</option></term>
-       <listitem>
-        <para>
-         Prevents use of the <application>Readline</application> library
-         (and <application>libedit</application> as well).  This option disables
-         command-line editing and history in
-         <application>psql</application>, so it is not recommended.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--with-libedit-preferred</option></term>
-       <listitem>
-        <para>
-         Favors the use of the BSD-licensed <application>libedit</application> library
-         rather than GPL-licensed <application>Readline</application>.  This option
-         is significant only if you have both libraries installed; the
-         default in that case is to use <application>Readline</application>.
+         associated header files need to be installed to use this option.
         </para>
        </listitem>
       </varlistentry>
@@ -934,8 +1106,9 @@ su - postgres
        <term><option>--with-bonjour</option></term>
        <listitem>
         <para>
-         Build with Bonjour support.  This requires Bonjour support
-         in your operating system.  Recommended on macOS.
+         Build with support for Bonjour automatic service discovery.
+         This requires Bonjour support in your operating system.
+         Recommended on macOS.
         </para>
        </listitem>
       </varlistentry>
@@ -1020,95 +1193,66 @@ su - postgres
        <term><option>--with-libxslt</option></term>
        <listitem>
         <para>
-         Use libxslt when building the
+         Build with libxslt, enabling the
          <xref linkend="xml2"/>
-         module.  <application>xml2</application> relies on this library
-         to perform XSL transformations of XML.
+         module to perform XSL transformations of XML.
+         <option>--with-libxml</option> must be specified as well.
+        </para>
+       </listitem>
+      </varlistentry>
+
+     </variablelist>
+
+   </sect3>
+
+   <sect3 id="configure-options-anti-features">
+    <title>Anti-Features</title>
+
+    <para>
+     The options described in this section allow disabling
+     certain <productname>PostgreSQL</productname> features that are built
+     by default, but which might need to be turned off if the required
+     software or system features are not available.  Using these options is
+     not recommended unless really necessary.
+    </para>
+
+     <variablelist>
+
+      <varlistentry>
+       <term><option>--without-readline</option></term>
+       <listitem>
+        <para>
+         Prevents use of the <application>Readline</application> library
+         (and <application>libedit</application> as well).  This option disables
+         command-line editing and history in
+         <application>psql</application>.
         </para>
        </listitem>
       </varlistentry>
 
       <varlistentry>
-       <term><option>--disable-float4-byval</option></term>
+       <term><option>--with-libedit-preferred</option></term>
        <listitem>
         <para>
-         Disable passing float4 values <quote>by value</quote>, causing them
-         to be passed <quote>by reference</quote> instead.  This option costs
-         performance, but may be needed for compatibility with old
-         user-defined functions that are written in C and use the
-         <quote>version 0</quote> calling convention.  A better long-term
-         solution is to update any such functions to use the
-         <quote>version 1</quote> calling convention.
+         Favors the use of the BSD-licensed <application>libedit</application> library
+         rather than GPL-licensed <application>Readline</application>.  This option
+         is significant only if you have both libraries installed; the
+         default in that case is to use <application>Readline</application>.
         </para>
        </listitem>
       </varlistentry>
 
       <varlistentry>
-       <term><option>--disable-float8-byval</option></term>
+       <term><option>--without-zlib</option></term>
        <listitem>
         <para>
-         Disable passing float8 values <quote>by value</quote>, causing them
-         to be passed <quote>by reference</quote> instead.  This option costs
-         performance, but may be needed for compatibility with old
-         user-defined functions that are written in C and use the
-         <quote>version 0</quote> calling convention.  A better long-term
-         solution is to update any such functions to use the
-         <quote>version 1</quote> calling convention.
-         Note that this option affects not only float8, but also int8 and some
-         related types such as timestamp.
-         On 32-bit platforms, <option>--disable-float8-byval</option> is the default
-         and it is not allowed to select <option>--enable-float8-byval</option>.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--with-segsize=<replaceable>SEGSIZE</replaceable></option></term>
-       <listitem>
-        <para>
-         Set the <firstterm>segment size</firstterm>, in gigabytes.  Large tables are
-         divided into multiple operating-system files, each of size equal
-         to the segment size.  This avoids problems with file size limits
-         that exist on many platforms.  The default segment size, 1 gigabyte,
-         is safe on all supported platforms.  If your operating system has
-         <quote>largefile</quote> support (which most do, nowadays), you can use
-         a larger segment size.  This can be helpful to reduce the number of
-         file descriptors consumed when working with very large tables.
-         But be careful not to select a value larger than is supported
-         by your platform and the file systems you intend to use.  Other
-         tools you might wish to use, such as <application>tar</application>, could
-         also set limits on the usable file size.
-         It is recommended, though not absolutely required, that this value
-         be a power of 2.
-         Note that changing this value requires an initdb.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--with-blocksize=<replaceable>BLOCKSIZE</replaceable></option></term>
-       <listitem>
-        <para>
-         Set the <firstterm>block size</firstterm>, in kilobytes.  This is the unit
-         of storage and I/O within tables.  The default, 8 kilobytes,
-         is suitable for most situations; but other values may be useful
-         in special cases.
-         The value must be a power of 2 between 1 and 32 (kilobytes).
-         Note that changing this value requires an initdb.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--with-wal-blocksize=<replaceable>BLOCKSIZE</replaceable></option></term>
-       <listitem>
-        <para>
-         Set the <firstterm>WAL block size</firstterm>, in kilobytes.  This is the unit
-         of storage and I/O within the WAL log.  The default, 8 kilobytes,
-         is suitable for most situations; but other values may be useful
-         in special cases.
-         The value must be a power of 2 between 1 and 64 (kilobytes).
-         Note that changing this value requires an initdb.
+         <indexterm>
+          <primary>zlib</primary>
+         </indexterm>
+         Prevents use of the <application>Zlib</application> library.
+         This disables
+         support for compressed archives in <application>pg_dump</application>
+         and <application>pg_restore</application>.
         </para>
        </listitem>
       </varlistentry>
@@ -1119,12 +1263,24 @@ su - postgres
         <para>
          Allow the build to succeed even if <productname>PostgreSQL</productname>
          has no CPU spinlock support for the platform.  The lack of
-         spinlock support will result in poor performance; therefore,
+         spinlock support will result in very poor performance; therefore,
          this option should only be used if the build aborts and
          informs you that the platform lacks spinlock support. If this
          option is required to build <productname>PostgreSQL</productname> on
          your platform, please report the problem to the
          <productname>PostgreSQL</productname> developers.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--disable-atomics</option></term>
+       <listitem>
+        <para>
+         Disable use of CPU atomic operations.  This option does nothing on
+         platforms that lack such operations.  On platforms that do have
+         them, this will result in poor performance.  This option is only
+         useful for debugging or making performance comparisons.
         </para>
        </listitem>
       </varlistentry>
@@ -1136,7 +1292,51 @@ su - postgres
          Disable the thread-safety of client libraries.  This prevents
          concurrent threads in <application>libpq</application> and
          <application>ECPG</application> programs from safely controlling
-         their private connection handles.
+         their private connection handles.  Use this only on platforms
+         with deficient threading support.
+        </para>
+       </listitem>
+      </varlistentry>
+
+     </variablelist>
+
+   </sect3>
+
+   <sect3 id="configure-options-build-process">
+    <title>Build Process Details</title>
+
+     <variablelist>
+
+      <varlistentry>
+       <term><option>--with-includes=<replaceable>DIRECTORIES</replaceable></option></term>
+       <listitem>
+        <para>
+         <replaceable>DIRECTORIES</replaceable> is a colon-separated list of
+         directories that will be added to the list the compiler
+         searches for header files. If you have optional packages
+         (such as GNU <application>Readline</application>) installed in a non-standard
+         location,
+         you have to use this option and probably also the corresponding
+         <option>--with-libraries</option> option.
+        </para>
+        <para>
+         Example: <literal>--with-includes=/opt/gnu/include:/usr/sup/include</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-libraries=<replaceable>DIRECTORIES</replaceable></option></term>
+       <listitem>
+        <para>
+         <replaceable>DIRECTORIES</replaceable> is a colon-separated list of
+         directories to search for libraries. You will probably have
+         to use this option (and the corresponding
+         <option>--with-includes</option> option) if you have packages
+         installed in non-standard locations.
+        </para>
+        <para>
+         Example: <literal>--with-libraries=/opt/gnu/lib:/usr/sup/lib</literal>.
         </para>
        </listitem>
       </varlistentry>
@@ -1182,20 +1382,163 @@ su - postgres
       </varlistentry>
 
       <varlistentry>
-       <term><option>--without-zlib</option></term>
+       <term><option>--with-extra-version=<replaceable>STRING</replaceable></option></term>
        <listitem>
         <para>
-         <indexterm>
-          <primary>zlib</primary>
-         </indexterm>
-         Prevents use of the <application>Zlib</application> library.  This disables
-         support for compressed archives in <application>pg_dump</application>
-         and <application>pg_restore</application>.
-         This option is only intended for those rare systems where this
-         library is not available.
+         Append <replaceable>STRING</replaceable> to the PostgreSQL version number.  You
+         can use this, for example, to mark binaries built from unreleased Git
+         snapshots or containing custom patches with an extra version string,
+         such as a <command>git describe</command> identifier or a
+         distribution package release number.
         </para>
        </listitem>
       </varlistentry>
+
+      <varlistentry>
+       <term><option>--disable-rpath</option></term>
+       <listitem>
+        <para>
+         Do not mark <productname>PostgreSQL</productname>'s executables
+         to indicate that they should search for shared libraries in the
+         installation's library directory (see <option>--libdir</option>).
+         On most platforms, this marking uses an absolute path to the
+         library directory, so that it will be unhelpful if you relocate
+         the installation later.  However, you will then need to provide
+         some other way for the executables to find the shared libraries.
+         Typically this requires configuring the operating system's
+         dynamic linker to search the library directory; see
+         <xref linkend="install-post-shlibs"/> for more detail.
+        </para>
+       </listitem>
+      </varlistentry>
+
+     </variablelist>
+
+   </sect3>
+
+   <sect3 id="configure-options-misc">
+    <title>Miscellaneous</title>
+
+    <para>
+     It's fairly common, particularly for test builds, to adjust the
+     default port number with <option>--with-pgport</option>.
+     The other options in this section are recommended only for advanced
+     users.
+    </para>
+
+     <variablelist>
+
+      <varlistentry>
+       <term><option>--with-pgport=<replaceable>NUMBER</replaceable></option></term>
+       <listitem>
+        <para>
+         Set <replaceable>NUMBER</replaceable> as the default port number for
+         server and clients. The default is 5432. The port can always
+         be changed later on, but if you specify it here then both
+         server and clients will have the same default compiled in,
+         which can be very convenient.  Usually the only good reason
+         to select a non-default value is if you intend to run multiple
+         <productname>PostgreSQL</productname> servers on the same machine.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-krb-srvnam=<replaceable>NAME</replaceable></option></term>
+       <listitem>
+        <para>
+         The default name of the Kerberos service principal used
+         by GSSAPI.
+         <literal>postgres</literal> is the default. There's usually no
+         reason to change this unless you are building for a Windows
+         environment, in which case it must be set to upper case
+         <literal>POSTGRES</literal>.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-segsize=<replaceable>SEGSIZE</replaceable></option></term>
+       <listitem>
+        <para>
+         Set the <firstterm>segment size</firstterm>, in gigabytes.  Large tables are
+         divided into multiple operating-system files, each of size equal
+         to the segment size.  This avoids problems with file size limits
+         that exist on many platforms.  The default segment size, 1 gigabyte,
+         is safe on all supported platforms.  If your operating system has
+         <quote>largefile</quote> support (which most do, nowadays), you can use
+         a larger segment size.  This can be helpful to reduce the number of
+         file descriptors consumed when working with very large tables.
+         But be careful not to select a value larger than is supported
+         by your platform and the file systems you intend to use.  Other
+         tools you might wish to use, such as <application>tar</application>, could
+         also set limits on the usable file size.
+         It is recommended, though not absolutely required, that this value
+         be a power of 2.
+         Note that changing this value breaks on-disk database compatibility,
+         meaning you cannot use <command>pg_upgrade</command> to upgrade to
+         a build with a different segment size.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-blocksize=<replaceable>BLOCKSIZE</replaceable></option></term>
+       <listitem>
+        <para>
+         Set the <firstterm>block size</firstterm>, in kilobytes.  This is the unit
+         of storage and I/O within tables.  The default, 8 kilobytes,
+         is suitable for most situations; but other values may be useful
+         in special cases.
+         The value must be a power of 2 between 1 and 32 (kilobytes).
+         Note that changing this value breaks on-disk database compatibility,
+         meaning you cannot use <command>pg_upgrade</command> to upgrade to
+         a build with a different block size.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--with-wal-blocksize=<replaceable>BLOCKSIZE</replaceable></option></term>
+       <listitem>
+        <para>
+         Set the <firstterm>WAL block size</firstterm>, in kilobytes.  This is the unit
+         of storage and I/O within the WAL log.  The default, 8 kilobytes,
+         is suitable for most situations; but other values may be useful
+         in special cases.
+         The value must be a power of 2 between 1 and 64 (kilobytes).
+         Note that changing this value breaks on-disk database compatibility,
+         meaning you cannot use <command>pg_upgrade</command> to upgrade to
+         a build with a different WAL block size.
+        </para>
+       </listitem>
+      </varlistentry>
+
+     </variablelist>
+
+   </sect3>
+
+   <sect3 id="configure-options-devel">
+    <title>Developer Options</title>
+
+    <para>
+     Most of the options in this section are only of interest for
+     developing or debugging <productname>PostgreSQL</productname>.
+     They are not recommended for production builds, except
+     for <option>--enable-debug</option>, which can be useful to enable
+     detailed bug reports in the unlucky event that you encounter a bug.
+     On platforms supporting DTrace, <option>--enable-dtrace</option>
+     may also be reasonable to use in production.
+    </para>
+
+    <para>
+     When building an installation that will be used to develop code inside
+     the server, it is recommended to use at least the
+     options <option>--enable-debug</option>
+     and <option>--enable-cassert</option>.
+    </para>
+
+     <variablelist>
 
       <varlistentry>
        <term><option>--enable-debug</option></term>
@@ -1211,6 +1554,50 @@ su - postgres
          recommended for production installations only if you use GCC.
          But you should always have it on if you are doing development work
          or running a beta version.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--enable-cassert</option></term>
+       <listitem>
+        <para>
+         Enables <firstterm>assertion</firstterm> checks in the server, which test for
+         many <quote>cannot happen</quote> conditions.  This is invaluable for
+         code development purposes, but the tests can slow down the
+         server significantly.
+         Also, having the tests turned on won't necessarily enhance the
+         stability of your server!  The assertion checks are not categorized
+         for severity, and so what might be a relatively harmless bug will
+         still lead to server restarts if it triggers an assertion
+         failure.  This option is not recommended for production use, but
+         you should have it on for development work or when running a beta
+         version.
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--enable-tap-tests</option></term>
+       <listitem>
+        <para>
+         Enable tests using the Perl TAP tools.  This requires a Perl
+         installation and the Perl module <literal>IPC::Run</literal>.
+         <phrase condition="standalone-ignore">See <xref linkend="regress-tap"/> for more information.</phrase>
+        </para>
+       </listitem>
+      </varlistentry>
+
+      <varlistentry>
+       <term><option>--enable-depend</option></term>
+       <listitem>
+        <para>
+         Enables automatic dependency tracking.  With this option, the
+         makefiles are set up so that all affected object files will
+         be rebuilt when any header file is changed.  This is useful
+         if you are doing development work, but is just wasted overhead
+         if you intend only to compile once and install.  At present,
+         this option only works with GCC.
         </para>
        </listitem>
       </varlistentry>
@@ -1236,41 +1623,9 @@ su - postgres
         <para>
          If using GCC, all programs and libraries are compiled so they
          can be profiled.  On backend exit, a subdirectory will be created
-         that contains the <filename>gmon.out</filename> file for use in profiling.
+         that contains the <filename>gmon.out</filename> file containing
+         profile data.
          This option is for use only with GCC and when doing development work.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--enable-cassert</option></term>
-       <listitem>
-        <para>
-         Enables <firstterm>assertion</firstterm> checks in the server, which test for
-         many <quote>cannot happen</quote> conditions.  This is invaluable for
-         code development purposes, but the tests can slow down the
-         server significantly.
-         Also, having the tests turned on won't necessarily enhance the
-         stability of your server!  The assertion checks are not categorized
-         for severity, and so what might be a relatively harmless bug will
-         still lead to server restarts if it triggers an assertion
-         failure.  This option is not recommended for production use, but
-         you should have it on for development work or when running a beta
-         version.
-        </para>
-       </listitem>
-      </varlistentry>
-
-      <varlistentry>
-       <term><option>--enable-depend</option></term>
-       <listitem>
-        <para>
-         Enables automatic dependency tracking.  With this option, the
-         makefiles are set up so that all affected object files will
-         be rebuilt when any header file is changed.  This is useful
-         if you are doing development work, but is just wasted overhead
-         if you intend only to compile once and install.  At present,
-         this option only works with GCC.
         </para>
        </listitem>
       </varlistentry>
@@ -1293,7 +1648,7 @@ su - postgres
          environment variable <envar>DTRACE</envar> can be set.  This
          will often be necessary because <command>dtrace</command> is
          typically installed under <filename>/usr/sbin</filename>,
-         which might not be in the path.
+         which might not be in your <envar>PATH</envar>.
         </para>
 
         <para>
@@ -1301,7 +1656,7 @@ su - postgres
          can be specified in the environment variable
          <envar>DTRACEFLAGS</envar>.  On Solaris,
          to include DTrace support in a 64-bit binary, you must specify
-         <literal>DTRACEFLAGS="-64"</literal> to configure.  For example,
+         <literal>DTRACEFLAGS="-64"</literal>.  For example,
          using the GCC compiler:
 <screen>
 ./configure CC='gcc -m64' --enable-dtrace DTRACEFLAGS='-64' ...
@@ -1313,36 +1668,50 @@ su - postgres
         </para>
        </listitem>
       </varlistentry>
-
-      <varlistentry>
-       <term><option>--enable-tap-tests</option></term>
-       <listitem>
-        <para>
-         Enable tests using the Perl TAP tools.  This requires a Perl
-         installation and the Perl module <literal>IPC::Run</literal>.
-         <phrase condition="standalone-ignore">See <xref linkend="regress-tap"/> for more information.</phrase>
-        </para>
-       </listitem>
-      </varlistentry>
      </variablelist>
-    </para>
+
+   </sect3>
+
+  </sect2>
+
+  <sect2 id="configure-envvars">
+   <title><filename>configure</filename> Environment Variables</title>
+
+   <indexterm zone="configure-envvars">
+    <primary>configure environment variables</primary>
+   </indexterm>
 
     <para>
-     If you prefer a C compiler different from the one
-     <filename>configure</filename> picks, you can set the
-     environment variable <envar>CC</envar> to the program of your choice.
-     By default, <filename>configure</filename> will pick
-     <filename>gcc</filename> if available, else the platform's
-     default (usually <filename>cc</filename>).  Similarly, you can override the
-     default compiler flags if needed with the <envar>CFLAGS</envar> variable.
-    </para>
-
-    <para>
+     In addition to the ordinary command-line options described above,
+     <filename>configure</filename> responds to a number of environment
+     variables.
      You can specify environment variables on the
      <filename>configure</filename> command line, for example:
 <screen>
 <userinput>./configure CC=/opt/bin/gcc CFLAGS='-O2 -pipe'</userinput>
 </screen>
+     In this usage an environment variable is little different from a
+     command-line option.
+     You can also set such variables beforehand:
+<screen>
+<userinput>export CC=/opt/bin/gcc</userinput>
+<userinput>export CFLAGS='-O2 -pipe'</userinput>
+<userinput>./configure</userinput>
+</screen>
+     This usage can be convenient because many programs' configuration
+     scripts respond to these variables in similar ways.
+    </para>
+
+    <para>
+     The most commonly used of these environment variables are
+     <envar>CC</envar> and <envar>CFLAGS</envar>.
+     If you prefer a C compiler different from the one
+     <filename>configure</filename> picks, you can set the
+     variable <envar>CC</envar> to the program of your choice.
+     By default, <filename>configure</filename> will pick
+     <filename>gcc</filename> if available, else the platform's
+     default (usually <filename>cc</filename>).  Similarly, you can override the
+     default compiler flags if needed with the <envar>CFLAGS</envar> variable.
     </para>
 
     <para>
@@ -1482,7 +1851,7 @@ su - postgres
        <listitem>
         <para>
          <command>llvm-config</command> program used to locate the
-         <productname>LLVM</productname> installation.
+         <productname>LLVM</productname> installation
         </para>
        </listitem>
       </varlistentry>
@@ -1511,14 +1880,10 @@ su - postgres
        <term><envar>PYTHON</envar></term>
        <listitem>
         <para>
-         Python interpreter program.  This will be used to
-         determine the dependencies for building PL/Python.  Also,
-         whether Python 2 or 3 is specified here (or otherwise
-         implicitly chosen) determines which variant of the PL/Python
-         language becomes available.  See
-         <xref linkend="plpython-python23"/>
-         for more information.  If this is not set, the following are probed
-         in this order: <literal>python python3 python2</literal>.
+         Python interpreter program.  This will be used to determine the
+         dependencies for building PL/Python.  If this is not set, the
+         following are probed in this order:
+         <literal>python3 python</literal>.
         </para>
        </listitem>
       </varlistentry>
@@ -1528,8 +1893,10 @@ su - postgres
        <listitem>
         <para>
          Tcl interpreter program.  This will be used to
-         determine the dependencies for building PL/Tcl, and it will
-         be substituted into Tcl scripts.
+         determine the dependencies for building PL/Tcl.
+         If this is not set, the following are probed in this
+         order: <literal>tclsh tcl tclsh8.6 tclsh86 tclsh8.5 tclsh85
+         tclsh8.4 tclsh84</literal>.
         </para>
        </listitem>
       </varlistentry>
@@ -1568,13 +1935,6 @@ su - postgres
 
     <note>
      <para>
-      When developing code inside the server, it is recommended to
-      use the configure options <option>--enable-cassert</option> (which
-      turns on many run-time error checks) and <option>--enable-debug</option>
-      (which improves the usefulness of debugging tools).
-     </para>
-
-     <para>
       If using GCC, it is best to build with an optimization level of
       at least <option>-O1</option>, because using no optimization
       (<option>-O0</option>) disables some important compiler warnings (such
@@ -1595,209 +1955,13 @@ su - postgres
       adjustments, while <envar>COPT</envar> might be kept set all the time.
      </para>
     </note>
-   </step>
-
-  <step id="build">
-   <title>Build</title>
-
-   <para>
-    To start the build, type either of:
-<screen>
-<userinput>make</userinput>
-<userinput>make all</userinput>
-</screen>
-    (Remember to use <acronym>GNU</acronym> <application>make</application>.)
-    The build will take a few minutes depending on your
-    hardware. The last line displayed should be:
-<screen>
-All of PostgreSQL successfully made. Ready to install.
-</screen>
-   </para>
-
-  <para>
-   If you want to build everything that can be built, including the
-   documentation (HTML and man pages), and the additional modules
-   (<filename>contrib</filename>), type instead:
-<screen>
-<userinput>make world</userinput>
-</screen>
-   The last line displayed should be:
-<screen>
-PostgreSQL, contrib, and documentation successfully made. Ready to install.
-</screen>
-   </para>
-
-  <para>
-   If you want to build everything that can be built, including the
-   additional modules (<filename>contrib</filename>), but without
-   the documentation, type instead:
-<screen>
-<userinput>make world-bin</userinput>
-</screen>
-   </para>
-
-   <para>
-    If you want to invoke the build from another makefile rather than
-    manually, you must unset <varname>MAKELEVEL</varname> or set it to zero,
-    for instance like this:
-<programlisting>
-build-postgresql:
-        $(MAKE) -C postgresql MAKELEVEL=0 all
-</programlisting>
-    Failure to do that can lead to strange error messages, typically about
-    missing header files.
-   </para>
-  </step>
-
-  <step>
-   <title>Regression Tests</title>
-
-   <indexterm>
-    <primary>regression test</primary>
-   </indexterm>
-
-   <para>
-    If you want to test the newly built server before you install it,
-    you can run the regression tests at this point. The regression
-    tests are a test suite to verify that <productname>PostgreSQL</productname>
-    runs on your machine in the way the developers expected it
-    to. Type:
-<screen>
-<userinput>make check</userinput>
-</screen>
-    (This won't work as root; do it as an unprivileged user.)
-    See <xref linkend="regress"/> for
-    detailed information about interpreting the test results. You can
-    repeat this test at any later time by issuing the same command.
-   </para>
-  </step>
-
-  <step id="install">
-   <title>Installing the Files</title>
-
-   <note>
-    <para>
-     If you are upgrading an existing system be sure to read
-     <xref linkend="upgrading"/>,
-     which has instructions about upgrading a
-     cluster.
-    </para>
-   </note>
-
-   <para>
-    To install <productname>PostgreSQL</productname> enter:
-<screen>
-<userinput>make install</userinput>
-</screen>
-    This will install files into the directories that were specified
-    in <xref linkend="configure"/>. Make sure that you have appropriate
-    permissions to write into that area. Normally you need to do this
-    step as root. Alternatively, you can create the target
-    directories in advance and arrange for appropriate permissions to
-    be granted.
-   </para>
-
-   <para>
-    To install the documentation (HTML and man pages), enter:
-<screen>
-<userinput>make install-docs</userinput>
-</screen>
-   </para>
-
-   <para>
-    If you built the world above, type instead:
-<screen>
-<userinput>make install-world</userinput>
-</screen>
-    This also installs the documentation.
-   </para>
-
-   <para>
-    If you built the world without the documentation above, type instead:
-<screen>
-<userinput>make install-world-bin</userinput>
-</screen>
-   </para>
-
-   <para>
-    You can use <literal>make install-strip</literal> instead of
-    <literal>make install</literal> to strip the executable files and
-    libraries as they are installed.  This will save some space.  If
-    you built with debugging support, stripping will effectively
-    remove the debugging support, so it should only be done if
-    debugging is no longer needed.  <literal>install-strip</literal>
-    tries to do a reasonable job saving space, but it does not have
-    perfect knowledge of how to strip every unneeded byte from an
-    executable file, so if you want to save all the disk space you
-    possibly can, you will have to do manual work.
-   </para>
-
-   <para>
-    The standard installation provides all the header files needed for client
-    application development as well as for server-side program
-    development, such as custom functions or data types written in C.
-    (Prior to <productname>PostgreSQL</productname> 8.0, a separate <literal>make
-    install-all-headers</literal> command was needed for the latter, but this
-    step has been folded into the standard install.)
-   </para>
-
-   <formalpara>
-    <title>Client-only installation:</title>
-    <para>
-     If you want to install only the client applications and
-     interface libraries, then you can use these commands:
-<screen>
-<userinput>make -C src/bin install</userinput>
-<userinput>make -C src/include install</userinput>
-<userinput>make -C src/interfaces install</userinput>
-<userinput>make -C doc install</userinput>
-</screen>
-    <filename>src/bin</filename> has a few binaries for server-only use,
-    but they are small.
-    </para>
-   </formalpara>
-  </step>
-  </procedure>
-
-  <formalpara>
-   <title>Uninstallation:</title>
-   <para>
-    To undo the installation use the command <command>make
-    uninstall</command>. However, this will not remove any created directories.
-   </para>
-  </formalpara>
-
-  <formalpara>
-   <title>Cleaning:</title>
-
-   <para>
-    After the installation you can free disk space by removing the built
-    files from the source tree with the command <command>make
-    clean</command>. This will preserve the files made by the <command>configure</command>
-    program, so that you can rebuild everything with <command>make</command>
-    later on. To reset the source tree to the state in which it was
-    distributed, use <command>make distclean</command>. If you are going to
-    build for several platforms within the same source tree you must do
-    this and re-configure for each platform.  (Alternatively, use
-    a separate build tree for each platform, so that the source tree
-    remains unmodified.)
-   </para>
-  </formalpara>
-
-  <para>
-   If you perform a build and then discover that your <command>configure</command>
-   options were wrong, or if you change anything that <command>configure</command>
-   investigates (for example, software upgrades), then it's a good
-   idea to do <command>make distclean</command> before reconfiguring and
-   rebuilding.  Without this, your changes in configuration choices
-   might not propagate everywhere they need to.
-  </para>
+  </sect2>
  </sect1>
 
  <sect1 id="install-post">
   <title>Post-Installation Setup</title>
 
-  <sect2>
+  <sect2 id="install-post-shlibs">
    <title>Shared Libraries</title>
 
    <indexterm>
@@ -1972,7 +2136,7 @@ export MANPATH
 
   <para>
    <productname>PostgreSQL</productname> can be expected to work on these operating
-   systems: Linux (all recent distributions), Windows (Win2000 SP4 and later),
+   systems: Linux (all recent distributions), Windows (XP and later),
    FreeBSD, OpenBSD, NetBSD, macOS, AIX, HP/UX, and Solaris.
    Other Unix-like systems may also work but are not currently
    being tested.  In most cases, all CPU architectures supported by
@@ -2018,9 +2182,15 @@ export MANPATH
    </indexterm>
 
    <para>
-    PostgreSQL works on AIX, but AIX versions before about 6.1 have
-    various issues and are not recommended.
-    You can use GCC or the native IBM compiler <command>xlc</command>.
+    You can use GCC or the native IBM compiler <command>xlc</command>
+    to build <productname>PostgreSQL</productname>
+    on <productname>AIX</productname>.
+   </para>
+
+   <para>
+    <productname>AIX</productname> versions before 7.1 are no longer
+    tested nor supported by the <productname>PostgreSQL</productname>
+    community.
    </para>
 
    <sect3>
@@ -2168,7 +2338,7 @@ ERROR:  could not load library "/opt/dbs/pgsql/lib/plperl.so": Bad address
 
      <listitem>
       <para>
-       OpenSSL is not supported.
+       <productname>OpenSSL</productname> is not supported.
       </para>
      </listitem>
 
@@ -2298,81 +2468,6 @@ xcrun --show-sdk-path
    </para>
   </sect2>
 
-  <sect2 id="installation-notes-macos">
-   <title>macOS</title>
-
-   <indexterm zone="installation-notes-macos">
-    <primary>macOS</primary>
-    <secondary>installation on</secondary>
-   </indexterm>
-
-   <para>
-    To build <productname>PostgreSQL</productname> from source
-    on <productname>macOS</productname>, you will need to install Apple's
-    command line developer tools, which can be done by issuing
-<programlisting>
-xcode-select --install
-</programlisting>
-    (note that this will pop up a GUI dialog window for confirmation).
-    You may or may not wish to also install Xcode.
-   </para>
-
-   <para>
-    On recent <productname>macOS</productname> releases, it's necessary to
-    embed the <quote>sysroot</quote> path in the include switches used to
-    find some system header files.  This results in the outputs of
-    the <application>configure</application> script varying depending on
-    which SDK version was used during <application>configure</application>.
-    That shouldn't pose any problem in simple scenarios, but if you are
-    trying to do something like building an extension on a different machine
-    than the server code was built on, you may need to force use of a
-    different sysroot path.  To do that, set <varname>PG_SYSROOT</varname>,
-    for example
-<programlisting>
-make PG_SYSROOT=<replaceable>/desired/path</replaceable> all
-</programlisting>
-    To find out the appropriate path on your machine, run
-<programlisting>
-xcrun --show-sdk-path
-</programlisting>
-    Note that building an extension using a different sysroot version than
-    was used to build the core server is not really recommended; in the
-    worst case it could result in hard-to-debug ABI inconsistencies.
-   </para>
-
-   <para>
-    You can also select a non-default sysroot path when configuring, by
-    specifying <varname>PG_SYSROOT</varname>
-    to <application>configure</application>:
-<programlisting>
-./configure ... PG_SYSROOT=<replaceable>/desired/path</replaceable>
-</programlisting>
-    This would primarily be useful to cross-compile for some other
-    macOS version.  There is no guarantee that the resulting executables
-    will run on the current host.
-   </para>
-
-   <para>
-    To suppress the <option>-isysroot</option> options altogether, use
-<programlisting>
-./configure ... PG_SYSROOT=none
-</programlisting>
-    (any nonexistent pathname will work).  This might be useful if you wish
-    to build with a non-Apple compiler, but beware that that case is not
-    tested or supported by the PostgreSQL developers.
-   </para>
-
-   <para>
-    <productname>macOS</productname>'s <quote>System Integrity
-    Protection</quote> (SIP) feature breaks <literal>make check</literal>,
-    because it prevents passing the needed setting
-    of <literal>DYLD_LIBRARY_PATH</literal> down to the executables being
-    tested.  You can work around that by doing <literal>make
-    install</literal> before <literal>make check</literal>.
-    Most Postgres developers just turn off SIP, though.
-   </para>
-  </sect2>
-
   <sect2 id="installation-notes-mingw">
    <title>MinGW/Native Windows</title>
 
@@ -2461,10 +2556,10 @@ xcrun --show-sdk-path
 
     <para>
      You can download Sun Studio
-     from <ulink url="http://www.oracle.com/technetwork/server-storage/solarisstudio/downloads/"></ulink>.
-     Many of GNU tools are integrated into Solaris 10, or they are
-     present on the Solaris companion CD.  If you like packages for
-     older version of Solaris, you can find these tools
+     from <ulink url="https://www.oracle.com/technetwork/server-storage/solarisstudio/downloads/"></ulink>.
+     Many GNU tools are integrated into Solaris 10, or they are
+     present on the Solaris companion CD.  If you need packages for
+     older versions of Solaris, you can find these tools
      at <ulink url="http://www.sunfreeware.com"></ulink>.
      If you prefer
      sources, look

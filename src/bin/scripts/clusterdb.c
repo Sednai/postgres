@@ -2,7 +2,7 @@
  *
  * clusterdb
  *
- * Portions Copyright (c) 2002-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2002-2022, PostgreSQL Global Development Group
  *
  * src/bin/scripts/clusterdb.c
  *
@@ -12,6 +12,9 @@
 #include "postgres_fe.h"
 #include "common.h"
 #include "common/logging.h"
+#include "fe_utils/cancel.h"
+#include "fe_utils/option_utils.h"
+#include "fe_utils/query_utils.h"
 #include "fe_utils/simple_list.h"
 #include "fe_utils/string_utils.h"
 
@@ -106,7 +109,8 @@ main(int argc, char *argv[])
 				maintenance_db = pg_strdup(optarg);
 				break;
 			default:
-				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+				/* getopt_long already emitted a complaint */
+				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 				exit(1);
 		}
 	}
@@ -125,7 +129,7 @@ main(int argc, char *argv[])
 	{
 		pg_log_error("too many command-line arguments (first is \"%s\")",
 					 argv[optind]);
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 		exit(1);
 	}
 
@@ -136,21 +140,15 @@ main(int argc, char *argv[])
 	cparams.prompt_password = prompt_password;
 	cparams.override_dbname = NULL;
 
-	setup_cancel_handler();
+	setup_cancel_handler(NULL);
 
 	if (alldb)
 	{
 		if (dbname)
-		{
-			pg_log_error("cannot cluster all databases and a specific one at the same time");
-			exit(1);
-		}
+			pg_fatal("cannot cluster all databases and a specific one at the same time");
 
 		if (tables.head != NULL)
-		{
-			pg_log_error("cannot cluster specific table(s) in all databases");
-			exit(1);
-		}
+			pg_fatal("cannot cluster specific table(s) in all databases");
 
 		cparams.dbname = maintenance_db;
 
@@ -207,7 +205,7 @@ cluster_one_database(const ConnParams *cparams, const char *table,
 	if (table)
 	{
 		appendPQExpBufferChar(&sql, ' ');
-		appendQualifiedRelation(&sql, table, conn, progname, echo);
+		appendQualifiedRelation(&sql, table, conn, echo);
 	}
 	appendPQExpBufferChar(&sql, ';');
 
@@ -238,7 +236,7 @@ cluster_all_databases(ConnParams *cparams, const char *progname,
 	conn = connectMaintenanceDatabase(cparams, progname, echo);
 	result = executeQuery(conn,
 						  "SELECT datname FROM pg_database WHERE datallowconn AND datconnlimit <> -2 ORDER BY 1;",
-						  progname, echo);
+						  echo);
 	PQfinish(conn);
 
 	for (i = 0; i < PQntuples(result); i++)
@@ -283,5 +281,6 @@ help(const char *progname)
 	printf(_("  -W, --password            force password prompt\n"));
 	printf(_("  --maintenance-db=DBNAME   alternate maintenance database\n"));
 	printf(_("\nRead the description of the SQL command CLUSTER for details.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }

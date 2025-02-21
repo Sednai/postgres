@@ -18,14 +18,10 @@
  <para>
   The structures of the catalogs are declared in specially formatted C
   header files in the <filename>src/include/catalog/</filename> directory of
-  the source tree.  In particular, for each catalog there is a header file
+  the source tree.  For each catalog there is a header file
   named after the catalog (e.g., <filename>pg_class.h</filename>
   for <structname>pg_class</structname>), which defines the set of columns
   the catalog has, as well as some other basic properties such as its OID.
-  Other critical files defining the catalog structure
-  include <filename>indexing.h</filename>, which defines the indexes present
-  on all the system catalogs, and <filename>toasting.h</filename>, which
-  defines TOAST tables for catalogs that need one.
  </para>
 
  <para>
@@ -119,7 +115,8 @@
    require all columns that should be non-nullable to be marked so
    in <structname>pg_attribute</structname>.  The bootstrap code will
    automatically mark catalog columns as <literal>NOT NULL</literal>
-   if they are fixed-width and are not preceded by any nullable column.
+   if they are fixed-width and are not preceded by any nullable or
+   variable-width column.
    Where this rule is inadequate, you can force correct marking by using
    <literal>BKI_FORCE_NOT_NULL</literal>
    and <literal>BKI_FORCE_NULL</literal> annotations as needed.
@@ -178,19 +175,21 @@
     will demonstrate the key features:
    </para>
 
-<programlisting>
+<!-- The "slight modification" is the apostrophe in the description. -->
+<programlisting><![CDATA[
 [
 
 # A comment could appear here.
-{ oid =&gt; '1', oid_symbol =&gt; 'TemplateDbOid',
-  descr =&gt; 'database\'s default template',
-  datname =&gt; 'template1', encoding =&gt; 'ENCODING', datcollate =&gt; 'LC_COLLATE',
-  datctype =&gt; 'LC_CTYPE', datistemplate =&gt; 't', datallowconn =&gt; 't',
-  datconnlimit =&gt; '-1', datlastsysoid =&gt; '0', datfrozenxid =&gt; '0',
-  datminmxid =&gt; '1', dattablespace =&gt; 'pg_default', datacl =&gt; '_null_' },
+{ oid => '1', oid_symbol => 'Template1DbOid',
+  descr => 'database\'s default template',
+  datname => 'template1', encoding => 'ENCODING',
+  datlocprovider => 'LOCALE_PROVIDER', datistemplate => 't',
+  datallowconn => 't', datconnlimit => '-1', datfrozenxid => '0',
+  datminmxid => '1', dattablespace => 'pg_default', datcollate => 'LC_COLLATE',
+  datctype => 'LC_CTYPE', daticulocale => 'ICU_LOCALE', datacl => '_null_' },
 
 ]
-</programlisting>
+]]></programlisting>
 
    <para>
     Points to note:
@@ -382,8 +381,8 @@
     To find an available OID for a new pre-loaded row, run the
     script <filename>src/include/catalog/unused_oids</filename>.
     It prints inclusive ranges of unused OIDs (e.g., the output
-    line <quote>45-900</quote> means OIDs 45 through 900 have not been
-    allocated yet).  Currently, OIDs 1-9999 are reserved for manual
+    line <literal>45-900</literal> means OIDs 45 through 900 have not been
+    allocated yet).  Currently, OIDs 1&ndash;9999 are reserved for manual
     assignment; the <filename>unused_oids</filename> script simply looks
     through the catalog headers and <filename>.dat</filename> files
     to see which ones do not appear.  You can also use
@@ -421,19 +420,33 @@
    <para>
     If <filename>genbki.pl</filename> needs to assign an OID to a catalog
     entry that does not have a manually-assigned OID, it will use a value in
-    the range 10000&mdash;11999.  The server's OID counter is set to 12000
-    at the start of a bootstrap run.  Thus objects created by regular SQL
-    commands during the later phases of bootstrap, such as objects created
-    while running the <filename>information_schema.sql</filename> script,
-    receive OIDs of 12000 or above.
+    the range 10000&mdash;11999.  The server's OID counter is set to 10000
+    at the start of a bootstrap run, so that any objects created on-the-fly
+    during bootstrap processing also receive OIDs in this range.  (The
+    usual OID assignment mechanism takes care of preventing any conflicts.)
+   </para>
+
+   <para>
+    Objects with OIDs below <symbol>FirstUnpinnedObjectId</symbol> (12000)
+    are considered <quote>pinned</quote>, preventing them from being
+    deleted.  (There are a small number of exceptions, which are
+    hard-wired into <function>IsPinnedObject()</function>.)
+    <application>initdb</application> forces the OID counter up
+    to <symbol>FirstUnpinnedObjectId</symbol> as soon as it's ready to
+    create unpinned objects.  Thus objects created during the later phases
+    of <application>initdb</application>, such as objects created while
+    running the <filename>information_schema.sql</filename> script, will
+    not be pinned, while all objects known
+    to <filename>genbki.pl</filename> will be.
    </para>
 
    <para>
     OIDs assigned during normal database operation are constrained to be
     16384 or higher.  This ensures that the range 10000&mdash;16383 is free
     for OIDs assigned automatically by <filename>genbki.pl</filename> or
-    during bootstrap.  These automatically-assigned OIDs are not considered
-    stable, and may change from one installation to another.
+    during <application>initdb</application>.  These
+    automatically-assigned OIDs are not considered stable, and may change
+    from one installation to another.
    </para>
   </sect2>
 
@@ -477,10 +490,15 @@
 
     <listitem>
      <para>
-      In such a column, all entries must use the symbolic format except
-      when writing <literal>0</literal> for InvalidOid.  (If the column is
+      In some catalog columns, it's allowed for entries to be zero instead
+      of a valid reference.  If this is allowed, write
+      <literal>BKI_LOOKUP_OPT</literal> instead
+      of <literal>BKI_LOOKUP</literal>.  Then you can
+      write <literal>0</literal> for an entry.  (If the column is
       declared <type>regproc</type>, you can optionally
       write <literal>-</literal> instead of <literal>0</literal>.)
+      Except for this special case, all entries in
+      a <literal>BKI_LOOKUP</literal> column must be symbolic references.
       <filename>genbki.pl</filename> will warn about unrecognized names.
      </para>
     </listitem>
@@ -538,17 +556,6 @@
       expected to be in the <literal>pg_catalog</literal> schema.
      </para>
     </listitem>
-
-    <listitem>
-     <para>
-      In addition to the generic lookup mechanisms, there is a special
-      convention that <literal>PGNSP</literal> is replaced by the OID of
-      the <literal>pg_catalog</literal> schema,
-      and <literal>PGUID</literal> is replaced by the OID of the bootstrap
-      superuser role.  These usages are somewhat historical but so far
-      there hasn't been a need to generalize them.
-     </para>
-    </listitem>
    </itemizedlist>
 
    <para>
@@ -556,6 +563,22 @@
     runs, and puts simple numeric OIDs into the emitted BKI file.  There is
     therefore no need for the bootstrap backend to deal with symbolic
     references.
+   </para>
+
+   <para>
+    It's desirable to mark OID reference columns
+    with <literal>BKI_LOOKUP</literal> or <literal>BKI_LOOKUP_OPT</literal>
+    even if the catalog has no initial data that requires lookup.  This
+    allows <filename>genbki.pl</filename> to record the foreign key
+    relationships that exist in the system catalogs.  That information is
+    used in the regression tests to check for incorrect entries.  See also
+    the macros <literal>DECLARE_FOREIGN_KEY</literal>,
+    <literal>DECLARE_FOREIGN_KEY_OPT</literal>,
+    <literal>DECLARE_ARRAY_FOREIGN_KEY</literal>,
+    and <literal>DECLARE_ARRAY_FOREIGN_KEY_OPT</literal>, which are
+    used to declare foreign key relationships that are too complex
+    for <literal>BKI_LOOKUP</literal> (typically, multi-column foreign
+    keys).
    </para>
   </sect2>
 
@@ -648,7 +671,7 @@
      <filename>reformat_dat_file.pl</filename> can be adapted to perform
      many kinds of bulk changes.  Look for its block comments showing where
      one-off code can be inserted.  In the following example, we are going
-     to consolidate two boolean fields in <structname>pg_proc</structname>
+     to consolidate two Boolean fields in <structname>pg_proc</structname>
      into a char field:
 
      <orderedlist>
@@ -751,8 +774,8 @@ $ perl  rewrite_dat_with_prokind.pl  pg_proc.dat
    next token that syntactically cannot belong to the preceding
    command starts a new one.  (Usually you would put a new command on
    a new line, for clarity.)  Tokens can be certain key words, special
-   characters (parentheses, commas, etc.), numbers, or double-quoted
-   strings.  Everything is case sensitive.
+   characters (parentheses, commas, etc.), identifiers, numbers, or
+   single-quoted strings.  Everything is case sensitive.
   </para>
 
   <para>
@@ -813,11 +836,11 @@ $ perl  rewrite_dat_with_prokind.pl  pg_proc.dat
       When <literal>bootstrap</literal> is specified,
       the table will only be created on disk; nothing is entered into
       <structname>pg_class</structname>,
-      <structname>pg_attribute</structname>, etc, for it.  Thus the
+      <structname>pg_attribute</structname>, etc., for it.  Thus the
       table will not be accessible by ordinary SQL operations until
       such entries are made the hard way (with <literal>insert</literal>
       commands).  This option is used for creating
-      <structname>pg_class</structname> etc themselves.
+      <structname>pg_class</structname> etc. themselves.
      </para>
 
      <para>
@@ -875,7 +898,9 @@ $ perl  rewrite_dat_with_prokind.pl  pg_proc.dat
      <para>
       NULL values can be specified using the special key word
       <literal>_null_</literal>.  Values that do not look like
-      identifiers or digit strings must be double quoted.
+      identifiers or digit strings must be single-quoted.
+      (To include a single quote in a value, write it twice.
+      Escape-string-style backslash escapes are allowed in the string, too.)
      </para>
     </listitem>
    </varlistentry>
@@ -1045,7 +1070,7 @@ $ perl  rewrite_dat_with_prokind.pl  pg_proc.dat
 <programlisting>
 create test_table 420 (oid = oid, cola = int4, colb = text)
 open test_table
-insert ( 421 1 "value1" )
+insert ( 421 1 'value 1' )
 insert ( 422 2 _null_ )
 close test_table
 </programlisting>

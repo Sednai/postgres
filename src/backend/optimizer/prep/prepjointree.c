@@ -6,7 +6,7 @@
  * NOTE: the intended sequence for invoking these operations is
  *		replace_empty_jointree
  *		pull_up_sublinks
- *		inline_set_returning_functions
+ *		preprocess_function_rtes
  *		pull_up_subqueries
  *		flatten_simple_union_all
  *		do expression preprocessing (including flattening JOIN alias vars)
@@ -14,7 +14,7 @@
  *		remove_useless_result_rtes
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,6 +26,7 @@
 #include "postgres.h"
 
 #include "catalog/pg_type.h"
+#include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
@@ -84,14 +85,18 @@ static Node *pull_up_simple_union_all(PlannerInfo *root, Node *jtnode,
 static void pull_up_union_leaf_queries(Node *setOp, PlannerInfo *root,
 									   int parentRTindex, Query *setOpQuery,
 									   int childRToffset);
-static void make_setop_translation_list(Query *query, Index newvarno,
-										List **translated_vars);
+static void make_setop_translation_list(Query *query, int newvarno,
+										AppendRelInfo *appinfo);
 static bool is_simple_subquery(PlannerInfo *root, Query *subquery,
 							   RangeTblEntry *rte,
 							   JoinExpr *lowest_outer_join);
 static Node *pull_up_simple_values(PlannerInfo *root, Node *jtnode,
 								   RangeTblEntry *rte);
 static bool is_simple_values(PlannerInfo *root, RangeTblEntry *rte);
+static Node *pull_up_constant_function(PlannerInfo *root, Node *jtnode,
+									   RangeTblEntry *rte,
+									   JoinExpr *lowest_nulling_outer_join,
+									   AppendRelInfo *containing_appendrel);
 static bool is_simple_union_all(Query *subquery);
 static bool is_simple_union_all_recurse(Node *setOp, Query *setOpQuery,
 										List *colTypes);
@@ -99,6 +104,10 @@ static bool is_safe_append_member(Query *subquery);
 static bool jointree_contains_lateral_outer_refs(PlannerInfo *root,
 												 Node *jtnode, bool restricted,
 												 Relids safe_upper_varnos);
+static void perform_pullup_replace_vars(PlannerInfo *root,
+										pullup_replace_vars_context *rvcontext,
+										JoinExpr *lowest_nulling_outer_join,
+										AppendRelInfo *containing_appendrel);
 static void replace_vars_in_jointree(Node *jtnode,
 									 pullup_replace_vars_context *context,
 									 JoinExpr *lowest_nulling_outer_join);
@@ -127,6 +136,86 @@ static void fix_append_rel_relids(List *append_rel_list, int varno,
 								  Relids subrelids);
 static Node *find_jointree_node_for_rel(Node *jtnode, int relid);
 
+
+/*
+ * transform_MERGE_to_join
+ *		Replace a MERGE's jointree to also include the target relation.
+ */
+void
+transform_MERGE_to_join(Query *parse)
+{
+	RangeTblEntry *joinrte;
+	JoinExpr   *joinexpr;
+	JoinType	jointype;
+	int			joinrti;
+	List	   *vars;
+
+	if (parse->commandType != CMD_MERGE)
+		return;
+
+	/* XXX probably bogus */
+	vars = NIL;
+
+	/*
+	 * When any WHEN NOT MATCHED THEN INSERT clauses exist, we need to use an
+	 * outer join so that we process all unmatched tuples from the source
+	 * relation.  If none exist, we can use an inner join.
+	 */
+	if (parse->mergeUseOuterJoin)
+		jointype = JOIN_RIGHT;
+	else
+		jointype = JOIN_INNER;
+
+	/* Manufacture a join RTE to use. */
+	joinrte = makeNode(RangeTblEntry);
+	joinrte->rtekind = RTE_JOIN;
+	joinrte->jointype = jointype;
+	joinrte->joinmergedcols = 0;
+	joinrte->joinaliasvars = vars;
+	joinrte->joinleftcols = NIL;	/* MERGE does not allow JOIN USING */
+	joinrte->joinrightcols = NIL;	/* ditto */
+	joinrte->join_using_alias = NULL;
+
+	joinrte->alias = NULL;
+	joinrte->eref = makeAlias("*MERGE*", NIL);
+	joinrte->lateral = false;
+	joinrte->inh = false;
+	joinrte->inFromCl = true;
+	joinrte->requiredPerms = 0;
+	joinrte->checkAsUser = InvalidOid;
+	joinrte->selectedCols = NULL;
+	joinrte->insertedCols = NULL;
+	joinrte->updatedCols = NULL;
+	joinrte->extraUpdatedCols = NULL;
+	joinrte->securityQuals = NIL;
+
+	/*
+	 * Add completed RTE to pstate's range table list, so that we know its
+	 * index.
+	 */
+	parse->rtable = lappend(parse->rtable, joinrte);
+	joinrti = list_length(parse->rtable);
+
+	/*
+	 * Create a JOIN between the target and the source relation.
+	 */
+	joinexpr = makeNode(JoinExpr);
+	joinexpr->jointype = jointype;
+	joinexpr->isNatural = false;
+	joinexpr->larg = (Node *) makeNode(RangeTblRef);
+	((RangeTblRef *) joinexpr->larg)->rtindex = parse->resultRelation;
+	joinexpr->rarg = linitial(parse->jointree->fromlist);	/* original join */
+	joinexpr->usingClause = NIL;
+	joinexpr->join_using_alias = NULL;
+	/* The quals are removed from the jointree and into this specific join */
+	joinexpr->quals = parse->jointree->quals;
+	joinexpr->alias = NULL;
+	joinexpr->rtindex = joinrti;
+
+	/* Make the new join be the sole entry in the query's jointree */
+	parse->jointree->fromlist = list_make1(joinexpr);
+	parse->jointree->quals = NULL;
+}
 
 /*
  * replace_empty_jointree
@@ -609,8 +698,9 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
 }
 
 /*
- * inline_set_returning_functions
- *		Attempt to "inline" set-returning functions in the FROM clause.
+ * preprocess_function_rtes
+ *		Constant-simplify any FUNCTION RTEs in the FROM clause, and then
+ *		attempt to "inline" any that are set-returning functions.
  *
  * If an RTE_FUNCTION rtable entry invokes a set-returning function that
  * contains just a simple SELECT, we can convert the rtable entry to an
@@ -623,11 +713,18 @@ pull_up_sublinks_qual_recurse(PlannerInfo *root, Node *node,
  * obtained via inlining.  However, we do it after pull_up_sublinks
  * so that we can inline any functions used in SubLink subselects.
  *
+ * The reason for applying const-simplification at this stage is that
+ * (a) we'd need to do it anyway to inline a SRF, and (b) by doing it now,
+ * we can be sure that pull_up_constant_function() will see constants
+ * if there are constants to be seen.  This approach also guarantees
+ * that every FUNCTION RTE has been const-simplified, allowing planner.c's
+ * preprocess_expression() to skip doing it again.
+ *
  * Like most of the planner, this feels free to scribble on its input data
  * structure.
  */
 void
-inline_set_returning_functions(PlannerInfo *root)
+preprocess_function_rtes(PlannerInfo *root)
 {
 	ListCell   *rt;
 
@@ -638,6 +735,10 @@ inline_set_returning_functions(PlannerInfo *root)
 		if (rte->rtekind == RTE_FUNCTION)
 		{
 			Query	   *funcquery;
+
+			/* Apply const-simplification */
+			rte->functions = (List *)
+				eval_const_expressions(root, (Node *) rte->functions);
 
 			/* Check safety of expansion, and expand if possible */
 			funcquery = inline_set_returning_function(root, rte);
@@ -771,6 +872,14 @@ pull_up_subqueries_recurse(PlannerInfo *root, Node *jtnode,
 			is_simple_values(root, rte))
 			return pull_up_simple_values(root, jtnode, rte);
 
+		/*
+		 * Or perhaps it's a FUNCTION RTE that we could inline?
+		 */
+		if (rte->rtekind == RTE_FUNCTION)
+			return pull_up_constant_function(root, jtnode, rte,
+											 lowest_nulling_outer_join,
+											 containing_appendrel);
+
 		/* Otherwise, do nothing at this node. */
 	}
 	else if (IsA(jtnode, FromExpr))
@@ -877,10 +986,9 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	ListCell   *lc;
 
 	/*
-	 * Need a modifiable copy of the subquery to hack on.  Even if we didn't
-	 * sometimes choose not to pull up below, we must do this to avoid
-	 * problems if the same subquery is referenced from multiple jointree
-	 * items (which can't happen normally, but might after rule rewriting).
+	 * Make a modifiable copy of the subquery to hack on, so that the RTE will
+	 * be left unchanged in case we decide below that we can't pull it up
+	 * after all.
 	 */
 	subquery = copyObject(rte->subquery);
 
@@ -903,15 +1011,19 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	subroot->cte_plan_ids = NIL;
 	subroot->multiexpr_params = NIL;
 	subroot->eq_classes = NIL;
+	subroot->ec_merging_done = false;
+	subroot->all_result_relids = NULL;
+	subroot->leaf_result_relids = NULL;
 	subroot->append_rel_list = NIL;
+	subroot->row_identity_vars = NIL;
 	subroot->rowMarks = NIL;
 	memset(subroot->upper_rels, 0, sizeof(subroot->upper_rels));
 	memset(subroot->upper_targets, 0, sizeof(subroot->upper_targets));
 	subroot->processed_tlist = NIL;
+	subroot->update_colnos = NIL;
 	subroot->grouping_map = NULL;
 	subroot->minmax_aggs = NIL;
 	subroot->qual_security_level = 0;
-	subroot->inhTargetKind = INHKIND_NONE;
 	subroot->hasRecursion = false;
 	subroot->wt_param_id = -1;
 	subroot->non_recursive_path = NULL;
@@ -933,9 +1045,10 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 		pull_up_sublinks(subroot);
 
 	/*
-	 * Similarly, inline any set-returning functions in its rangetable.
+	 * Similarly, preprocess its function RTEs to inline any set-returning
+	 * functions in its rangetable.
 	 */
-	inline_set_returning_functions(subroot);
+	preprocess_function_rtes(subroot);
 
 	/*
 	 * Recursively pull up the subquery's subqueries, so that
@@ -1071,72 +1184,11 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	/*
 	 * Replace all of the top query's references to the subquery's outputs
 	 * with copies of the adjusted subtlist items, being careful not to
-	 * replace any of the jointree structure. (This'd be a lot cleaner if we
-	 * could use query_tree_mutator.)  We have to use PHVs in the targetList,
-	 * returningList, and havingQual, since those are certainly above any
-	 * outer join.  replace_vars_in_jointree tracks its location in the
-	 * jointree and uses PHVs or not appropriately.
+	 * replace any of the jointree structure.
 	 */
-	parse->targetList = (List *)
-		pullup_replace_vars((Node *) parse->targetList, &rvcontext);
-	parse->returningList = (List *)
-		pullup_replace_vars((Node *) parse->returningList, &rvcontext);
-	if (parse->onConflict)
-	{
-		parse->onConflict->onConflictSet = (List *)
-			pullup_replace_vars((Node *) parse->onConflict->onConflictSet,
-								&rvcontext);
-		parse->onConflict->onConflictWhere =
-			pullup_replace_vars(parse->onConflict->onConflictWhere,
-								&rvcontext);
-
-		/*
-		 * We assume ON CONFLICT's arbiterElems, arbiterWhere, exclRelTlist
-		 * can't contain any references to a subquery
-		 */
-	}
-	replace_vars_in_jointree((Node *) parse->jointree, &rvcontext,
-							 lowest_nulling_outer_join);
-	Assert(parse->setOperations == NULL);
-	parse->havingQual = pullup_replace_vars(parse->havingQual, &rvcontext);
-
-	/*
-	 * Replace references in the translated_vars lists of appendrels. When
-	 * pulling up an appendrel member, we do not need PHVs in the list of the
-	 * parent appendrel --- there isn't any outer join between. Elsewhere, use
-	 * PHVs for safety.  (This analysis could be made tighter but it seems
-	 * unlikely to be worth much trouble.)
-	 */
-	foreach(lc, root->append_rel_list)
-	{
-		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(lc);
-		bool		save_need_phvs = rvcontext.need_phvs;
-
-		if (appinfo == containing_appendrel)
-			rvcontext.need_phvs = false;
-		appinfo->translated_vars = (List *)
-			pullup_replace_vars((Node *) appinfo->translated_vars, &rvcontext);
-		rvcontext.need_phvs = save_need_phvs;
-	}
-
-	/*
-	 * Replace references in the joinaliasvars lists of join RTEs.
-	 *
-	 * You might think that we could avoid using PHVs for alias vars of joins
-	 * below lowest_nulling_outer_join, but that doesn't work because the
-	 * alias vars could be referenced above that join; we need the PHVs to be
-	 * present in such references after the alias vars get flattened.  (It
-	 * might be worth trying to be smarter here, someday.)
-	 */
-	foreach(lc, parse->rtable)
-	{
-		RangeTblEntry *otherrte = (RangeTblEntry *) lfirst(lc);
-
-		if (otherrte->rtekind == RTE_JOIN)
-			otherrte->joinaliasvars = (List *)
-				pullup_replace_vars((Node *) otherrte->joinaliasvars,
-									&rvcontext);
-	}
+	perform_pullup_replace_vars(root, &rvcontext,
+								lowest_nulling_outer_join,
+								containing_appendrel);
 
 	/*
 	 * If the subquery had a LATERAL marker, propagate that to any of its
@@ -1225,6 +1277,14 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	Assert(subroot->join_info_list == NIL);
 	Assert(root->placeholder_list == NIL);
 	Assert(subroot->placeholder_list == NIL);
+
+	/*
+	 * We no longer need the RTE's copy of the subquery's query tree.  Getting
+	 * rid of it saves nothing in particular so far as this level of query is
+	 * concerned; but if this query level is in turn pulled up into a parent,
+	 * we'd waste cycles copying the now-unused query tree.
+	 */
+	rte->subquery = NULL;
 
 	/*
 	 * Miscellaneous housekeeping.
@@ -1372,8 +1432,7 @@ pull_up_union_leaf_queries(Node *setOp, PlannerInfo *root, int parentRTindex,
 		appinfo->child_relid = childRTindex;
 		appinfo->parent_reltype = InvalidOid;
 		appinfo->child_reltype = InvalidOid;
-		make_setop_translation_list(setOpQuery, childRTindex,
-									&appinfo->translated_vars);
+		make_setop_translation_list(setOpQuery, childRTindex, appinfo);
 		appinfo->parent_reloid = InvalidOid;
 		root->append_rel_list = lappend(root->append_rel_list, appinfo);
 
@@ -1415,13 +1474,21 @@ pull_up_union_leaf_queries(Node *setOp, PlannerInfo *root, int parentRTindex,
  *	  a UNION ALL member.  (At this point it's just a simple list of
  *	  referencing Vars, but if we succeed in pulling up the member
  *	  subquery, the Vars will get replaced by pulled-up expressions.)
+ *	  Also create the rather trivial reverse-translation array.
  */
 static void
-make_setop_translation_list(Query *query, Index newvarno,
-							List **translated_vars)
+make_setop_translation_list(Query *query, int newvarno,
+							AppendRelInfo *appinfo)
 {
 	List	   *vars = NIL;
+	AttrNumber *pcolnos;
 	ListCell   *l;
+
+	/* Initialize reverse-translation array with all entries zero */
+	/* (entries for resjunk columns will stay that way) */
+	appinfo->num_child_cols = list_length(query->targetList);
+	appinfo->parent_colnos = pcolnos =
+		(AttrNumber *) palloc0(appinfo->num_child_cols * sizeof(AttrNumber));
 
 	foreach(l, query->targetList)
 	{
@@ -1431,9 +1498,10 @@ make_setop_translation_list(Query *query, Index newvarno,
 			continue;
 
 		vars = lappend(vars, makeVarFromTargetEntry(newvarno, tle));
+		pcolnos[tle->resno - 1] = tle->resno;
 	}
 
-	*translated_vars = vars;
+	appinfo->translated_vars = vars;
 }
 
 /*
@@ -1639,39 +1707,16 @@ pull_up_simple_values(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte)
 	/*
 	 * Replace all of the top query's references to the RTE's outputs with
 	 * copies of the adjusted VALUES expressions, being careful not to replace
-	 * any of the jointree structure. (This'd be a lot cleaner if we could use
-	 * query_tree_mutator.)  Much of this should be no-ops in the dummy Query
-	 * that surrounds a VALUES RTE, but it's not enough code to be worth
-	 * removing.
+	 * any of the jointree structure.  We can assume there's no outer joins or
+	 * appendrels in the dummy Query that surrounds a VALUES RTE.
 	 */
-	parse->targetList = (List *)
-		pullup_replace_vars((Node *) parse->targetList, &rvcontext);
-	parse->returningList = (List *)
-		pullup_replace_vars((Node *) parse->returningList, &rvcontext);
-	if (parse->onConflict)
-	{
-		parse->onConflict->onConflictSet = (List *)
-			pullup_replace_vars((Node *) parse->onConflict->onConflictSet,
-								&rvcontext);
-		parse->onConflict->onConflictWhere =
-			pullup_replace_vars(parse->onConflict->onConflictWhere,
-								&rvcontext);
-
-		/*
-		 * We assume ON CONFLICT's arbiterElems, arbiterWhere, exclRelTlist
-		 * can't contain any references to a subquery
-		 */
-	}
-	replace_vars_in_jointree((Node *) parse->jointree, &rvcontext, NULL);
-	Assert(parse->setOperations == NULL);
-	parse->havingQual = pullup_replace_vars(parse->havingQual, &rvcontext);
+	perform_pullup_replace_vars(root, &rvcontext, NULL, NULL);
 
 	/*
-	 * There should be no appendrels to fix, nor any join alias Vars, nor any
-	 * outer joins and hence no PlaceHolderVars.
+	 * There should be no appendrels to fix, nor any outer joins and hence no
+	 * PlaceHolderVars.
 	 */
 	Assert(root->append_rel_list == NIL);
-	Assert(list_length(parse->rtable) == 1);
 	Assert(root->join_info_list == NIL);
 	Assert(root->placeholder_list == NIL);
 
@@ -1741,6 +1786,149 @@ is_simple_values(PlannerInfo *root, RangeTblEntry *rte)
 		return false;
 
 	return true;
+}
+
+/*
+ * pull_up_constant_function
+ *		Pull up an RTE_FUNCTION expression that was simplified to a constant.
+ *
+ * jtnode is a RangeTblRef that has been identified as a FUNCTION RTE by
+ * pull_up_subqueries.  If its expression is just a Const, hoist that value
+ * up into the parent query, and replace the RTE_FUNCTION with RTE_RESULT.
+ *
+ * In principle we could pull up any immutable expression, but we don't.
+ * That might result in multiple evaluations of the expression, which could
+ * be costly if it's not just a Const.  Also, the main value of this is
+ * to let the constant participate in further const-folding, and of course
+ * that won't happen for a non-Const.
+ *
+ * The pulled-up value might need to be wrapped in a PlaceHolderVar if the
+ * RTE is below an outer join or is part of an appendrel; the extra
+ * parameters show whether that's needed.
+ */
+static Node *
+pull_up_constant_function(PlannerInfo *root, Node *jtnode,
+						  RangeTblEntry *rte,
+						  JoinExpr *lowest_nulling_outer_join,
+						  AppendRelInfo *containing_appendrel)
+{
+	Query	   *parse = root->parse;
+	RangeTblFunction *rtf;
+	TypeFuncClass functypclass;
+	Oid			funcrettype;
+	TupleDesc	tupdesc;
+	pullup_replace_vars_context rvcontext;
+
+	/* Fail if the RTE has ORDINALITY - we don't implement that here. */
+	if (rte->funcordinality)
+		return jtnode;
+
+	/* Fail if RTE isn't a single, simple Const expr */
+	if (list_length(rte->functions) != 1)
+		return jtnode;
+	rtf = linitial_node(RangeTblFunction, rte->functions);
+	if (!IsA(rtf->funcexpr, Const))
+		return jtnode;
+
+	/*
+	 * If the function's result is not a scalar, we punt.  In principle we
+	 * could break the composite constant value apart into per-column
+	 * constants, but for now it seems not worth the work.
+	 */
+	if (rtf->funccolcount != 1)
+		return jtnode;			/* definitely composite */
+
+	/* If it has a coldeflist, it certainly returns RECORD */
+	if (rtf->funccolnames != NIL)
+		return jtnode;			/* must be a one-column RECORD type */
+
+	functypclass = get_expr_result_type(rtf->funcexpr,
+										&funcrettype,
+										&tupdesc);
+	if (functypclass != TYPEFUNC_SCALAR)
+		return jtnode;			/* must be a one-column composite type */
+
+	/* Create context for applying pullup_replace_vars */
+	rvcontext.root = root;
+	rvcontext.targetlist = list_make1(makeTargetEntry((Expr *) rtf->funcexpr,
+													  1,	/* resno */
+													  NULL, /* resname */
+													  false));	/* resjunk */
+	rvcontext.target_rte = rte;
+
+	/*
+	 * Since this function was reduced to a Const, it doesn't contain any
+	 * lateral references, even if it's marked as LATERAL.  This means we
+	 * don't need to fill relids.
+	 */
+	rvcontext.relids = NULL;
+
+	rvcontext.outer_hasSubLinks = &parse->hasSubLinks;
+	rvcontext.varno = ((RangeTblRef *) jtnode)->rtindex;
+	/* these flags will be set below, if needed */
+	rvcontext.need_phvs = false;
+	rvcontext.wrap_non_vars = false;
+	/* initialize cache array with indexes 0 .. length(tlist) */
+	rvcontext.rv_cache = palloc0((list_length(rvcontext.targetlist) + 1) *
+								 sizeof(Node *));
+
+	/*
+	 * If we are under an outer join then non-nullable items and lateral
+	 * references may have to be turned into PlaceHolderVars.
+	 */
+	if (lowest_nulling_outer_join != NULL)
+		rvcontext.need_phvs = true;
+
+	/*
+	 * If we are dealing with an appendrel member then anything that's not a
+	 * simple Var has to be turned into a PlaceHolderVar.  (See comments in
+	 * pull_up_simple_subquery().)
+	 */
+	if (containing_appendrel != NULL)
+	{
+		rvcontext.need_phvs = true;
+		rvcontext.wrap_non_vars = true;
+	}
+
+	/*
+	 * If the parent query uses grouping sets, we need a PlaceHolderVar for
+	 * anything that's not a simple Var.
+	 */
+	if (parse->groupingSets)
+	{
+		rvcontext.need_phvs = true;
+		rvcontext.wrap_non_vars = true;
+	}
+
+	/*
+	 * Replace all of the top query's references to the RTE's output with
+	 * copies of the funcexpr, being careful not to replace any of the
+	 * jointree structure.
+	 */
+	perform_pullup_replace_vars(root, &rvcontext,
+								lowest_nulling_outer_join,
+								containing_appendrel);
+
+	/*
+	 * We don't need to bother with changing PlaceHolderVars in the parent
+	 * query.  Their references to the RT index are still good for now, and
+	 * will get removed later if we're able to drop the RTE_RESULT.
+	 */
+
+	/*
+	 * Convert the RTE to be RTE_RESULT type, signifying that we don't need to
+	 * scan it anymore, and zero out RTE_FUNCTION-specific fields.  Also make
+	 * sure the RTE is not marked LATERAL, since elsewhere we don't expect
+	 * RTE_RESULTs to be LATERAL.
+	 */
+	rte->rtekind = RTE_RESULT;
+	rte->functions = NIL;
+	rte->lateral = false;
+
+	/*
+	 * We can reuse the RangeTblRef node.
+	 */
+	return jtnode;
 }
 
 /*
@@ -1939,9 +2127,117 @@ jointree_contains_lateral_outer_refs(PlannerInfo *root, Node *jtnode,
 }
 
 /*
- * Helper routine for pull_up_subqueries: do pullup_replace_vars on every
- * expression in the jointree, without changing the jointree structure itself.
- * Ugly, but there's no other way...
+ * Perform pullup_replace_vars everyplace it's needed in the query tree.
+ *
+ * Caller has already filled *rvcontext with data describing what to
+ * substitute for Vars referencing the target subquery.  In addition
+ * we need the identity of the lowest outer join that can null the
+ * target subquery, and its containing appendrel if any.
+ */
+static void
+perform_pullup_replace_vars(PlannerInfo *root,
+							pullup_replace_vars_context *rvcontext,
+							JoinExpr *lowest_nulling_outer_join,
+							AppendRelInfo *containing_appendrel)
+{
+	Query	   *parse = root->parse;
+	ListCell   *lc;
+
+	/*
+	 * Replace all of the top query's references to the subquery's outputs
+	 * with copies of the adjusted subtlist items, being careful not to
+	 * replace any of the jointree structure.  (This'd be a lot cleaner if we
+	 * could use query_tree_mutator.)  We have to use PHVs in the targetList,
+	 * returningList, and havingQual, since those are certainly above any
+	 * outer join.  replace_vars_in_jointree tracks its location in the
+	 * jointree and uses PHVs or not appropriately.
+	 */
+	parse->targetList = (List *)
+		pullup_replace_vars((Node *) parse->targetList, rvcontext);
+	parse->returningList = (List *)
+		pullup_replace_vars((Node *) parse->returningList, rvcontext);
+
+	foreach(lc, parse->windowClause)
+	{
+		WindowClause *wc = lfirst_node(WindowClause, lc);
+
+		if (wc->runCondition != NIL)
+			wc->runCondition = (List *)
+				pullup_replace_vars((Node *) wc->runCondition, rvcontext);
+	}
+	if (parse->onConflict)
+	{
+		parse->onConflict->onConflictSet = (List *)
+			pullup_replace_vars((Node *) parse->onConflict->onConflictSet,
+								rvcontext);
+		parse->onConflict->onConflictWhere =
+			pullup_replace_vars(parse->onConflict->onConflictWhere,
+								rvcontext);
+
+		/*
+		 * We assume ON CONFLICT's arbiterElems, arbiterWhere, exclRelTlist
+		 * can't contain any references to a subquery.
+		 */
+	}
+	if (parse->mergeActionList)
+	{
+		foreach(lc, parse->mergeActionList)
+		{
+			MergeAction *action = lfirst(lc);
+
+			action->qual = pullup_replace_vars(action->qual, rvcontext);
+			action->targetList = (List *)
+				pullup_replace_vars((Node *) action->targetList, rvcontext);
+		}
+	}
+	replace_vars_in_jointree((Node *) parse->jointree, rvcontext,
+							 lowest_nulling_outer_join);
+	Assert(parse->setOperations == NULL);
+	parse->havingQual = pullup_replace_vars(parse->havingQual, rvcontext);
+
+	/*
+	 * Replace references in the translated_vars lists of appendrels.  When
+	 * pulling up an appendrel member, we do not need PHVs in the list of the
+	 * parent appendrel --- there isn't any outer join between.  Elsewhere,
+	 * use PHVs for safety.  (This analysis could be made tighter but it seems
+	 * unlikely to be worth much trouble.)
+	 */
+	foreach(lc, root->append_rel_list)
+	{
+		AppendRelInfo *appinfo = (AppendRelInfo *) lfirst(lc);
+		bool		save_need_phvs = rvcontext->need_phvs;
+
+		if (appinfo == containing_appendrel)
+			rvcontext->need_phvs = false;
+		appinfo->translated_vars = (List *)
+			pullup_replace_vars((Node *) appinfo->translated_vars, rvcontext);
+		rvcontext->need_phvs = save_need_phvs;
+	}
+
+	/*
+	 * Replace references in the joinaliasvars lists of join RTEs.
+	 *
+	 * You might think that we could avoid using PHVs for alias vars of joins
+	 * below lowest_nulling_outer_join, but that doesn't work because the
+	 * alias vars could be referenced above that join; we need the PHVs to be
+	 * present in such references after the alias vars get flattened.  (It
+	 * might be worth trying to be smarter here, someday.)
+	 */
+	foreach(lc, parse->rtable)
+	{
+		RangeTblEntry *otherrte = (RangeTblEntry *) lfirst(lc);
+
+		if (otherrte->rtekind == RTE_JOIN)
+			otherrte->joinaliasvars = (List *)
+				pullup_replace_vars((Node *) otherrte->joinaliasvars,
+									rvcontext);
+	}
+}
+
+/*
+ * Helper routine for perform_pullup_replace_vars: do pullup_replace_vars on
+ * every expression in the jointree, without changing the jointree structure
+ * itself.  Ugly, but there's no other way...
  *
  * If we are at or below lowest_nulling_outer_join, we can suppress use of
  * PlaceHolderVars wrapped around the replacement expressions.
@@ -2119,8 +2415,8 @@ pullup_replace_vars_callback(Var *var,
 		 * If generating an expansion for a var of a named rowtype (ie, this
 		 * is a plain relation RTE), then we must include dummy items for
 		 * dropped columns.  If the var is RECORD (ie, this is a JOIN), then
-		 * omit dropped columns. Either way, attach column names to the
-		 * RowExpr for use of ruleutils.c.
+		 * omit dropped columns.  In the latter case, attach column names to
+		 * the RowExpr for use of the executor and ruleutils.c.
 		 *
 		 * In order to be able to cache the results, we always generate the
 		 * expansion with varlevelsup = 0, and then adjust if needed.
@@ -2141,7 +2437,7 @@ pullup_replace_vars_callback(Var *var,
 		rowexpr->args = fields;
 		rowexpr->row_typeid = var->vartype;
 		rowexpr->row_format = COERCE_IMPLICIT_CAST;
-		rowexpr->colnames = colnames;
+		rowexpr->colnames = (var->vartype == RECORDOID) ? colnames : NIL;
 		rowexpr->location = var->location;
 		newnode = (Node *) rowexpr;
 
@@ -2555,7 +2851,6 @@ reduce_outer_joins_pass2(Node *jtnode,
 		pass_nonnullable_rels = find_nonnullable_rels(f->quals);
 		pass_nonnullable_rels = bms_add_members(pass_nonnullable_rels,
 												nonnullable_rels);
-		/* NB: we rely on list_concat to not damage its second argument */
 		pass_nonnullable_vars = find_nonnullable_vars(f->quals);
 		pass_nonnullable_vars = list_concat(pass_nonnullable_vars,
 											nonnullable_vars);
@@ -2843,8 +3138,6 @@ void
 remove_useless_result_rtes(PlannerInfo *root)
 {
 	ListCell   *cell;
-	ListCell   *prev;
-	ListCell   *next;
 
 	/* Top level of jointree must always be a FromExpr */
 	Assert(IsA(root->parse->jointree, FromExpr));
@@ -2865,16 +3158,12 @@ remove_useless_result_rtes(PlannerInfo *root)
 	 * RTE_RESULT RTE; otherwise we'll generate a whole-row Var for the
 	 * RTE_RESULT, which the executor has no support for.
 	 */
-	prev = NULL;
-	for (cell = list_head(root->rowMarks); cell; cell = next)
+	foreach(cell, root->rowMarks)
 	{
 		PlanRowMark *rc = (PlanRowMark *) lfirst(cell);
 
-		next = lnext(cell);
 		if (rt_fetch(rc->rti, root->parse->rtable)->rtekind == RTE_RESULT)
-			root->rowMarks = list_delete_cell(root->rowMarks, cell, prev);
-		else
-			prev = cell;
+			root->rowMarks = foreach_delete_current(root->rowMarks, cell);
 	}
 }
 
@@ -2897,8 +3186,6 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode)
 		FromExpr   *f = (FromExpr *) jtnode;
 		Relids		result_relids = NULL;
 		ListCell   *cell;
-		ListCell   *prev;
-		ListCell   *next;
 
 		/*
 		 * We can drop RTE_RESULT rels from the fromlist so long as at least
@@ -2907,10 +3194,9 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode)
 		 * are needed by some sibling.  The cleanup transformation below would
 		 * reassign the PHVs to be computed at the join, which is too late for
 		 * the sibling's use.)  The easiest way to mechanize this rule is to
-		 * modify the list in-place, using list_delete_cell.
+		 * modify the list in-place.
 		 */
-		prev = NULL;
-		for (cell = list_head(f->fromlist); cell; cell = next)
+		foreach(cell, f->fromlist)
 		{
 			Node	   *child = (Node *) lfirst(cell);
 			int			varno;
@@ -2919,7 +3205,6 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode)
 			child = remove_useless_results_recurse(root, child);
 			/* ... and stick it back into the tree */
 			lfirst(cell) = child;
-			next = lnext(cell);
 
 			/*
 			 * If it's an RTE_RESULT with at least one sibling, and no sibling
@@ -2931,11 +3216,9 @@ remove_useless_results_recurse(PlannerInfo *root, Node *jtnode)
 				(varno = get_result_relid(root, child)) != 0 &&
 				!find_dependent_phvs_in_jointree(root, (Node *) f, varno))
 			{
-				f->fromlist = list_delete_cell(f->fromlist, cell, prev);
+				f->fromlist = foreach_delete_current(f->fromlist, cell);
 				result_relids = bms_add_member(result_relids, varno);
 			}
-			else
-				prev = cell;
 		}
 
 		/*

@@ -18,13 +18,13 @@
  * (In performance-critical code paths we can use pg_detoast_datum_packed
  * and the appropriate access macros to avoid that overhead.)  Note that this
  * conversion is performed directly in heap_form_tuple, without invoking
- * tuptoaster.c.
+ * heaptoast.c.
  *
  * This change will break any code that assumes it needn't detoast values
  * that have been put into a tuple but never sent to disk.  Hopefully there
  * are few such places.
  *
- * Varlenas still have alignment 'i' (or 'd') in pg_type/pg_attribute, since
+ * Varlenas still have alignment INT (or DOUBLE) in pg_type/pg_attribute, since
  * that's the normal requirement for the untoasted format.  But we ignore that
  * for the 1-byte-header format.  This means that the actual start position
  * of a varlena datum may vary depending on which format it has.  To determine
@@ -39,13 +39,13 @@
  * catalog, this is now risky: it's only safe if the preceding field is
  * word-aligned, so that there will never be any padding.
  *
- * We don't pack varlenas whose attstorage is 'p', since the data type
+ * We don't pack varlenas whose attstorage is PLAIN, since the data type
  * isn't expecting to have to detoast values.  This is used in particular
  * by oidvector and int2vector, which are used in the system catalogs
  * and we'd like to still refer to them via C struct offsets.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -57,17 +57,17 @@
 
 #include "postgres.h"
 
+#include "access/heaptoast.h"
 #ifdef PGXC
 #include "funcapi.h"
 #endif
 #include "access/hash.h"
 #include "access/sysattr.h"
 #include "access/tupdesc_details.h"
-#include "access/tuptoaster.h"
+#include "common/hashfn.h"
 #include "executor/tuptable.h"
 #include "utils/datum.h"
 #include "utils/expandeddatum.h"
-#include "utils/hashutils.h"
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 
@@ -83,10 +83,10 @@
  * This can be verified with pageinspect.
  */
 #define ATT_IS_PACKABLE(att) \
-	((att)->attlen == -1 && (att)->attstorage != 'p')
+	((att)->attlen == -1 && (att)->attstorage != TYPSTORAGE_PLAIN)
 /* Use this if it's already known varlena */
 #define VARLENA_ATT_IS_PACKABLE(att) \
-	((att)->attstorage != 'p')
+	((att)->attstorage != TYPSTORAGE_PLAIN)
 
 /*
  * Setup for cacheing pass-by-ref missing attributes in a way that survives
@@ -106,8 +106,7 @@ missing_hash(const void *key, Size keysize)
 {
 	const missing_cache_key *entry = (missing_cache_key *) key;
 
-	return DatumGetUInt32(
-		hash_any((const unsigned char *) entry->value, entry->len));
+	return hash_bytes((const unsigned char *) entry->value, entry->len);
 }
 
 static int
@@ -376,7 +375,7 @@ fill_val(Form_pg_attribute att,
 	{
 		/* cstring ... never needs alignment */
 		*infomask |= HEAP_HASVARWIDTH;
-		Assert(att->attalign == 'c');
+		Assert(att->attalign == TYPALIGN_CHAR);
 		data_length = strlen(DatumGetCString(datum)) + 1;
 		memcpy(data, DatumGetPointer(datum), data_length);
 	}
@@ -835,11 +834,11 @@ heap_copytuple_with_tuple(HeapTuple src, HeapTuple dest)
 }
 
 /*
- * Expand a tuple which has less attributes than required. For each attribute
+ * Expand a tuple which has fewer attributes than required. For each attribute
  * not present in the sourceTuple, if there is a missing value that will be
  * used. Otherwise the attribute will be set to NULL.
  *
- * The source tuple must have less attributes than the required number.
+ * The source tuple must have fewer attributes than the required number.
  *
  * Only one of targetHeapTuple and targetMinimalTuple may be supplied. The
  * other argument must be NULL.
@@ -852,7 +851,7 @@ expand_tuple(HeapTuple *targetHeapTuple,
 {
 	AttrMissing *attrmiss = NULL;
 	int			attnum;
-	int			firstmissingnum = 0;
+	int			firstmissingnum;
 	bool		hasNulls = HeapTupleHasNulls(sourceTuple);
 	HeapTupleHeader targetTHeader;
 	HeapTupleHeader sourceTHeader = sourceTuple->t_data;

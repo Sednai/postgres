@@ -9,7 +9,7 @@
  * exist, though, because mmap'd shmem provides no way to find out how
  * many processes are attached, which we need for interlocking purposes.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -32,6 +32,7 @@
 #endif
 
 #include "miscadmin.h"
+#include "port/pg_bitutils.h"
 #include "portability/mem.h"
 #include "storage/dsm.h"
 #include "storage/fd.h"
@@ -288,7 +289,7 @@ static void
 IpcMemoryDetach(int status, Datum shmaddr)
 {
 	/* Detach System V shared memory block. */
-	if (shmdt(DatumGetPointer(shmaddr)) < 0)
+	if (shmdt((void *) DatumGetPointer(shmaddr)) < 0)
 		elog(LOG, "shmdt(%p) failed: %m", DatumGetPointer(shmaddr));
 }
 
@@ -322,7 +323,7 @@ PGSharedMemoryIsInUse(unsigned long id1, unsigned long id2)
 	IpcMemoryState state;
 
 	state = PGSharedMemoryAttach((IpcMemoryId) id2, NULL, &memAddress);
-	if (memAddress && shmdt(memAddress) < 0)
+	if (memAddress && shmdt((void *) memAddress) < 0)
 		elog(LOG, "shmdt(%p) failed: %m", memAddress);
 	switch (state)
 	{
@@ -400,11 +401,12 @@ PGSharedMemoryAttach(IpcMemoryId shmId,
 
 	/*
 	 * Try to attach to the segment and see if it matches our data directory.
-	 * This avoids key-conflict problems on machines that are running several
-	 * postmasters under the same userid and port number.  (That would not
-	 * ordinarily happen in production, but it can happen during parallel
-	 * testing.  Since our test setups don't open any TCP ports on Unix, such
-	 * cases don't conflict otherwise.)
+	 * This avoids any risk of duplicate-shmem-key conflicts on machines that
+	 * are running several postmasters under the same userid.
+	 *
+	 * (When we're called from PGSharedMemoryCreate, this stat call is
+	 * duplicative; but since this isn't a high-traffic case it's not worth
+	 * trying to optimize.)
 	 */
 	if (stat(DataDir, &statbuf) < 0)
 		return SHMSTATE_ANALYSIS_FAILURE;	/* can't stat; be conservative */
@@ -454,10 +456,8 @@ PGSharedMemoryAttach(IpcMemoryId shmId,
 	return shmStat.shm_nattch == 0 ? SHMSTATE_UNATTACHED : SHMSTATE_ATTACHED;
 }
 
-#ifdef MAP_HUGETLB
-
 /*
- * Identify the huge page size to use.
+ * Identify the huge page size to use, and compute the related mmap flags.
  *
  * Some Linux kernel versions have a bug causing mmap() to fail on requests
  * that are not a multiple of the hugepage size.  Versions without that bug
@@ -473,25 +473,19 @@ PGSharedMemoryAttach(IpcMemoryId shmId,
  * hugepage sizes, we might want to think about more invasive strategies,
  * such as increasing shared_buffers to absorb the extra space.
  *
- * Returns the (real or assumed) page size into *hugepagesize,
- * and the hugepage-related mmap flags to use into *mmap_flags.
- *
- * Currently *mmap_flags is always just MAP_HUGETLB.  Someday, on systems
- * that support it, we might OR in additional bits to specify a particular
- * non-default huge page size.
+ * Returns the (real, assumed or config provided) page size into
+ * *hugepagesize, and the hugepage-related mmap flags to use into
+ * *mmap_flags if requested by the caller.  If huge pages are not supported,
+ * *hugepagesize and *mmap_flags are set to 0.
  */
-static void
+void
 GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 {
-	/*
-	 * If we fail to find out the system's default huge page size, assume it
-	 * is 2MB.  This will work fine when the actual size is less.  If it's
-	 * more, we might get mmap() or munmap() failures due to unaligned
-	 * requests; but at this writing, there are no reports of any non-Linux
-	 * systems being picky about that.
-	 */
-	*hugepagesize = 2 * 1024 * 1024;
-	*mmap_flags = MAP_HUGETLB;
+#ifdef MAP_HUGETLB
+
+	Size		default_hugepagesize = 0;
+	Size		hugepagesize_local = 0;
+	int			mmap_flags_local = 0;
 
 	/*
 	 * System-dependent code to find out the default huge page size.
@@ -500,6 +494,7 @@ GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 	 * nnnn kB".  Ignore any failures, falling back to the preset default.
 	 */
 #ifdef __linux__
+
 	{
 		FILE	   *fp = AllocateFile("/proc/meminfo", "r");
 		char		buf[128];
@@ -514,7 +509,7 @@ GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 				{
 					if (ch == 'k')
 					{
-						*hugepagesize = sz * (Size) 1024;
+						default_hugepagesize = sz * (Size) 1024;
 						break;
 					}
 					/* We could accept other units besides kB, if needed */
@@ -524,9 +519,60 @@ GetHugePageSize(Size *hugepagesize, int *mmap_flags)
 		}
 	}
 #endif							/* __linux__ */
-}
+
+	if (huge_page_size != 0)
+	{
+		/* If huge page size is requested explicitly, use that. */
+		hugepagesize_local = (Size) huge_page_size * 1024;
+	}
+	else if (default_hugepagesize != 0)
+	{
+		/* Otherwise use the system default, if we have it. */
+		hugepagesize_local = default_hugepagesize;
+	}
+	else
+	{
+		/*
+		 * If we fail to find out the system's default huge page size, or no
+		 * huge page size is requested explicitly, assume it is 2MB. This will
+		 * work fine when the actual size is less.  If it's more, we might get
+		 * mmap() or munmap() failures due to unaligned requests; but at this
+		 * writing, there are no reports of any non-Linux systems being picky
+		 * about that.
+		 */
+		hugepagesize_local = 2 * 1024 * 1024;
+	}
+
+	mmap_flags_local = MAP_HUGETLB;
+
+	/*
+	 * On recent enough Linux, also include the explicit page size, if
+	 * necessary.
+	 */
+#if defined(MAP_HUGE_MASK) && defined(MAP_HUGE_SHIFT)
+	if (hugepagesize_local != default_hugepagesize)
+	{
+		int			shift = pg_ceil_log2_64(hugepagesize_local);
+
+		mmap_flags_local |= (shift & MAP_HUGE_MASK) << MAP_HUGE_SHIFT;
+	}
+#endif
+
+	/* assign the results found */
+	if (mmap_flags)
+		*mmap_flags = mmap_flags_local;
+	if (hugepagesize)
+		*hugepagesize = hugepagesize_local;
+
+#else
+
+	if (hugepagesize)
+		*hugepagesize = 0;
+	if (mmap_flags)
+		*mmap_flags = 0;
 
 #endif							/* MAP_HUGETLB */
+}
 
 /*
  * Creates an anonymous mmap()ed shared memory segment.
@@ -592,7 +638,7 @@ CreateAnonymousSegment(Size *size)
 						 "(currently %zu bytes), reduce PostgreSQL's shared "
 						 "memory usage, perhaps by reducing shared_buffers or "
 						 "max_connections.",
-						 *size) : 0));
+						 allocsize) : 0));
 	}
 
 	*size = allocsize;
@@ -627,12 +673,9 @@ AnonymousShmemDetach(int status, Datum arg)
  * we do not fail upon collision with foreign shmem segments.  The idea here
  * is to detect and re-use keys that may have been assigned by a crashed
  * postmaster or backend.
- *
- * The port number is passed for possible use as a key (for SysV, we use
- * it to generate the starting shmem key).
  */
 PGShmemHeader *
-PGSharedMemoryCreate(Size size, int port,
+PGSharedMemoryCreate(Size size,
 					 PGShmemHeader **shim)
 {
 	IpcMemoryKey NextShmemSegID;
@@ -640,6 +683,17 @@ PGSharedMemoryCreate(Size size, int port,
 	PGShmemHeader *hdr;
 	struct stat statbuf;
 	Size		sysvsize;
+
+	/*
+	 * We use the data directory's ID info (inode and device numbers) to
+	 * positively identify shmem segments associated with this data dir, and
+	 * also as seeds for searching for a free shmem key.
+	 */
+	if (stat(DataDir, &statbuf) < 0)
+		ereport(FATAL,
+				(errcode_for_file_access(),
+				 errmsg("could not stat data directory \"%s\": %m",
+						DataDir)));
 
 	/* Complain if hugepages demanded but we can't possibly support them */
 #if !defined(MAP_HUGETLB)
@@ -675,10 +729,10 @@ PGSharedMemoryCreate(Size size, int port,
 	/*
 	 * Loop till we find a free IPC key.  Trust CreateDataDirLockFile() to
 	 * ensure no more than one postmaster per data directory can enter this
-	 * loop simultaneously.  (CreateDataDirLockFile() does not ensure that,
-	 * but prefer fixing it over coping here.)
+	 * loop simultaneously.  (CreateDataDirLockFile() does not entirely ensure
+	 * that, but prefer fixing it over coping here.)
 	 */
-	NextShmemSegID = 1 + port * 1000;
+	NextShmemSegID = statbuf.st_ino;
 
 	for (;;)
 	{
@@ -753,7 +807,7 @@ PGSharedMemoryCreate(Size size, int port,
 				break;
 		}
 
-		if (oldhdr && shmdt(oldhdr) < 0)
+		if (oldhdr && shmdt((void *) oldhdr) < 0)
 			elog(LOG, "shmdt(%p) failed: %m", oldhdr);
 	}
 
@@ -764,11 +818,6 @@ PGSharedMemoryCreate(Size size, int port,
 	hdr->dsm_control = 0;
 
 	/* Fill in the data directory ID info, too */
-	if (stat(DataDir, &statbuf) < 0)
-		ereport(FATAL,
-				(errcode_for_file_access(),
-				 errmsg("could not stat data directory \"%s\": %m",
-						DataDir)));
 	hdr->device = statbuf.st_dev;
 	hdr->inode = statbuf.st_ino;
 

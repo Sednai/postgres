@@ -64,7 +64,7 @@ alter table idxpart attach partition idxpart1 for values from (0) to (10);
 \d+ idxpart1_a_idx
 \d+ idxpart1_b_c_idx
 
--- ALTER TABLE when attaching or detaching an index to a partition.
+-- Forbid ALTER TABLE when attaching or detaching an index to a partition.
 create index idxpart_c on only idxpart (c);
 create index idxpart1_c on idxpart1 (c);
 alter table idxpart_c attach partition idxpart1_c for values from (10) to (20);

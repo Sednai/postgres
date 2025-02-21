@@ -46,7 +46,7 @@
  * exported rather than being "static" in this file.)
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -56,26 +56,26 @@
  */
 #include "postgres.h"
 
-#include "access/tuptoaster.h"
+#include "access/heaptoast.h"
 #include "catalog/pg_type.h"
 #include "commands/sequence.h"
 #include "executor/execExpr.h"
 #include "executor/nodeSubplan.h"
 #include "funcapi.h"
-#include "utils/memutils.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parsetree.h"
 #include "pgstat.h"
+#include "utils/array.h"
 #include "utils/builtins.h"
 #include "utils/date.h"
 #include "utils/datum.h"
 #include "utils/expandedrecord.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
 #include "utils/xml.h"
-
 
 /*
  * Use computed-goto-based opcode dispatch when computed gotos are available.
@@ -154,12 +154,76 @@ static void ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
 static Datum ExecJustInnerVar(ExprState *state, ExprContext *econtext, bool *isnull);
 static Datum ExecJustOuterVar(ExprState *state, ExprContext *econtext, bool *isnull);
 static Datum ExecJustScanVar(ExprState *state, ExprContext *econtext, bool *isnull);
-static Datum ExecJustConst(ExprState *state, ExprContext *econtext, bool *isnull);
 static Datum ExecJustAssignInnerVar(ExprState *state, ExprContext *econtext, bool *isnull);
 static Datum ExecJustAssignOuterVar(ExprState *state, ExprContext *econtext, bool *isnull);
 static Datum ExecJustAssignScanVar(ExprState *state, ExprContext *econtext, bool *isnull);
 static Datum ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull);
+static Datum ExecJustConst(ExprState *state, ExprContext *econtext, bool *isnull);
+static Datum ExecJustInnerVarVirt(ExprState *state, ExprContext *econtext, bool *isnull);
+static Datum ExecJustOuterVarVirt(ExprState *state, ExprContext *econtext, bool *isnull);
+static Datum ExecJustScanVarVirt(ExprState *state, ExprContext *econtext, bool *isnull);
+static Datum ExecJustAssignInnerVarVirt(ExprState *state, ExprContext *econtext, bool *isnull);
+static Datum ExecJustAssignOuterVarVirt(ExprState *state, ExprContext *econtext, bool *isnull);
+static Datum ExecJustAssignScanVarVirt(ExprState *state, ExprContext *econtext, bool *isnull);
 
+/* execution helper functions */
+static pg_attribute_always_inline void ExecAggPlainTransByVal(AggState *aggstate,
+															  AggStatePerTrans pertrans,
+															  AggStatePerGroup pergroup,
+															  ExprContext *aggcontext,
+															  int setno);
+static pg_attribute_always_inline void ExecAggPlainTransByRef(AggState *aggstate,
+															  AggStatePerTrans pertrans,
+															  AggStatePerGroup pergroup,
+															  ExprContext *aggcontext,
+															  int setno);
+
+/*
+ * ScalarArrayOpExprHashEntry
+ * 		Hash table entry type used during EEOP_HASHED_SCALARARRAYOP
+ */
+typedef struct ScalarArrayOpExprHashEntry
+{
+	Datum		key;
+	uint32		status;			/* hash status */
+	uint32		hash;			/* hash value (cached) */
+} ScalarArrayOpExprHashEntry;
+
+#define SH_PREFIX saophash
+#define SH_ELEMENT_TYPE ScalarArrayOpExprHashEntry
+#define SH_KEY_TYPE Datum
+#define SH_SCOPE static inline
+#define SH_DECLARE
+#include "lib/simplehash.h"
+
+static bool saop_hash_element_match(struct saophash_hash *tb, Datum key1,
+									Datum key2);
+static uint32 saop_element_hash(struct saophash_hash *tb, Datum key);
+
+/*
+ * ScalarArrayOpExprHashTable
+ *		Hash table for EEOP_HASHED_SCALARARRAYOP
+ */
+typedef struct ScalarArrayOpExprHashTable
+{
+	saophash_hash *hashtab;		/* underlying hash table */
+	struct ExprEvalStep *op;
+	FmgrInfo	hash_finfo;		/* function's lookup data */
+	FunctionCallInfoBaseData hash_fcinfo_data;	/* arguments etc */
+} ScalarArrayOpExprHashTable;
+
+/* Define parameters for ScalarArrayOpExpr hash table code generation. */
+#define SH_PREFIX saophash
+#define SH_ELEMENT_TYPE ScalarArrayOpExprHashEntry
+#define SH_KEY_TYPE Datum
+#define SH_KEY key
+#define SH_HASH_KEY(tb, key) saop_element_hash(tb, key)
+#define SH_EQUAL(tb, a, b) saop_hash_element_match(tb, a, b)
+#define SH_SCOPE static inline
+#define SH_STORE_HASH
+#define SH_GET_HASH(tb, a) a->hash
+#define SH_DEFINE
+#include "lib/simplehash.h"
 
 /*
  * Prepare ExprState for interpreted execution.
@@ -254,11 +318,45 @@ ExecReadyInterpretedExpr(ExprState *state)
 			return;
 		}
 	}
-	else if (state->steps_len == 2 &&
-			 state->steps[0].opcode == EEOP_CONST)
+	else if (state->steps_len == 2)
 	{
-		state->evalfunc_private = (void *) ExecJustConst;
-		return;
+		ExprEvalOp	step0 = state->steps[0].opcode;
+
+		if (step0 == EEOP_CONST)
+		{
+			state->evalfunc_private = (void *) ExecJustConst;
+			return;
+		}
+		else if (step0 == EEOP_INNER_VAR)
+		{
+			state->evalfunc_private = (void *) ExecJustInnerVarVirt;
+			return;
+		}
+		else if (step0 == EEOP_OUTER_VAR)
+		{
+			state->evalfunc_private = (void *) ExecJustOuterVarVirt;
+			return;
+		}
+		else if (step0 == EEOP_SCAN_VAR)
+		{
+			state->evalfunc_private = (void *) ExecJustScanVarVirt;
+			return;
+		}
+		else if (step0 == EEOP_ASSIGN_INNER_VAR)
+		{
+			state->evalfunc_private = (void *) ExecJustAssignInnerVarVirt;
+			return;
+		}
+		else if (step0 == EEOP_ASSIGN_OUTER_VAR)
+		{
+			state->evalfunc_private = (void *) ExecJustAssignOuterVarVirt;
+			return;
+		}
+		else if (step0 == EEOP_ASSIGN_SCAN_VAR)
+		{
+			state->evalfunc_private = (void *) ExecJustAssignScanVarVirt;
+			return;
+		}
 	}
 
 #if defined(EEO_USE_COMPUTED_GOTO)
@@ -267,18 +365,14 @@ ExecReadyInterpretedExpr(ExprState *state)
 	 * In the direct-threaded implementation, replace each opcode with the
 	 * address to jump to.  (Use ExecEvalStepOp() to get back the opcode.)
 	 */
+	for (int off = 0; off < state->steps_len; off++)
 	{
-		int			off;
+		ExprEvalStep *op = &state->steps[off];
 
-		for (off = 0; off < state->steps_len; off++)
-		{
-			ExprEvalStep *op = &state->steps[off];
-
-			op->opcode = EEO_OPCODE(op->opcode);
-		}
-
-		state->flags |= EEO_FLAG_DIRECT_THREADED;
+		op->opcode = EEO_OPCODE(op->opcode);
 	}
+
+	state->flags |= EEO_FLAG_DIRECT_THREADED;
 #endif							/* EEO_USE_COMPUTED_GOTO */
 
 	state->evalfunc_private = (void *) ExecInterpExpr;
@@ -370,7 +464,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_FIELDSELECT,
 		&&CASE_EEOP_FIELDSTORE_DEFORM,
 		&&CASE_EEOP_FIELDSTORE_FORM,
-		&&CASE_EEOP_SBSREF_SUBSCRIPT,
+		&&CASE_EEOP_SBSREF_SUBSCRIPTS,
 		&&CASE_EEOP_SBSREF_OLD,
 		&&CASE_EEOP_SBSREF_ASSIGN,
 		&&CASE_EEOP_SBSREF_FETCH,
@@ -379,20 +473,23 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		&&CASE_EEOP_DOMAIN_CHECK,
 		&&CASE_EEOP_CONVERT_ROWTYPE,
 		&&CASE_EEOP_SCALARARRAYOP,
+		&&CASE_EEOP_HASHED_SCALARARRAYOP,
 		&&CASE_EEOP_XMLEXPR,
 		&&CASE_EEOP_AGGREF,
 		&&CASE_EEOP_GROUPING_FUNC,
 		&&CASE_EEOP_WINDOW_FUNC,
 		&&CASE_EEOP_SUBPLAN,
-		&&CASE_EEOP_ALTERNATIVE_SUBPLAN,
 		&&CASE_EEOP_AGG_STRICT_DESERIALIZE,
 		&&CASE_EEOP_AGG_DESERIALIZE,
 		&&CASE_EEOP_AGG_STRICT_INPUT_CHECK_ARGS,
 		&&CASE_EEOP_AGG_STRICT_INPUT_CHECK_NULLS,
-		&&CASE_EEOP_AGG_INIT_TRANS,
-		&&CASE_EEOP_AGG_STRICT_TRANS_CHECK,
+		&&CASE_EEOP_AGG_PLAIN_PERGROUP_NULLCHECK,
+		&&CASE_EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL,
+		&&CASE_EEOP_AGG_PLAIN_TRANS_STRICT_BYVAL,
 		&&CASE_EEOP_AGG_PLAIN_TRANS_BYVAL,
-		&&CASE_EEOP_AGG_PLAIN_TRANS,
+		&&CASE_EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYREF,
+		&&CASE_EEOP_AGG_PLAIN_TRANS_STRICT_BYREF,
+		&&CASE_EEOP_AGG_PLAIN_TRANS_BYREF,
 		&&CASE_EEOP_AGG_ORDERED_TRANS_DATUM,
 		&&CASE_EEOP_AGG_ORDERED_TRANS_TUPLE,
 		&&CASE_EEOP_LAST
@@ -638,11 +735,11 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 			NullableDatum *args = fcinfo->args;
-			int			argno;
+			int			nargs = op->d.func.nargs;
 			Datum		d;
 
 			/* strict function, so check for NULL args */
-			for (argno = 0; argno < op->d.func.nargs; argno++)
+			for (int argno = 0; argno < nargs; argno++)
 			{
 				if (args[argno].isnull)
 				{
@@ -1176,11 +1273,23 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			 * The arguments are already evaluated into fcinfo->args.
 			 */
 			FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
+			Datum		save_arg0 = fcinfo->args[0].value;
 
 			/* if either argument is NULL they can't be equal */
 			if (!fcinfo->args[0].isnull && !fcinfo->args[1].isnull)
 			{
 				Datum		result;
+
+				/*
+				 * If first argument is of varlena type, it might be an
+				 * expanded datum.  We need to ensure that the value passed to
+				 * the comparison function is a read-only pointer.  However,
+				 * if we end by returning the first argument, that will be the
+				 * original read-write pointer if it was read-write.
+				 */
+				if (op->d.func.make_ro)
+					fcinfo->args[0].value =
+						MakeExpandedObjectReadOnlyInternal(save_arg0);
 
 				fcinfo->isnull = false;
 				result = op->d.func.fn_addr(fcinfo);
@@ -1196,7 +1305,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			}
 
 			/* Arguments aren't equal, so return the first one */
-			*op->resvalue = fcinfo->args[0].value;
+			*op->resvalue = save_arg0;
 			*op->resnull = fcinfo->args[0].isnull;
 
 			EEO_NEXT();
@@ -1352,12 +1461,10 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			EEO_NEXT();
 		}
 
-		EEO_CASE(EEOP_SBSREF_SUBSCRIPT)
+		EEO_CASE(EEOP_SBSREF_SUBSCRIPTS)
 		{
-			/* Process an array subscript */
-
-			/* too complex for an inline implementation */
-			if (ExecEvalSubscriptingRef(state, op))
+			/* Precheck SubscriptingRef subscript(s) */
+			if (op->d.sbsref_subscript.subscriptfunc(state, op, econtext))
 			{
 				EEO_NEXT();
 			}
@@ -1369,37 +1476,11 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		}
 
 		EEO_CASE(EEOP_SBSREF_OLD)
+			EEO_CASE(EEOP_SBSREF_ASSIGN)
+			EEO_CASE(EEOP_SBSREF_FETCH)
 		{
-			/*
-			 * Fetch the old value in an sbsref assignment, in case it's
-			 * referenced (via a CaseTestExpr) inside the assignment
-			 * expression.
-			 */
-
-			/* too complex for an inline implementation */
-			ExecEvalSubscriptingRefOld(state, op);
-
-			EEO_NEXT();
-		}
-
-		/*
-		 * Perform SubscriptingRef assignment
-		 */
-		EEO_CASE(EEOP_SBSREF_ASSIGN)
-		{
-			/* too complex for an inline implementation */
-			ExecEvalSubscriptingRefAssign(state, op);
-
-			EEO_NEXT();
-		}
-
-		/*
-		 * Fetch subset of an array.
-		 */
-		EEO_CASE(EEOP_SBSREF_FETCH)
-		{
-			/* too complex for an inline implementation */
-			ExecEvalSubscriptingRefFetch(state, op);
+			/* Perform a SubscriptingRef fetch or assignment */
+			op->d.sbsref.subscriptfunc(state, op, econtext);
 
 			EEO_NEXT();
 		}
@@ -1416,6 +1497,14 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		{
 			/* too complex for an inline implementation */
 			ExecEvalScalarArrayOp(state, op);
+
+			EEO_NEXT();
+		}
+
+		EEO_CASE(EEOP_HASHED_SCALARARRAYOP)
+		{
+			/* too complex for an inline implementation */
+			ExecEvalHashedScalarArrayOp(state, op, econtext);
 
 			EEO_NEXT();
 		}
@@ -1450,12 +1539,12 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			 * Returns a Datum whose value is the precomputed aggregate value
 			 * found in the given expression context.
 			 */
-			AggrefExprState *aggref = op->d.aggref.astate;
+			int			aggno = op->d.aggref.aggno;
 
 			Assert(econtext->ecxt_aggvalues != NULL);
 
-			*op->resvalue = econtext->ecxt_aggvalues[aggref->aggno];
-			*op->resnull = econtext->ecxt_aggnulls[aggref->aggno];
+			*op->resvalue = econtext->ecxt_aggvalues[aggno];
+			*op->resnull = econtext->ecxt_aggnulls[aggno];
 
 			EEO_NEXT();
 		}
@@ -1491,14 +1580,6 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			EEO_NEXT();
 		}
 
-		EEO_CASE(EEOP_ALTERNATIVE_SUBPLAN)
-		{
-			/* too complex for an inline implementation */
-			ExecEvalAlternativeSubPlan(state, op, econtext);
-
-			EEO_NEXT();
-		}
-
 		/* evaluate a strict aggregate deserialization function */
 		EEO_CASE(EEOP_AGG_STRICT_DESERIALIZE)
 		{
@@ -1513,7 +1594,7 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		EEO_CASE(EEOP_AGG_DESERIALIZE)
 		{
 			FunctionCallInfo fcinfo = op->d.agg_deserialize.fcinfo_data;
-			AggState   *aggstate = op->d.agg_deserialize.aggstate;
+			AggState   *aggstate = castNode(AggState, state->parent);
 			MemoryContext oldContext;
 
 			/*
@@ -1533,27 +1614,13 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 		 * Check that a strict aggregate transition / combination function's
 		 * input is not NULL.
 		 */
-		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_NULLS)
-		{
-			int			argno;
-			bool	   *nulls = op->d.agg_strict_input_check.nulls;
-			int			nargs = op->d.agg_strict_input_check.nargs;
-
-			for (argno = 0; argno < nargs; argno++)
-			{
-				if (nulls[argno])
-					EEO_JUMP(op->d.agg_strict_input_check.jumpnull);
-			}
-			EEO_NEXT();
-		}
 
 		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_ARGS)
 		{
-			int			argno;
 			NullableDatum *args = op->d.agg_strict_input_check.args;
 			int			nargs = op->d.agg_strict_input_check.nargs;
 
-			for (argno = 0; argno < nargs; argno++)
+			for (int argno = 0; argno < nargs; argno++)
 			{
 				if (args[argno].isnull)
 					EEO_JUMP(op->d.agg_strict_input_check.jumpnull);
@@ -1561,172 +1628,160 @@ ExecInterpExpr(ExprState *state, ExprContext *econtext, bool *isnull)
 			EEO_NEXT();
 		}
 
-		/*
-		 * Initialize an aggregate's first value if necessary.
-		 */
-		EEO_CASE(EEOP_AGG_INIT_TRANS)
+		EEO_CASE(EEOP_AGG_STRICT_INPUT_CHECK_NULLS)
 		{
-			AggState   *aggstate;
-			AggStatePerGroup pergroup;
+			bool	   *nulls = op->d.agg_strict_input_check.nulls;
+			int			nargs = op->d.agg_strict_input_check.nargs;
 
-			aggstate = op->d.agg_init_trans.aggstate;
-			pergroup = &aggstate->all_pergroups
-				[op->d.agg_init_trans.setoff]
-				[op->d.agg_init_trans.transno];
+			for (int argno = 0; argno < nargs; argno++)
+			{
+				if (nulls[argno])
+					EEO_JUMP(op->d.agg_strict_input_check.jumpnull);
+			}
+			EEO_NEXT();
+		}
 
-			/* If transValue has not yet been initialized, do so now. */
+		/*
+		 * Check for a NULL pointer to the per-group states.
+		 */
+
+		EEO_CASE(EEOP_AGG_PLAIN_PERGROUP_NULLCHECK)
+		{
+			AggState   *aggstate = castNode(AggState, state->parent);
+			AggStatePerGroup pergroup_allaggs =
+			aggstate->all_pergroups[op->d.agg_plain_pergroup_nullcheck.setoff];
+
+			if (pergroup_allaggs == NULL)
+				EEO_JUMP(op->d.agg_plain_pergroup_nullcheck.jumpnull);
+
+			EEO_NEXT();
+		}
+
+		/*
+		 * Different types of aggregate transition functions are implemented
+		 * as different types of steps, to avoid incurring unnecessary
+		 * overhead.  There's a step type for each valid combination of having
+		 * a by value / by reference transition type, [not] needing to the
+		 * initialize the transition value for the first row in a group from
+		 * input, and [not] strict transition function.
+		 *
+		 * Could optimize further by splitting off by-reference for
+		 * fixed-length types, but currently that doesn't seem worth it.
+		 */
+
+		EEO_CASE(EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL)
+		{
+			AggState   *aggstate = castNode(AggState, state->parent);
+			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
+
+			Assert(pertrans->transtypeByVal);
+
 			if (pergroup->noTransValue)
 			{
-				AggStatePerTrans pertrans = op->d.agg_init_trans.pertrans;
-
-				aggstate->curaggcontext = op->d.agg_init_trans.aggcontext;
-				aggstate->current_set = op->d.agg_init_trans.setno;
-
-				ExecAggInitGroup(aggstate, pertrans, pergroup);
-
+				/* If transValue has not yet been initialized, do so now. */
+				ExecAggInitGroup(aggstate, pertrans, pergroup,
+								 op->d.agg_trans.aggcontext);
 				/* copied trans value from input, done this round */
-				EEO_JUMP(op->d.agg_init_trans.jumpnull);
+			}
+			else if (likely(!pergroup->transValueIsNull))
+			{
+				/* invoke transition function, unless prevented by strictness */
+				ExecAggPlainTransByVal(aggstate, pertrans, pergroup,
+									   op->d.agg_trans.aggcontext,
+									   op->d.agg_trans.setno);
 			}
 
 			EEO_NEXT();
 		}
 
-		/* check that a strict aggregate's input isn't NULL */
-		EEO_CASE(EEOP_AGG_STRICT_TRANS_CHECK)
+		/* see comments above EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL */
+		EEO_CASE(EEOP_AGG_PLAIN_TRANS_STRICT_BYVAL)
 		{
-			AggState   *aggstate;
-			AggStatePerGroup pergroup;
-
-			aggstate = op->d.agg_strict_trans_check.aggstate;
-			pergroup = &aggstate->all_pergroups
-				[op->d.agg_strict_trans_check.setoff]
-				[op->d.agg_strict_trans_check.transno];
-
-			if (unlikely(pergroup->transValueIsNull))
-				EEO_JUMP(op->d.agg_strict_trans_check.jumpnull);
-
-			EEO_NEXT();
-		}
-
-		/*
-		 * Evaluate aggregate transition / combine function that has a
-		 * by-value transition type. That's a separate case from the
-		 * by-reference implementation because it's a bit simpler.
-		 */
-		EEO_CASE(EEOP_AGG_PLAIN_TRANS_BYVAL)
-		{
-			AggState   *aggstate;
-			AggStatePerTrans pertrans;
-			AggStatePerGroup pergroup;
-			FunctionCallInfo fcinfo;
-			MemoryContext oldContext;
-			Datum		newVal;
-
-			aggstate = op->d.agg_trans.aggstate;
-			pertrans = op->d.agg_trans.pertrans;
-
-			pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			AggState   *aggstate = castNode(AggState, state->parent);
+			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(pertrans->transtypeByVal);
 
-			fcinfo = pertrans->transfn_fcinfo;
-
-			/* cf. select_current_set() */
-			aggstate->curaggcontext = op->d.agg_trans.aggcontext;
-			aggstate->current_set = op->d.agg_trans.setno;
-
-			/* set up aggstate->curpertrans for AggGetAggref() */
-			aggstate->curpertrans = pertrans;
-
-			/* invoke transition function in per-tuple context */
-			oldContext = MemoryContextSwitchTo(aggstate->tmpcontext->ecxt_per_tuple_memory);
-
-			fcinfo->args[0].value = pergroup->transValue;
-			fcinfo->args[0].isnull = pergroup->transValueIsNull;
-			fcinfo->isnull = false; /* just in case transfn doesn't set it */
-
-			newVal = FunctionCallInvoke(fcinfo);
-
-			pergroup->transValue = newVal;
-			pergroup->transValueIsNull = fcinfo->isnull;
-
-			MemoryContextSwitchTo(oldContext);
+			if (likely(!pergroup->transValueIsNull))
+				ExecAggPlainTransByVal(aggstate, pertrans, pergroup,
+									   op->d.agg_trans.aggcontext,
+									   op->d.agg_trans.setno);
 
 			EEO_NEXT();
 		}
 
-		/*
-		 * Evaluate aggregate transition / combine function that has a
-		 * by-reference transition type.
-		 *
-		 * Could optimize a bit further by splitting off by-reference
-		 * fixed-length types, but currently that doesn't seem worth it.
-		 */
-		EEO_CASE(EEOP_AGG_PLAIN_TRANS)
+		/* see comments above EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL */
+		EEO_CASE(EEOP_AGG_PLAIN_TRANS_BYVAL)
 		{
-			AggState   *aggstate;
-			AggStatePerTrans pertrans;
-			AggStatePerGroup pergroup;
-			FunctionCallInfo fcinfo;
-			MemoryContext oldContext;
-			Datum		newVal;
+			AggState   *aggstate = castNode(AggState, state->parent);
+			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
-			aggstate = op->d.agg_trans.aggstate;
-			pertrans = op->d.agg_trans.pertrans;
+			Assert(pertrans->transtypeByVal);
 
-			pergroup = &aggstate->all_pergroups
-				[op->d.agg_trans.setoff]
-				[op->d.agg_trans.transno];
+			ExecAggPlainTransByVal(aggstate, pertrans, pergroup,
+								   op->d.agg_trans.aggcontext,
+								   op->d.agg_trans.setno);
+
+			EEO_NEXT();
+		}
+
+		/* see comments above EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL */
+		EEO_CASE(EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYREF)
+		{
+			AggState   *aggstate = castNode(AggState, state->parent);
+			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
 			Assert(!pertrans->transtypeByVal);
 
-			fcinfo = pertrans->transfn_fcinfo;
+			if (pergroup->noTransValue)
+				ExecAggInitGroup(aggstate, pertrans, pergroup,
+								 op->d.agg_trans.aggcontext);
+			else if (likely(!pergroup->transValueIsNull))
+				ExecAggPlainTransByRef(aggstate, pertrans, pergroup,
+									   op->d.agg_trans.aggcontext,
+									   op->d.agg_trans.setno);
 
-			/* cf. select_current_set() */
-			aggstate->curaggcontext = op->d.agg_trans.aggcontext;
-			aggstate->current_set = op->d.agg_trans.setno;
+			EEO_NEXT();
+		}
 
-			/* set up aggstate->curpertrans for AggGetAggref() */
-			aggstate->curpertrans = pertrans;
+		/* see comments above EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL */
+		EEO_CASE(EEOP_AGG_PLAIN_TRANS_STRICT_BYREF)
+		{
+			AggState   *aggstate = castNode(AggState, state->parent);
+			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
-			/* invoke transition function in per-tuple context */
-			oldContext = MemoryContextSwitchTo(aggstate->tmpcontext->ecxt_per_tuple_memory);
+			Assert(!pertrans->transtypeByVal);
 
-			fcinfo->args[0].value = pergroup->transValue;
-			fcinfo->args[0].isnull = pergroup->transValueIsNull;
-			fcinfo->isnull = false; /* just in case transfn doesn't set it */
+			if (likely(!pergroup->transValueIsNull))
+				ExecAggPlainTransByRef(aggstate, pertrans, pergroup,
+									   op->d.agg_trans.aggcontext,
+									   op->d.agg_trans.setno);
+			EEO_NEXT();
+		}
 
-			newVal = FunctionCallInvoke(fcinfo);
+		/* see comments above EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL */
+		EEO_CASE(EEOP_AGG_PLAIN_TRANS_BYREF)
+		{
+			AggState   *aggstate = castNode(AggState, state->parent);
+			AggStatePerTrans pertrans = op->d.agg_trans.pertrans;
+			AggStatePerGroup pergroup =
+			&aggstate->all_pergroups[op->d.agg_trans.setoff][op->d.agg_trans.transno];
 
-			/*
-			 * For pass-by-ref datatype, must copy the new value into
-			 * aggcontext and free the prior transValue.  But if transfn
-			 * returned a pointer to its first input, we don't need to do
-			 * anything.  Also, if transfn returned a pointer to a R/W
-			 * expanded object that is already a child of the aggcontext,
-			 * assume we can adopt that value without copying it.
-			 *
-			 * It's safe to compare newVal with pergroup->transValue without
-			 * regard for either being NULL, because ExecAggTransReparent()
-			 * takes care to set transValue to 0 when NULL. Otherwise we could
-			 * end up accidentally not reparenting, when the transValue has
-			 * the same numerical value as newValue, despite being NULL.  This
-			 * is a somewhat hot path, making it undesirable to instead solve
-			 * this with another branch for the common case of the transition
-			 * function returning its (modified) input argument.
-			 */
-			if (DatumGetPointer(newVal) != DatumGetPointer(pergroup->transValue))
-				newVal = ExecAggTransReparent(aggstate, pertrans,
-											  newVal, fcinfo->isnull,
-											  pergroup->transValue,
-											  pergroup->transValueIsNull);
+			Assert(!pertrans->transtypeByVal);
 
-			pergroup->transValue = newVal;
-			pergroup->transValueIsNull = fcinfo->isnull;
-
-			MemoryContextSwitchTo(oldContext);
+			ExecAggPlainTransByRef(aggstate, pertrans, pergroup,
+								   op->d.agg_trans.aggcontext,
+								   op->d.agg_trans.setno);
 
 			EEO_NEXT();
 		}
@@ -1790,7 +1845,6 @@ ExecInterpExprStillValid(ExprState *state, ExprContext *econtext, bool *isNull)
 void
 CheckExprStillValid(ExprState *state, ExprContext *econtext)
 {
-	int			i = 0;
 	TupleTableSlot *innerslot;
 	TupleTableSlot *outerslot;
 	TupleTableSlot *scanslot;
@@ -1799,7 +1853,7 @@ CheckExprStillValid(ExprState *state, ExprContext *econtext)
 	outerslot = econtext->ecxt_outertuple;
 	scanslot = econtext->ecxt_scantuple;
 
-	for (i = 0; i < state->steps_len; i++)
+	for (int i = 0; i < state->steps_len; i++)
 	{
 		ExprEvalStep *op = &state->steps[i];
 
@@ -2002,13 +2056,12 @@ get_cached_rowtype(Oid type_id, int32 typmod,
  * Fast-path functions, for very simple expressions
  */
 
-/* Simple reference to inner Var */
-static Datum
-ExecJustInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
+/* implementation of ExecJust(Inner|Outer|Scan)Var */
+static pg_attribute_always_inline Datum
+ExecJustVarImpl(ExprState *state, TupleTableSlot *slot, bool *isnull)
 {
 	ExprEvalStep *op = &state->steps[1];
 	int			attnum = op->d.var.attnum + 1;
-	TupleTableSlot *slot = econtext->ecxt_innertuple;
 
 	CheckOpSlotCompatibility(&state->steps[0], slot);
 
@@ -2020,52 +2073,34 @@ ExecJustInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	return slot_getattr(slot, attnum, isnull);
 }
 
+/* Simple reference to inner Var */
+static Datum
+ExecJustInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustVarImpl(state, econtext->ecxt_innertuple, isnull);
+}
+
 /* Simple reference to outer Var */
 static Datum
 ExecJustOuterVar(ExprState *state, ExprContext *econtext, bool *isnull)
 {
-	ExprEvalStep *op = &state->steps[1];
-	int			attnum = op->d.var.attnum + 1;
-	TupleTableSlot *slot = econtext->ecxt_outertuple;
-
-	CheckOpSlotCompatibility(&state->steps[0], slot);
-
-	/* See comments in ExecJustInnerVar */
-	return slot_getattr(slot, attnum, isnull);
+	return ExecJustVarImpl(state, econtext->ecxt_outertuple, isnull);
 }
 
 /* Simple reference to scan Var */
 static Datum
 ExecJustScanVar(ExprState *state, ExprContext *econtext, bool *isnull)
 {
-	ExprEvalStep *op = &state->steps[1];
-	int			attnum = op->d.var.attnum + 1;
-	TupleTableSlot *slot = econtext->ecxt_scantuple;
-
-	CheckOpSlotCompatibility(&state->steps[0], slot);
-
-	/* See comments in ExecJustInnerVar */
-	return slot_getattr(slot, attnum, isnull);
+	return ExecJustVarImpl(state, econtext->ecxt_scantuple, isnull);
 }
 
-/* Simple Const expression */
-static Datum
-ExecJustConst(ExprState *state, ExprContext *econtext, bool *isnull)
-{
-	ExprEvalStep *op = &state->steps[0];
-
-	*isnull = op->d.constval.isnull;
-	return op->d.constval.value;
-}
-
-/* Evaluate inner Var and assign to appropriate column of result tuple */
-static Datum
-ExecJustAssignInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
+/* implementation of ExecJustAssign(Inner|Outer|Scan)Var */
+static pg_attribute_always_inline Datum
+ExecJustAssignVarImpl(ExprState *state, TupleTableSlot *inslot, bool *isnull)
 {
 	ExprEvalStep *op = &state->steps[1];
 	int			attnum = op->d.assign_var.attnum + 1;
 	int			resultnum = op->d.assign_var.resultnum;
-	TupleTableSlot *inslot = econtext->ecxt_innertuple;
 	TupleTableSlot *outslot = state->resultslot;
 
 	CheckOpSlotCompatibility(&state->steps[0], inslot);
@@ -2085,42 +2120,25 @@ ExecJustAssignInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
 	return 0;
 }
 
+/* Evaluate inner Var and assign to appropriate column of result tuple */
+static Datum
+ExecJustAssignInnerVar(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustAssignVarImpl(state, econtext->ecxt_innertuple, isnull);
+}
+
 /* Evaluate outer Var and assign to appropriate column of result tuple */
 static Datum
 ExecJustAssignOuterVar(ExprState *state, ExprContext *econtext, bool *isnull)
 {
-	ExprEvalStep *op = &state->steps[1];
-	int			attnum = op->d.assign_var.attnum + 1;
-	int			resultnum = op->d.assign_var.resultnum;
-	TupleTableSlot *inslot = econtext->ecxt_outertuple;
-	TupleTableSlot *outslot = state->resultslot;
-
-	CheckOpSlotCompatibility(&state->steps[0], inslot);
-
-	/* See comments in ExecJustAssignInnerVar */
-	Assert(resultnum >= 0 && resultnum < outslot->tts_tupleDescriptor->natts);
-	outslot->tts_values[resultnum] =
-		slot_getattr(inslot, attnum, &outslot->tts_isnull[resultnum]);
-	return 0;
+	return ExecJustAssignVarImpl(state, econtext->ecxt_outertuple, isnull);
 }
 
 /* Evaluate scan Var and assign to appropriate column of result tuple */
 static Datum
 ExecJustAssignScanVar(ExprState *state, ExprContext *econtext, bool *isnull)
 {
-	ExprEvalStep *op = &state->steps[1];
-	int			attnum = op->d.assign_var.attnum + 1;
-	int			resultnum = op->d.assign_var.resultnum;
-	TupleTableSlot *inslot = econtext->ecxt_scantuple;
-	TupleTableSlot *outslot = state->resultslot;
-
-	CheckOpSlotCompatibility(&state->steps[0], inslot);
-
-	/* See comments in ExecJustAssignInnerVar */
-	Assert(resultnum >= 0 && resultnum < outslot->tts_tupleDescriptor->natts);
-	outslot->tts_values[resultnum] =
-		slot_getattr(inslot, attnum, &outslot->tts_isnull[resultnum]);
-	return 0;
+	return ExecJustAssignVarImpl(state, econtext->ecxt_scantuple, isnull);
 }
 
 /* Evaluate CASE_TESTVAL and apply a strict function to it */
@@ -2130,7 +2148,7 @@ ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull)
 	ExprEvalStep *op = &state->steps[0];
 	FunctionCallInfo fcinfo;
 	NullableDatum *args;
-	int			argno;
+	int			nargs;
 	Datum		d;
 
 	/*
@@ -2142,11 +2160,12 @@ ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull)
 
 	op++;
 
+	nargs = op->d.func.nargs;
 	fcinfo = op->d.func.fcinfo_data;
 	args = fcinfo->args;
 
 	/* strict function, so check for NULL args */
-	for (argno = 0; argno < op->d.func.nargs; argno++)
+	for (int argno = 0; argno < nargs; argno++)
 	{
 		if (args[argno].isnull)
 		{
@@ -2158,6 +2177,102 @@ ExecJustApplyFuncToCase(ExprState *state, ExprContext *econtext, bool *isnull)
 	d = op->d.func.fn_addr(fcinfo);
 	*isnull = fcinfo->isnull;
 	return d;
+}
+
+/* Simple Const expression */
+static Datum
+ExecJustConst(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	ExprEvalStep *op = &state->steps[0];
+
+	*isnull = op->d.constval.isnull;
+	return op->d.constval.value;
+}
+
+/* implementation of ExecJust(Inner|Outer|Scan)VarVirt */
+static pg_attribute_always_inline Datum
+ExecJustVarVirtImpl(ExprState *state, TupleTableSlot *slot, bool *isnull)
+{
+	ExprEvalStep *op = &state->steps[0];
+	int			attnum = op->d.var.attnum;
+
+	/*
+	 * As it is guaranteed that a virtual slot is used, there never is a need
+	 * to perform tuple deforming (nor would it be possible). Therefore
+	 * execExpr.c has not emitted an EEOP_*_FETCHSOME step. Verify, as much as
+	 * possible, that that determination was accurate.
+	 */
+	Assert(TTS_IS_VIRTUAL(slot));
+	Assert(TTS_FIXED(slot));
+	Assert(attnum >= 0 && attnum < slot->tts_nvalid);
+
+	*isnull = slot->tts_isnull[attnum];
+
+	return slot->tts_values[attnum];
+}
+
+/* Like ExecJustInnerVar, optimized for virtual slots */
+static Datum
+ExecJustInnerVarVirt(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustVarVirtImpl(state, econtext->ecxt_innertuple, isnull);
+}
+
+/* Like ExecJustOuterVar, optimized for virtual slots */
+static Datum
+ExecJustOuterVarVirt(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustVarVirtImpl(state, econtext->ecxt_outertuple, isnull);
+}
+
+/* Like ExecJustScanVar, optimized for virtual slots */
+static Datum
+ExecJustScanVarVirt(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustVarVirtImpl(state, econtext->ecxt_scantuple, isnull);
+}
+
+/* implementation of ExecJustAssign(Inner|Outer|Scan)VarVirt */
+static pg_attribute_always_inline Datum
+ExecJustAssignVarVirtImpl(ExprState *state, TupleTableSlot *inslot, bool *isnull)
+{
+	ExprEvalStep *op = &state->steps[0];
+	int			attnum = op->d.assign_var.attnum;
+	int			resultnum = op->d.assign_var.resultnum;
+	TupleTableSlot *outslot = state->resultslot;
+
+	/* see ExecJustVarVirtImpl for comments */
+
+	Assert(TTS_IS_VIRTUAL(inslot));
+	Assert(TTS_FIXED(inslot));
+	Assert(attnum >= 0 && attnum < inslot->tts_nvalid);
+	Assert(resultnum >= 0 && resultnum < outslot->tts_tupleDescriptor->natts);
+
+	outslot->tts_values[resultnum] = inslot->tts_values[attnum];
+	outslot->tts_isnull[resultnum] = inslot->tts_isnull[attnum];
+
+	return 0;
+}
+
+/* Like ExecJustAssignInnerVar, optimized for virtual slots */
+static Datum
+ExecJustAssignInnerVarVirt(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustAssignVarVirtImpl(state, econtext->ecxt_innertuple, isnull);
+}
+
+/* Like ExecJustAssignOuterVar, optimized for virtual slots */
+static Datum
+ExecJustAssignOuterVarVirt(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustAssignVarVirtImpl(state, econtext->ecxt_outertuple, isnull);
+}
+
+/* Like ExecJustAssignScanVar, optimized for virtual slots */
+static Datum
+ExecJustAssignScanVarVirt(ExprState *state, ExprContext *econtext, bool *isnull)
+{
+	return ExecJustAssignVarVirtImpl(state, econtext->ecxt_scantuple, isnull);
 }
 
 #if defined(EEO_USE_COMPUTED_GOTO)
@@ -2189,13 +2304,11 @@ ExecInitInterpreter(void)
 	/* Set up externally-visible pointer to dispatch table */
 	if (dispatch_table == NULL)
 	{
-		int			i;
-
 		dispatch_table = (const void **)
 			DatumGetPointer(ExecInterpExpr(NULL, NULL, NULL));
 
 		/* build reverse lookup table */
-		for (i = 0; i < EEOP_LAST; i++)
+		for (int i = 0; i < EEOP_LAST; i++)
 		{
 			reverse_dispatch_table[i].opcode = dispatch_table[i];
 			reverse_dispatch_table[i].op = (ExprEvalOp) i;
@@ -2275,11 +2388,11 @@ ExecEvalFuncExprStrictFusage(ExprState *state, ExprEvalStep *op,
 	FunctionCallInfo fcinfo = op->d.func.fcinfo_data;
 	PgStat_FunctionCallUsage fcusage;
 	NullableDatum *args = fcinfo->args;
-	int			argno;
+	int			nargs = op->d.func.nargs;
 	Datum		d;
 
 	/* strict function, so check for NULL args */
-	for (argno = 0; argno < op->d.func.nargs; argno++)
+	for (int argno = 0; argno < nargs; argno++)
 	{
 		if (args[argno].isnull)
 		{
@@ -2499,7 +2612,6 @@ ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
 	int32		tupTypmod;
 	TupleDesc	tupDesc;
 	HeapTupleData tmptup;
-	int			att;
 
 	*op->resnull = false;
 
@@ -2541,7 +2653,7 @@ ExecEvalRowNullInt(ExprState *state, ExprEvalStep *op,
 	tmptup.t_len = HeapTupleHeaderGetDatumLength(tuple);
 	tmptup.t_data = tuple;
 
-	for (att = 1; att <= tupDesc->natts; att++)
+	for (int att = 1; att <= tupDesc->natts; att++)
 	{
 		/* ignore dropped columns */
 		if (TupleDescAttr(tupDesc, att - 1)->attisdropped)
@@ -2624,8 +2736,6 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 		int32		dataoffset;
 		char	   *dat;
 		int			iitem;
-		int			elemoff;
-		int			i;
 
 		subdata = (char **) palloc(nelems * sizeof(char *));
 		subbitmaps = (bits8 **) palloc(nelems * sizeof(bits8 *));
@@ -2633,7 +2743,7 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 		subnitems = (int *) palloc(nelems * sizeof(int));
 
 		/* loop through and get data area from each element */
-		for (elemoff = 0; elemoff < nelems; elemoff++)
+		for (int elemoff = 0; elemoff < nelems; elemoff++)
 		{
 			Datum		arraydatum;
 			bool		eisnull;
@@ -2678,8 +2788,8 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 				if (ndims <= 0 || ndims > MAXDIM)
 					ereport(ERROR,
 							(errcode(ERRCODE_PROGRAM_LIMIT_EXCEEDED),
-							 errmsg("number of array dimensions (%d) exceeds " \
-									"the maximum allowed (%d)", ndims, MAXDIM)));
+							 errmsg("number of array dimensions (%d) exceeds the maximum allowed (%d)",
+									ndims, MAXDIM)));
 
 				elem_dims = (int *) palloc(elem_ndims * sizeof(int));
 				memcpy(elem_dims, ARR_DIMS(array), elem_ndims * sizeof(int));
@@ -2740,7 +2850,7 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 		/* setup for multi-D array */
 		dims[0] = outer_nelems;
 		lbs[0] = 1;
-		for (i = 1; i < ndims; i++)
+		for (int i = 1; i < ndims; i++)
 		{
 			dims[i] = elem_dims[i - 1];
 			lbs[i] = elem_lbs[i - 1];
@@ -2771,7 +2881,7 @@ ExecEvalArrayExpr(ExprState *state, ExprEvalStep *op)
 
 		dat = ARR_DATA_PTR(result);
 		iitem = 0;
-		for (i = 0; i < outer_nelems; i++)
+		for (int i = 0; i < outer_nelems; i++)
 		{
 			memcpy(dat, subdata[i], subbytes[i]);
 			dat += subbytes[i];
@@ -2859,7 +2969,6 @@ ExecEvalMinMax(ExprState *state, ExprEvalStep *op)
 	bool	   *nulls = op->d.minmax.nulls;
 	FunctionCallInfo fcinfo = op->d.minmax.fcinfo_data;
 	MinMaxOp	operator = op->d.minmax.op;
-	int			off;
 
 	/* set at initialization */
 	Assert(fcinfo->args[0].isnull == false);
@@ -2868,7 +2977,7 @@ ExecEvalMinMax(ExprState *state, ExprEvalStep *op)
 	/* default to null result */
 	*op->resnull = true;
 
-	for (off = 0; off < op->d.minmax.nelems; off++)
+	for (int off = 0; off < op->d.minmax.nelems; off++)
 	{
 		/* ignore NULL inputs */
 		if (nulls[off])
@@ -3103,200 +3212,6 @@ ExecEvalFieldStoreForm(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 }
 
 /*
- * Process a subscript in a SubscriptingRef expression.
- *
- * If subscript is NULL, throw error in assignment case, or in fetch case
- * set result to NULL and return false (instructing caller to skip the rest
- * of the SubscriptingRef sequence).
- *
- * Subscript expression result is in subscriptvalue/subscriptnull.
- * On success, integer subscript value has been saved in upperindex[] or
- * lowerindex[] for use later.
- */
-bool
-ExecEvalSubscriptingRef(ExprState *state, ExprEvalStep *op)
-{
-	SubscriptingRefState *sbsrefstate = op->d.sbsref_subscript.state;
-	int		   *indexes;
-	int			off;
-
-	/* If any index expr yields NULL, result is NULL or error */
-	if (sbsrefstate->subscriptnull)
-	{
-		if (sbsrefstate->isassignment)
-			ereport(ERROR,
-					(errcode(ERRCODE_NULL_VALUE_NOT_ALLOWED),
-					 errmsg("array subscript in assignment must not be null")));
-		*op->resnull = true;
-		return false;
-	}
-
-	/* Convert datum to int, save in appropriate place */
-	if (op->d.sbsref_subscript.isupper)
-		indexes = sbsrefstate->upperindex;
-	else
-		indexes = sbsrefstate->lowerindex;
-	off = op->d.sbsref_subscript.off;
-
-	indexes[off] = DatumGetInt32(sbsrefstate->subscriptvalue);
-
-	return true;
-}
-
-/*
- * Evaluate SubscriptingRef fetch.
- *
- * Source container is in step's result variable.
- */
-void
-ExecEvalSubscriptingRefFetch(ExprState *state, ExprEvalStep *op)
-{
-	SubscriptingRefState *sbsrefstate = op->d.sbsref.state;
-
-	/* Should not get here if source container (or any subscript) is null */
-	Assert(!(*op->resnull));
-
-	if (sbsrefstate->numlower == 0)
-	{
-		/* Scalar case */
-		*op->resvalue = array_get_element(*op->resvalue,
-										  sbsrefstate->numupper,
-										  sbsrefstate->upperindex,
-										  sbsrefstate->refattrlength,
-										  sbsrefstate->refelemlength,
-										  sbsrefstate->refelembyval,
-										  sbsrefstate->refelemalign,
-										  op->resnull);
-	}
-	else
-	{
-		/* Slice case */
-		*op->resvalue = array_get_slice(*op->resvalue,
-										sbsrefstate->numupper,
-										sbsrefstate->upperindex,
-										sbsrefstate->lowerindex,
-										sbsrefstate->upperprovided,
-										sbsrefstate->lowerprovided,
-										sbsrefstate->refattrlength,
-										sbsrefstate->refelemlength,
-										sbsrefstate->refelembyval,
-										sbsrefstate->refelemalign);
-	}
-}
-
-/*
- * Compute old container element/slice value for a SubscriptingRef assignment
- * expression. Will only be generated if the new-value subexpression
- * contains SubscriptingRef or FieldStore. The value is stored into the
- * SubscriptingRefState's prevvalue/prevnull fields.
- */
-void
-ExecEvalSubscriptingRefOld(ExprState *state, ExprEvalStep *op)
-{
-	SubscriptingRefState *sbsrefstate = op->d.sbsref.state;
-
-	if (*op->resnull)
-	{
-		/* whole array is null, so any element or slice is too */
-		sbsrefstate->prevvalue = (Datum) 0;
-		sbsrefstate->prevnull = true;
-	}
-	else if (sbsrefstate->numlower == 0)
-	{
-		/* Scalar case */
-		sbsrefstate->prevvalue = array_get_element(*op->resvalue,
-												   sbsrefstate->numupper,
-												   sbsrefstate->upperindex,
-												   sbsrefstate->refattrlength,
-												   sbsrefstate->refelemlength,
-												   sbsrefstate->refelembyval,
-												   sbsrefstate->refelemalign,
-												   &sbsrefstate->prevnull);
-	}
-	else
-	{
-		/* Slice case */
-		/* this is currently unreachable */
-		sbsrefstate->prevvalue = array_get_slice(*op->resvalue,
-												 sbsrefstate->numupper,
-												 sbsrefstate->upperindex,
-												 sbsrefstate->lowerindex,
-												 sbsrefstate->upperprovided,
-												 sbsrefstate->lowerprovided,
-												 sbsrefstate->refattrlength,
-												 sbsrefstate->refelemlength,
-												 sbsrefstate->refelembyval,
-												 sbsrefstate->refelemalign);
-		sbsrefstate->prevnull = false;
-	}
-}
-
-/*
- * Evaluate SubscriptingRef assignment.
- *
- * Input container (possibly null) is in result area, replacement value is in
- * SubscriptingRefState's replacevalue/replacenull.
- */
-void
-ExecEvalSubscriptingRefAssign(ExprState *state, ExprEvalStep *op)
-{
-	SubscriptingRefState *sbsrefstate = op->d.sbsref_subscript.state;
-
-	/*
-	 * For an assignment to a fixed-length container type, both the original
-	 * container and the value to be assigned into it must be non-NULL, else
-	 * we punt and return the original container.
-	 */
-	if (sbsrefstate->refattrlength > 0)
-	{
-		if (*op->resnull || sbsrefstate->replacenull)
-			return;
-	}
-
-	/*
-	 * For assignment to varlena arrays, we handle a NULL original array by
-	 * substituting an empty (zero-dimensional) array; insertion of the new
-	 * element will result in a singleton array value.  It does not matter
-	 * whether the new element is NULL.
-	 */
-	if (*op->resnull)
-	{
-		*op->resvalue = PointerGetDatum(construct_empty_array(sbsrefstate->refelemtype));
-		*op->resnull = false;
-	}
-
-	if (sbsrefstate->numlower == 0)
-	{
-		/* Scalar case */
-		*op->resvalue = array_set_element(*op->resvalue,
-										  sbsrefstate->numupper,
-										  sbsrefstate->upperindex,
-										  sbsrefstate->replacevalue,
-										  sbsrefstate->replacenull,
-										  sbsrefstate->refattrlength,
-										  sbsrefstate->refelemlength,
-										  sbsrefstate->refelembyval,
-										  sbsrefstate->refelemalign);
-	}
-	else
-	{
-		/* Slice case */
-		*op->resvalue = array_set_slice(*op->resvalue,
-										sbsrefstate->numupper,
-										sbsrefstate->upperindex,
-										sbsrefstate->lowerindex,
-										sbsrefstate->upperprovided,
-										sbsrefstate->lowerprovided,
-										sbsrefstate->replacevalue,
-										sbsrefstate->replacenull,
-										sbsrefstate->refattrlength,
-										sbsrefstate->refelemlength,
-										sbsrefstate->refelembyval,
-										sbsrefstate->refelemalign);
-	}
-}
-
-/*
  * Evaluate a rowtype coercion operation.
  * This may require rearranging field positions.
  *
@@ -3352,9 +3267,7 @@ ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op, ExprContext *econtext
 		old_cxt = MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
 
 		/* prepare map from old to new attribute numbers */
-		op->d.convert_rowtype.map =
-			convert_tuples_by_name(indesc, outdesc,
-								   gettext_noop("could not convert row type"));
+		op->d.convert_rowtype.map = convert_tuples_by_name(indesc, outdesc);
 
 		MemoryContextSwitchTo(old_cxt);
 	}
@@ -3409,7 +3322,6 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 	int			nitems;
 	Datum		result;
 	bool		resultnull;
-	int			i;
 	int16		typlen;
 	bool		typbyval;
 	char		typalign;
@@ -3477,7 +3389,7 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 	bitmap = ARR_NULLBITMAP(arr);
 	bitmask = 1;
 
-	for (i = 0; i < nitems; i++)
+	for (int i = 0; i < nitems; i++)
 	{
 		Datum		elt;
 		Datum		thisresult;
@@ -3548,6 +3460,241 @@ ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op)
 }
 
 /*
+ * Hash function for scalar array hash op elements.
+ *
+ * We use the element type's default hash opclass, and the column collation
+ * if the type is collation-sensitive.
+ */
+static uint32
+saop_element_hash(struct saophash_hash *tb, Datum key)
+{
+	ScalarArrayOpExprHashTable *elements_tab = (ScalarArrayOpExprHashTable *) tb->private_data;
+	FunctionCallInfo fcinfo = &elements_tab->hash_fcinfo_data;
+	Datum		hash;
+
+	fcinfo->args[0].value = key;
+	fcinfo->args[0].isnull = false;
+
+	hash = elements_tab->hash_finfo.fn_addr(fcinfo);
+
+	return DatumGetUInt32(hash);
+}
+
+/*
+ * Matching function for scalar array hash op elements, to be used in hashtable
+ * lookups.
+ */
+static bool
+saop_hash_element_match(struct saophash_hash *tb, Datum key1, Datum key2)
+{
+	Datum		result;
+
+	ScalarArrayOpExprHashTable *elements_tab = (ScalarArrayOpExprHashTable *) tb->private_data;
+	FunctionCallInfo fcinfo = elements_tab->op->d.hashedscalararrayop.fcinfo_data;
+
+	fcinfo->args[0].value = key1;
+	fcinfo->args[0].isnull = false;
+	fcinfo->args[1].value = key2;
+	fcinfo->args[1].isnull = false;
+
+	result = elements_tab->op->d.hashedscalararrayop.finfo->fn_addr(fcinfo);
+
+	return DatumGetBool(result);
+}
+
+/*
+ * Evaluate "scalar op ANY (const array)".
+ *
+ * Similar to ExecEvalScalarArrayOp, but optimized for faster repeat lookups
+ * by building a hashtable on the first lookup.  This hashtable will be reused
+ * by subsequent lookups.  Unlike ExecEvalScalarArrayOp, this version only
+ * supports OR semantics.
+ *
+ * Source array is in our result area, scalar arg is already evaluated into
+ * fcinfo->args[0].
+ *
+ * The operator always yields boolean.
+ */
+void
+ExecEvalHashedScalarArrayOp(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
+{
+	ScalarArrayOpExprHashTable *elements_tab = op->d.hashedscalararrayop.elements_tab;
+	FunctionCallInfo fcinfo = op->d.hashedscalararrayop.fcinfo_data;
+	bool		inclause = op->d.hashedscalararrayop.inclause;
+	bool		strictfunc = op->d.hashedscalararrayop.finfo->fn_strict;
+	Datum		scalar = fcinfo->args[0].value;
+	bool		scalar_isnull = fcinfo->args[0].isnull;
+	Datum		result;
+	bool		resultnull;
+	bool		hashfound;
+
+	/* We don't setup a hashed scalar array op if the array const is null. */
+	Assert(!*op->resnull);
+
+	/*
+	 * If the scalar is NULL, and the function is strict, return NULL; no
+	 * point in executing the search.
+	 */
+	if (fcinfo->args[0].isnull && strictfunc)
+	{
+		*op->resnull = true;
+		return;
+	}
+
+	/* Build the hash table on first evaluation */
+	if (elements_tab == NULL)
+	{
+		ScalarArrayOpExpr *saop;
+		int16		typlen;
+		bool		typbyval;
+		char		typalign;
+		int			nitems;
+		bool		has_nulls = false;
+		char	   *s;
+		bits8	   *bitmap;
+		int			bitmask;
+		MemoryContext oldcontext;
+		ArrayType  *arr;
+
+		saop = op->d.hashedscalararrayop.saop;
+
+		arr = DatumGetArrayTypeP(*op->resvalue);
+		nitems = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+
+		get_typlenbyvalalign(ARR_ELEMTYPE(arr),
+							 &typlen,
+							 &typbyval,
+							 &typalign);
+
+		oldcontext = MemoryContextSwitchTo(econtext->ecxt_per_query_memory);
+
+		elements_tab = (ScalarArrayOpExprHashTable *)
+			palloc0(offsetof(ScalarArrayOpExprHashTable, hash_fcinfo_data) +
+					SizeForFunctionCallInfo(1));
+		op->d.hashedscalararrayop.elements_tab = elements_tab;
+		elements_tab->op = op;
+
+		fmgr_info(saop->hashfuncid, &elements_tab->hash_finfo);
+		fmgr_info_set_expr((Node *) saop, &elements_tab->hash_finfo);
+
+		InitFunctionCallInfoData(elements_tab->hash_fcinfo_data,
+								 &elements_tab->hash_finfo,
+								 1,
+								 saop->inputcollid,
+								 NULL,
+								 NULL);
+
+		/*
+		 * Create the hash table sizing it according to the number of elements
+		 * in the array.  This does assume that the array has no duplicates.
+		 * If the array happens to contain many duplicate values then it'll
+		 * just mean that we sized the table a bit on the large side.
+		 */
+		elements_tab->hashtab = saophash_create(CurrentMemoryContext, nitems,
+												elements_tab);
+
+		MemoryContextSwitchTo(oldcontext);
+
+		s = (char *) ARR_DATA_PTR(arr);
+		bitmap = ARR_NULLBITMAP(arr);
+		bitmask = 1;
+		for (int i = 0; i < nitems; i++)
+		{
+			/* Get array element, checking for NULL. */
+			if (bitmap && (*bitmap & bitmask) == 0)
+			{
+				has_nulls = true;
+			}
+			else
+			{
+				Datum		element;
+
+				element = fetch_att(s, typbyval, typlen);
+				s = att_addlength_pointer(s, typlen, s);
+				s = (char *) att_align_nominal(s, typalign);
+
+				saophash_insert(elements_tab->hashtab, element, &hashfound);
+			}
+
+			/* Advance bitmap pointer if any. */
+			if (bitmap)
+			{
+				bitmask <<= 1;
+				if (bitmask == 0x100)
+				{
+					bitmap++;
+					bitmask = 1;
+				}
+			}
+		}
+
+		/*
+		 * Remember if we had any nulls so that we know if we need to execute
+		 * non-strict functions with a null lhs value if no match is found.
+		 */
+		op->d.hashedscalararrayop.has_nulls = has_nulls;
+	}
+
+	/* Check the hash to see if we have a match. */
+	hashfound = NULL != saophash_lookup(elements_tab->hashtab, scalar);
+
+	/* the result depends on if the clause is an IN or NOT IN clause */
+	if (inclause)
+		result = BoolGetDatum(hashfound);	/* IN */
+	else
+		result = BoolGetDatum(!hashfound);	/* NOT IN */
+
+	resultnull = false;
+
+	/*
+	 * If we didn't find a match in the array, we still might need to handle
+	 * the possibility of null values.  We didn't put any NULLs into the
+	 * hashtable, but instead marked if we found any when building the table
+	 * in has_nulls.
+	 */
+	if (!hashfound && op->d.hashedscalararrayop.has_nulls)
+	{
+		if (strictfunc)
+		{
+
+			/*
+			 * We have nulls in the array so a non-null lhs and no match must
+			 * yield NULL.
+			 */
+			result = (Datum) 0;
+			resultnull = true;
+		}
+		else
+		{
+			/*
+			 * Execute function will null rhs just once.
+			 *
+			 * The hash lookup path will have scribbled on the lhs argument so
+			 * we need to set it up also (even though we entered this function
+			 * with it already set).
+			 */
+			fcinfo->args[0].value = scalar;
+			fcinfo->args[0].isnull = scalar_isnull;
+			fcinfo->args[1].value = (Datum) 0;
+			fcinfo->args[1].isnull = true;
+
+			result = op->d.hashedscalararrayop.finfo->fn_addr(fcinfo);
+			resultnull = fcinfo->isnull;
+
+			/*
+			 * Reverse the result for NOT IN clauses since the above function
+			 * is the equality function and we need not-equals.
+			 */
+			if (!inclause)
+				result = !result;
+		}
+	}
+
+	*op->resvalue = result;
+	*op->resnull = resultnull;
+}
+
+/*
  * Evaluate a NOT NULL domain constraint.
  */
 void
@@ -3589,7 +3736,6 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 {
 	XmlExpr    *xexpr = op->d.xmlexpr.xexpr;
 	Datum		value;
-	int			i;
 
 	*op->resnull = true;		/* until we get a result */
 	*op->resvalue = (Datum) 0;
@@ -3602,7 +3748,7 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 				bool	   *argnull = op->d.xmlexpr.argnull;
 				List	   *values = NIL;
 
-				for (i = 0; i < list_length(xexpr->args); i++)
+				for (int i = 0; i < list_length(xexpr->args); i++)
 				{
 					if (!argnull[i])
 						values = lappend(values, DatumGetPointer(argvalue[i]));
@@ -3623,6 +3769,7 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 				StringInfoData buf;
 				ListCell   *lc;
 				ListCell   *lc2;
+				int			i;
 
 				initStringInfo(&buf);
 
@@ -3764,8 +3911,7 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 					return;
 				value = argvalue[0];
 
-				*op->resvalue = PointerGetDatum(
-												xmltotext_with_xmloption(DatumGetXmlP(value),
+				*op->resvalue = PointerGetDatum(xmltotext_with_xmloption(DatumGetXmlP(value),
 																		 xexpr->xmloption));
 				*op->resnull = false;
 			}
@@ -3807,8 +3953,9 @@ ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op)
 void
 ExecEvalGroupingFunc(ExprState *state, ExprEvalStep *op)
 {
+	AggState   *aggstate = castNode(AggState, state->parent);
 	int			result = 0;
-	Bitmapset  *grouped_cols = op->d.grouping_func.parent->grouped_cols;
+	Bitmapset  *grouped_cols = aggstate->grouped_cols;
 	ListCell   *lc;
 
 	foreach(lc, op->d.grouping_func.clauses)
@@ -3837,20 +3984,6 @@ ExecEvalSubPlan(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 	check_stack_depth();
 
 	*op->resvalue = ExecSubPlan(sstate, econtext, op->resnull);
-}
-
-/*
- * Hand off evaluation of an alternative subplan to nodeSubplan.c
- */
-void
-ExecEvalAlternativeSubPlan(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
-{
-	AlternativeSubPlanState *asstate = op->d.alternative_subplan.asstate;
-
-	/* could potentially be nested, so make sure there's enough stack */
-	check_stack_depth();
-
-	*op->resvalue = ExecAlternativeSubPlan(asstate, econtext, op->resnull);
 }
 
 /*
@@ -3917,7 +4050,6 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 		{
 			TupleDesc	var_tupdesc;
 			TupleDesc	slot_tupdesc;
-			int			i;
 
 			/*
 			 * We really only care about numbers of attributes and data types.
@@ -3949,7 +4081,7 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 										  slot_tupdesc->natts,
 										  var_tupdesc->natts)));
 
-			for (i = 0; i < var_tupdesc->natts; i++)
+			for (int i = 0; i < var_tupdesc->natts; i++)
 			{
 				Form_pg_attribute vattr = TupleDescAttr(var_tupdesc, i);
 				Form_pg_attribute sattr = TupleDescAttr(slot_tupdesc, i);
@@ -4042,11 +4174,10 @@ ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext)
 		/* Check to see if any dropped attributes are non-null */
 		TupleDesc	tupleDesc = slot->tts_tupleDescriptor;
 		TupleDesc	var_tupdesc = op->d.wholerow.tupdesc;
-		int			i;
 
 		Assert(var_tupdesc->natts == tupleDesc->natts);
 
-		for (i = 0; i < var_tupdesc->natts; i++)
+		for (int i = 0; i < var_tupdesc->natts; i++)
 		{
 			Form_pg_attribute vattr = TupleDescAttr(var_tupdesc, i);
 			Form_pg_attribute sattr = TupleDescAttr(tupleDesc, i);
@@ -4109,7 +4240,8 @@ ExecEvalSysVar(ExprState *state, ExprEvalStep *op, ExprContext *econtext,
  * value for a group. We use it as the initial value for transValue.
  */
 void
-ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup pergroup)
+ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup pergroup,
+				 ExprContext *aggcontext)
 {
 	FunctionCallInfo fcinfo = pertrans->transfn_fcinfo;
 	MemoryContext oldContext;
@@ -4120,8 +4252,7 @@ ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup
 	 * that the agg's input type is binary-compatible with its transtype, so
 	 * straight copy here is OK.)
 	 */
-	oldContext = MemoryContextSwitchTo(
-									   aggstate->curaggcontext->ecxt_per_tuple_memory);
+	oldContext = MemoryContextSwitchTo(aggcontext->ecxt_per_tuple_memory);
 	pergroup->transValue = datumCopy(fcinfo->args[1].value,
 									 pertrans->transtypeByVal,
 									 pertrans->transtypeLen);
@@ -4207,4 +4338,90 @@ ExecEvalAggOrderedTransTuple(ExprState *state, ExprEvalStep *op,
 	pertrans->sortslot->tts_nvalid = pertrans->numInputs;
 	ExecStoreVirtualTuple(pertrans->sortslot);
 	tuplesort_puttupleslot(pertrans->sortstates[setno], pertrans->sortslot);
+}
+
+/* implementation of transition function invocation for byval types */
+static pg_attribute_always_inline void
+ExecAggPlainTransByVal(AggState *aggstate, AggStatePerTrans pertrans,
+					   AggStatePerGroup pergroup,
+					   ExprContext *aggcontext, int setno)
+{
+	FunctionCallInfo fcinfo = pertrans->transfn_fcinfo;
+	MemoryContext oldContext;
+	Datum		newVal;
+
+	/* cf. select_current_set() */
+	aggstate->curaggcontext = aggcontext;
+	aggstate->current_set = setno;
+
+	/* set up aggstate->curpertrans for AggGetAggref() */
+	aggstate->curpertrans = pertrans;
+
+	/* invoke transition function in per-tuple context */
+	oldContext = MemoryContextSwitchTo(aggstate->tmpcontext->ecxt_per_tuple_memory);
+
+	fcinfo->args[0].value = pergroup->transValue;
+	fcinfo->args[0].isnull = pergroup->transValueIsNull;
+	fcinfo->isnull = false;		/* just in case transfn doesn't set it */
+
+	newVal = FunctionCallInvoke(fcinfo);
+
+	pergroup->transValue = newVal;
+	pergroup->transValueIsNull = fcinfo->isnull;
+
+	MemoryContextSwitchTo(oldContext);
+}
+
+/* implementation of transition function invocation for byref types */
+static pg_attribute_always_inline void
+ExecAggPlainTransByRef(AggState *aggstate, AggStatePerTrans pertrans,
+					   AggStatePerGroup pergroup,
+					   ExprContext *aggcontext, int setno)
+{
+	FunctionCallInfo fcinfo = pertrans->transfn_fcinfo;
+	MemoryContext oldContext;
+	Datum		newVal;
+
+	/* cf. select_current_set() */
+	aggstate->curaggcontext = aggcontext;
+	aggstate->current_set = setno;
+
+	/* set up aggstate->curpertrans for AggGetAggref() */
+	aggstate->curpertrans = pertrans;
+
+	/* invoke transition function in per-tuple context */
+	oldContext = MemoryContextSwitchTo(aggstate->tmpcontext->ecxt_per_tuple_memory);
+
+	fcinfo->args[0].value = pergroup->transValue;
+	fcinfo->args[0].isnull = pergroup->transValueIsNull;
+	fcinfo->isnull = false;		/* just in case transfn doesn't set it */
+
+	newVal = FunctionCallInvoke(fcinfo);
+
+	/*
+	 * For pass-by-ref datatype, must copy the new value into aggcontext and
+	 * free the prior transValue.  But if transfn returned a pointer to its
+	 * first input, we don't need to do anything.  Also, if transfn returned a
+	 * pointer to a R/W expanded object that is already a child of the
+	 * aggcontext, assume we can adopt that value without copying it.
+	 *
+	 * It's safe to compare newVal with pergroup->transValue without regard
+	 * for either being NULL, because ExecAggTransReparent() takes care to set
+	 * transValue to 0 when NULL. Otherwise we could end up accidentally not
+	 * reparenting, when the transValue has the same numerical value as
+	 * newValue, despite being NULL.  This is a somewhat hot path, making it
+	 * undesirable to instead solve this with another branch for the common
+	 * case of the transition function returning its (modified) input
+	 * argument.
+	 */
+	if (DatumGetPointer(newVal) != DatumGetPointer(pergroup->transValue))
+		newVal = ExecAggTransReparent(aggstate, pertrans,
+									  newVal, fcinfo->isnull,
+									  pergroup->transValue,
+									  pergroup->transValueIsNull);
+
+	pergroup->transValue = newVal;
+	pergroup->transValueIsNull = fcinfo->isnull;
+
+	MemoryContextSwitchTo(oldContext);
 }

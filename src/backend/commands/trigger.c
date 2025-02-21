@@ -3,7 +3,7 @@
  * trigger.c
  *	  PostgreSQL TRIGGERs support code.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -35,6 +35,7 @@
 #include "commands/defrem.h"
 #include "commands/trigger.h"
 #include "executor/executor.h"
+#include "executor/execPartition.h"
 #include "miscadmin.h"
 #include "nodes/bitmapset.h"
 #include "nodes/makefuncs.h"
@@ -76,7 +77,12 @@ int			SessionReplicationRole = SESSION_REPLICATION_ROLE_ORIGIN;
 static int	MyTriggerDepth = 0;
 
 /* Local function prototypes */
-static void ConvertTriggerToFK(CreateTrigStmt *stmt, Oid funcoid);
+static void renametrig_internal(Relation tgrel, Relation targetrel,
+								HeapTuple trigtup, const char *newname,
+								const char *expected_name);
+static void renametrig_partition(Relation tgrel, Oid partitionId,
+								 Oid parentTriggerOid, const char *newname,
+								 const char *expected_name);
 static void SetTriggerFlags(TriggerDesc *trigdesc, Trigger *trigger);
 static bool GetTupleForTrigger(EState *estate,
 							   EPQState *epqstate,
@@ -84,7 +90,9 @@ static bool GetTupleForTrigger(EState *estate,
 							   ItemPointer tid,
 							   LockTupleMode lockmode,
 							   TupleTableSlot *oldslot,
-							   TupleTableSlot **newSlot);
+							   TupleTableSlot **epqslot,
+							   TM_Result *tmresultp,
+							   TM_FailureData *tmfdp);
 static bool TriggerEnabled(EState *estate, ResultRelInfo *relinfo,
 						   Trigger *trigger, TriggerEvent event,
 						   Bitmapset *modifiedCols,
@@ -95,10 +103,13 @@ static HeapTuple ExecCallTriggerFunc(TriggerData *trigdata,
 									 Instrumentation *instr,
 									 MemoryContext per_tuple_context);
 static void AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
+								  ResultRelInfo *src_partinfo,
+								  ResultRelInfo *dst_partinfo,
 								  int event, bool row_trigger,
 								  TupleTableSlot *oldtup, TupleTableSlot *newtup,
 								  List *recheckIndexes, Bitmapset *modifiedCols,
-								  TransitionCaptureState *transition_capture);
+								  TransitionCaptureState *transition_capture,
+								  bool is_crosspart_update);
 #ifdef PGXC
 static bool pgxc_should_exec_triggers(Relation rel, int16 tgtype_event,
 									  int16 tgtype_level, int16 tgtype_timing);
@@ -143,8 +154,10 @@ static bool before_stmt_triggers_fired(Oid relid, CmdType cmdType);
  * given, stmt->funcname is ignored.
  *
  * parentTriggerOid, if nonzero, is a trigger that begets this one; so that
- * if that trigger is dropped, this one should be too.  (This is passed as
- * Invalid by most callers; it's set here when recursing on a partition.)
+ * if that trigger is dropped, this one should be too.  There are two cases
+ * when a nonzero value is passed for this: 1) when this function recurses to
+ * create the trigger on partitions, 2) when creating child foreign key
+ * triggers; see CreateFKCheckTrigger() and createForeignKeyActionTriggers().
  *
  * If whenClause is passed, it is an already-transformed expression for
  * WHEN.  In this case, we ignore any that may come in stmt->whenClause.
@@ -159,11 +172,9 @@ static bool before_stmt_triggers_fired(Oid relid, CmdType cmdType);
  *
  * When called on partitioned tables, this function recurses to create the
  * trigger on all the partitions, except if isInternal is true, in which
- * case caller is expected to execute recursion on its own.
- *
- * Note: can return InvalidObjectAddress if we decided to not create a trigger
- * at all, but a foreign-key constraint.  This is a kluge for backwards
- * compatibility.
+ * case caller is expected to execute recursion on its own.  in_partition
+ * indicates such a recursive call; outside callers should pass "false"
+ * (but see CloneRowTriggersToPartition).
  */
 ObjectAddress
 CreateTrigger(CreateTrigStmt *stmt, const char *queryString,
@@ -200,13 +211,10 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	Relation	rel;
 	AclResult	aclresult;
 	Relation	tgrel;
-	SysScanDesc tgscan;
-	ScanKeyData key;
 	Relation	pgrel;
-	HeapTuple	tuple;
-	Oid			fargtypes[1];	/* dummy */
+	HeapTuple	tuple = NULL;
 	Oid			funcrettype;
-	Oid			trigoid;
+	Oid			trigoid = InvalidOid;
 	char		internaltrigname[NAMEDATALEN];
 	char	   *trigname;
 	Oid			constrrelid = InvalidOid;
@@ -215,6 +223,10 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	char	   *oldtablename = NULL;
 	char	   *newtablename = NULL;
 	bool		partition_recurse;
+	bool		trigger_exists = false;
+	Oid			existing_constraint_oid = InvalidOid;
+	bool		existing_isInternal = false;
+	bool		existing_isClone = false;
 
 	if (OidIsValid(relOid))
 		rel = table_open(relOid, ShareRowExclusiveLock);
@@ -252,18 +264,6 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 		 */
 		if (stmt->row)
 		{
-			/*
-			 * BEFORE triggers FOR EACH ROW are forbidden, because they would
-			 * allow the user to direct the row to another partition, which
-			 * isn't implemented in the executor.
-			 */
-			if (stmt->timing != TRIGGER_TYPE_AFTER)
-				ereport(ERROR,
-						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-						 errmsg("\"%s\" is a partitioned table",
-								RelationGetRelationName(rel)),
-						 errdetail("Partitioned tables cannot have BEFORE / FOR EACH ROW triggers.")));
-
 			/*
 			 * Disallow use of transition tables.
 			 *
@@ -335,8 +335,9 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	else
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table or view",
-						RelationGetRelationName(rel))));
+				 errmsg("relation \"%s\" cannot have triggers",
+						RelationGetRelationName(rel)),
+				 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 
 	if (!allowSystemTableMods && IsSystemRelation(rel))
 		ereport(ERROR,
@@ -591,7 +592,7 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	if (!whenClause && stmt->whenClause)
 	{
 		ParseState *pstate;
-		RangeTblEntry *rte;
+		ParseNamespaceItem *nsitem;
 		List	   *varList;
 		ListCell   *lc;
 
@@ -600,20 +601,20 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 		pstate->p_sourcetext = queryString;
 
 		/*
-		 * Set up RTEs for OLD and NEW references.
+		 * Set up nsitems for OLD and NEW references.
 		 *
 		 * 'OLD' must always have varno equal to 1 and 'NEW' equal to 2.
 		 */
-		rte = addRangeTableEntryForRelation(pstate, rel,
-											AccessShareLock,
-											makeAlias("old", NIL),
-											false, false);
-		addRTEtoQuery(pstate, rte, false, true, true);
-		rte = addRangeTableEntryForRelation(pstate, rel,
-											AccessShareLock,
-											makeAlias("new", NIL),
-											false, false);
-		addRTEtoQuery(pstate, rte, false, true, true);
+		nsitem = addRangeTableEntryForRelation(pstate, rel,
+											   AccessShareLock,
+											   makeAlias("old", NIL),
+											   false, false);
+		addNSItemToQuery(pstate, nsitem, false, true, true);
+		nsitem = addRangeTableEntryForRelation(pstate, rel,
+											   AccessShareLock,
+											   makeAlias("new", NIL),
+											   false, false);
+		addNSItemToQuery(pstate, nsitem, false, true, true);
 
 		/* Transform expression.  Copy to be sure we don't modify original */
 		whenClause = transformWhereClause(pstate,
@@ -715,7 +716,7 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	 * Find and validate the trigger function.
 	 */
 	if (!OidIsValid(funcoid))
-		funcoid = LookupFuncName(stmt->funcname, 0, fargtypes, false);
+		funcoid = LookupFuncName(stmt->funcname, 0, NULL, false);
 	if (!isInternal)
 	{
 		aclresult = pg_proc_aclcheck(funcoid, GetUserId(), ACL_EXECUTE);
@@ -725,44 +726,103 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	}
 	funcrettype = get_func_rettype(funcoid);
 	if (funcrettype != TRIGGEROID)
-	{
-		/*
-		 * We allow OPAQUE just so we can load old dump files.  When we see a
-		 * trigger function declared OPAQUE, change it to TRIGGER.
-		 */
-		if (funcrettype == OPAQUEOID)
-		{
-			ereport(WARNING,
-					(errmsg("changing return type of function %s from %s to %s",
-							NameListToString(stmt->funcname),
-							"opaque", "trigger")));
-			SetFunctionReturnType(funcoid, TRIGGEROID);
-		}
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
-					 errmsg("function %s must return type %s",
-							NameListToString(stmt->funcname), "trigger")));
-	}
+		ereport(ERROR,
+				(errcode(ERRCODE_INVALID_OBJECT_DEFINITION),
+				 errmsg("function %s must return type %s",
+						NameListToString(stmt->funcname), "trigger")));
 
 	/*
-	 * If the command is a user-entered CREATE CONSTRAINT TRIGGER command that
-	 * references one of the built-in RI_FKey trigger functions, assume it is
-	 * from a dump of a pre-7.3 foreign key constraint, and take steps to
-	 * convert this legacy representation into a regular foreign key
-	 * constraint.  Ugly, but necessary for loading old dump files.
+	 * Scan pg_trigger to see if there is already a trigger of the same name.
+	 * Skip this for internally generated triggers, since we'll modify the
+	 * name to be unique below.
+	 *
+	 * NOTE that this is cool only because we have ShareRowExclusiveLock on
+	 * the relation, so the trigger set won't be changing underneath us.
 	 */
-	if (stmt->isconstraint && !isInternal &&
-		list_length(stmt->args) >= 6 &&
-		(list_length(stmt->args) % 2) == 0 &&
-		RI_FKey_trigger_type(funcoid) != RI_TRIGGER_NONE)
+	tgrel = table_open(TriggerRelationId, RowExclusiveLock);
+	if (!isInternal)
 	{
-		/* Keep lock on target rel until end of xact */
-		table_close(rel, NoLock);
+		ScanKeyData skeys[2];
+		SysScanDesc tgscan;
 
-		ConvertTriggerToFK(stmt, funcoid);
+		ScanKeyInit(&skeys[0],
+					Anum_pg_trigger_tgrelid,
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(RelationGetRelid(rel)));
 
-		return InvalidObjectAddress;
+		ScanKeyInit(&skeys[1],
+					Anum_pg_trigger_tgname,
+					BTEqualStrategyNumber, F_NAMEEQ,
+					CStringGetDatum(stmt->trigname));
+
+		tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
+									NULL, 2, skeys);
+
+		/* There should be at most one matching tuple */
+		if (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
+		{
+			Form_pg_trigger oldtrigger = (Form_pg_trigger) GETSTRUCT(tuple);
+
+			trigoid = oldtrigger->oid;
+			existing_constraint_oid = oldtrigger->tgconstraint;
+			existing_isInternal = oldtrigger->tgisinternal;
+			existing_isClone = OidIsValid(oldtrigger->tgparentid);
+			trigger_exists = true;
+			/* copy the tuple to use in CatalogTupleUpdate() */
+			tuple = heap_copytuple(tuple);
+		}
+		systable_endscan(tgscan);
+	}
+
+	if (!trigger_exists)
+	{
+		/* Generate the OID for the new trigger. */
+		trigoid = GetNewOidWithIndex(tgrel, TriggerOidIndexId,
+									 Anum_pg_trigger_oid);
+	}
+	else
+	{
+		/*
+		 * If OR REPLACE was specified, we'll replace the old trigger;
+		 * otherwise complain about the duplicate name.
+		 */
+		if (!stmt->replace)
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("trigger \"%s\" for relation \"%s\" already exists",
+							stmt->trigname, RelationGetRelationName(rel))));
+
+		/*
+		 * An internal trigger or a child trigger (isClone) cannot be replaced
+		 * by a user-defined trigger.  However, skip this test when
+		 * in_partition, because then we're recursing from a partitioned table
+		 * and the check was made at the parent level.
+		 */
+		if ((existing_isInternal || existing_isClone) &&
+			!isInternal && !in_partition)
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("trigger \"%s\" for relation \"%s\" is an internal or a child trigger",
+							stmt->trigname, RelationGetRelationName(rel))));
+
+		/*
+		 * It is not allowed to replace with a constraint trigger; gram.y
+		 * should have enforced this already.
+		 */
+		Assert(!stmt->isconstraint);
+
+		/*
+		 * It is not allowed to replace an existing constraint trigger,
+		 * either.  (The reason for these restrictions is partly that it seems
+		 * difficult to deal with pending trigger events in such cases, and
+		 * partly that the command might imply changing the constraint's
+		 * properties as well, which doesn't seem nice.)
+		 */
+		if (OidIsValid(existing_constraint_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_DUPLICATE_OBJECT),
+					 errmsg("trigger \"%s\" for relation \"%s\" is a constraint trigger",
+							stmt->trigname, RelationGetRelationName(rel))));
 	}
 
 	/*
@@ -794,24 +854,17 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 											  0,
 											  ' ',
 											  ' ',
+											  NULL,
+											  0,
 											  ' ',
 											  NULL, /* no exclusion */
 											  NULL, /* no check constraint */
 											  NULL,
 											  true, /* islocal */
 											  0,	/* inhcount */
-											  true, /* isnoinherit */
+											  true, /* noinherit */
 											  isInternal);	/* is_internal */
 	}
-
-	/*
-	 * Generate the trigger's OID now, so that we can use it in the name if
-	 * needed.
-	 */
-	tgrel = table_open(TriggerRelationId, RowExclusiveLock);
-
-	trigoid = GetNewOidWithIndex(tgrel, TriggerOidIndexId,
-								 Anum_pg_trigger_oid);
 
 	/*
 	 * If trigger is internally generated, modify the provided trigger name to
@@ -831,54 +884,19 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	}
 
 	/*
-	 * Scan pg_trigger for existing triggers on relation.  We do this only to
-	 * give a nice error message if there's already a trigger of the same
-	 * name.  (The unique index on tgrelid/tgname would complain anyway.) We
-	 * can skip this for internally generated triggers, since the name
-	 * modification above should be sufficient.
-	 *
-	 * NOTE that this is cool only because we have ShareRowExclusiveLock on
-	 * the relation, so the trigger set won't be changing underneath us.
-	 */
-	if (!isInternal)
-	{
-		ScanKeyInit(&key,
-					Anum_pg_trigger_tgrelid,
-					BTEqualStrategyNumber, F_OIDEQ,
-					ObjectIdGetDatum(RelationGetRelid(rel)));
-		tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
-									NULL, 1, &key);
-		while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
-		{
-			Form_pg_trigger pg_trigger = (Form_pg_trigger) GETSTRUCT(tuple);
-
-			if (namestrcmp(&(pg_trigger->tgname), trigname) == 0)
-				ereport(ERROR,
-						(errcode(ERRCODE_DUPLICATE_OBJECT),
-						 errmsg("trigger \"%s\" for relation \"%s\" already exists",
-								trigname, RelationGetRelationName(rel))));
-		}
-		systable_endscan(tgscan);
-	}
-
-	/*
 	 * Build the new pg_trigger tuple.
-	 *
-	 * When we're creating a trigger in a partition, we mark it as internal,
-	 * even though we don't do the isInternal magic in this function.  This
-	 * makes the triggers in partitions identical to the ones in the
-	 * partitioned tables, except that they are marked internal.
 	 */
 	memset(nulls, false, sizeof(nulls));
 
 	values[Anum_pg_trigger_oid - 1] = ObjectIdGetDatum(trigoid);
 	values[Anum_pg_trigger_tgrelid - 1] = ObjectIdGetDatum(RelationGetRelid(rel));
+	values[Anum_pg_trigger_tgparentid - 1] = ObjectIdGetDatum(parentTriggerOid);
 	values[Anum_pg_trigger_tgname - 1] = DirectFunctionCall1(namein,
 															 CStringGetDatum(trigname));
 	values[Anum_pg_trigger_tgfoid - 1] = ObjectIdGetDatum(funcoid);
 	values[Anum_pg_trigger_tgtype - 1] = Int16GetDatum(tgtype);
 	values[Anum_pg_trigger_tgenabled - 1] = trigger_fires_when;
-	values[Anum_pg_trigger_tgisinternal - 1] = BoolGetDatum(isInternal || in_partition);
+	values[Anum_pg_trigger_tgisinternal - 1] = BoolGetDatum(isInternal);
 	values[Anum_pg_trigger_tgconstrrelid - 1] = ObjectIdGetDatum(constrrelid);
 	values[Anum_pg_trigger_tgconstrindid - 1] = ObjectIdGetDatum(indexOid);
 	values[Anum_pg_trigger_tgconstraint - 1] = ObjectIdGetDatum(constraintOid);
@@ -986,14 +1004,24 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	else
 		nulls[Anum_pg_trigger_tgnewtable - 1] = true;
 
-	tuple = heap_form_tuple(tgrel->rd_att, values, nulls);
-
 	/*
-	 * Insert tuple into pg_trigger.
+	 * Insert or replace tuple in pg_trigger.
 	 */
-	CatalogTupleInsert(tgrel, tuple);
+	if (!trigger_exists)
+	{
+		tuple = heap_form_tuple(tgrel->rd_att, values, nulls);
+		CatalogTupleInsert(tgrel, tuple);
+	}
+	else
+	{
+		HeapTuple	newtup;
 
-	heap_freetuple(tuple);
+		newtup = heap_form_tuple(tgrel->rd_att, values, nulls);
+		CatalogTupleUpdate(tgrel, &tuple->t_self, newtup);
+		heap_freetuple(newtup);
+	}
+
+	heap_freetuple(tuple);		/* free either original or new tuple */
 	table_close(tgrel, RowExclusiveLock);
 
 	pfree(DatumGetPointer(values[Anum_pg_trigger_tgname - 1]));
@@ -1027,6 +1055,13 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 
 	heap_freetuple(tuple);
 	table_close(pgrel, RowExclusiveLock);
+
+	/*
+	 * If we're replacing a trigger, flush all the old dependencies before
+	 * recording new ones.
+	 */
+	if (trigger_exists)
+		deleteDependencyRecordsFor(TriggerRelationId, trigoid, true);
 
 	/*
 	 * Record dependencies for trigger.  Always place a normal dependency on
@@ -1131,7 +1166,7 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	 */
 	if (partition_recurse)
 	{
-		PartitionDesc partdesc = RelationGetPartitionDesc(rel);
+		PartitionDesc partdesc = RelationGetPartitionDesc(rel, true);
 		List	   *idxs = NIL;
 		List	   *childTbls = NIL;
 		ListCell   *l;
@@ -1170,7 +1205,6 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 			CreateTrigStmt *childStmt;
 			Relation	childTbl;
 			Node	   *qual;
-			bool		found_whole_row;
 
 			childTbl = table_open(partdesc->oids[i], ShareRowExclusiveLock);
 
@@ -1203,16 +1237,10 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 			qual = copyObject(whenClause);
 			qual = (Node *)
 				map_partition_varattnos((List *) qual, PRS2_OLD_VARNO,
-										childTbl, rel,
-										&found_whole_row);
-			if (found_whole_row)
-				elog(ERROR, "unexpected whole-row reference found in trigger WHEN clause");
+										childTbl, rel);
 			qual = (Node *)
 				map_partition_varattnos((List *) qual, PRS2_NEW_VARNO,
-										childTbl, rel,
-										&found_whole_row);
-			if (found_whole_row)
-				elog(ERROR, "unexpected whole-row reference found in trigger WHEN clause");
+										childTbl, rel);
 
 			CreateTriggerFiringOn(childStmt, queryString,
 								  partdesc->oids[i], refRelOid,
@@ -1237,288 +1265,82 @@ CreateTriggerFiringOn(CreateTrigStmt *stmt, const char *queryString,
 	return myself;
 }
 
-
 /*
- * Convert legacy (pre-7.3) CREATE CONSTRAINT TRIGGER commands into
- * full-fledged foreign key constraints.
+ * TriggerSetParentTrigger
+ *		Set a partition's trigger as child of its parent trigger,
+ *		or remove the linkage if parentTrigId is InvalidOid.
  *
- * The conversion is complex because a pre-7.3 foreign key involved three
- * separate triggers, which were reported separately in dumps.  While the
- * single trigger on the referencing table adds no new information, we need
- * to know the trigger functions of both of the triggers on the referenced
- * table to build the constraint declaration.  Also, due to lack of proper
- * dependency checking pre-7.3, it is possible that the source database had
- * an incomplete set of triggers resulting in an only partially enforced
- * FK constraint.  (This would happen if one of the tables had been dropped
- * and re-created, but only if the DB had been affected by a 7.0 pg_dump bug
- * that caused loss of tgconstrrelid information.)	We choose to translate to
- * an FK constraint only when we've seen all three triggers of a set.  This is
- * implemented by storing unmatched items in a list in TopMemoryContext.
- * We match triggers together by comparing the trigger arguments (which
- * include constraint name, table and column names, so should be good enough).
+ * This updates the constraint's pg_trigger row to show it as inherited, and
+ * adds PARTITION dependencies to prevent the trigger from being deleted
+ * on its own.  Alternatively, reverse that.
  */
-typedef struct
+void
+TriggerSetParentTrigger(Relation trigRel,
+						Oid childTrigId,
+						Oid parentTrigId,
+						Oid childTableId)
 {
-	List	   *args;			/* list of (T_String) Values or NIL */
-	Oid			funcoids[3];	/* OIDs of trigger functions */
-	/* The three function OIDs are stored in the order update, delete, child */
-} OldTriggerInfo;
+	SysScanDesc tgscan;
+	ScanKeyData skey[1];
+	Form_pg_trigger trigForm;
+	HeapTuple	tuple,
+				newtup;
+	ObjectAddress depender;
+	ObjectAddress referenced;
 
-static void
-ConvertTriggerToFK(CreateTrigStmt *stmt, Oid funcoid)
-{
-	static List *info_list = NIL;
+	/*
+	 * Find the trigger to delete.
+	 */
+	ScanKeyInit(&skey[0],
+				Anum_pg_trigger_oid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(childTrigId));
 
-	static const char *const funcdescr[3] = {
-		gettext_noop("Found referenced table's UPDATE trigger."),
-		gettext_noop("Found referenced table's DELETE trigger."),
-		gettext_noop("Found referencing table's trigger.")
-	};
+	tgscan = systable_beginscan(trigRel, TriggerOidIndexId, true,
+								NULL, 1, skey);
 
-	char	   *constr_name;
-	char	   *fk_table_name;
-	char	   *pk_table_name;
-	char		fk_matchtype = FKCONSTR_MATCH_SIMPLE;
-	List	   *fk_attrs = NIL;
-	List	   *pk_attrs = NIL;
-	StringInfoData buf;
-	int			funcnum;
-	OldTriggerInfo *info = NULL;
-	ListCell   *l;
-	int			i;
-
-	/* Parse out the trigger arguments */
-	constr_name = strVal(linitial(stmt->args));
-	fk_table_name = strVal(lsecond(stmt->args));
-	pk_table_name = strVal(lthird(stmt->args));
-	i = 0;
-	foreach(l, stmt->args)
+	tuple = systable_getnext(tgscan);
+	if (!HeapTupleIsValid(tuple))
+		elog(ERROR, "could not find tuple for trigger %u", childTrigId);
+	newtup = heap_copytuple(tuple);
+	trigForm = (Form_pg_trigger) GETSTRUCT(newtup);
+	if (OidIsValid(parentTrigId))
 	{
-		Value	   *arg = (Value *) lfirst(l);
+		/* don't allow setting parent for a constraint that already has one */
+		if (OidIsValid(trigForm->tgparentid))
+			elog(ERROR, "trigger %u already has a parent trigger",
+				 childTrigId);
 
-		i++;
-		if (i < 4)				/* skip constraint and table names */
-			continue;
-		if (i == 4)				/* handle match type */
-		{
-			if (strcmp(strVal(arg), "FULL") == 0)
-				fk_matchtype = FKCONSTR_MATCH_FULL;
-			else
-				fk_matchtype = FKCONSTR_MATCH_SIMPLE;
-			continue;
-		}
-		if (i % 2)
-			fk_attrs = lappend(fk_attrs, arg);
-		else
-			pk_attrs = lappend(pk_attrs, arg);
-	}
+		trigForm->tgparentid = parentTrigId;
 
-	/* Prepare description of constraint for use in messages */
-	initStringInfo(&buf);
-	appendStringInfo(&buf, "FOREIGN KEY %s(",
-					 quote_identifier(fk_table_name));
-	i = 0;
-	foreach(l, fk_attrs)
-	{
-		Value	   *arg = (Value *) lfirst(l);
+		CatalogTupleUpdate(trigRel, &tuple->t_self, newtup);
 
-		if (i++ > 0)
-			appendStringInfoChar(&buf, ',');
-		appendStringInfoString(&buf, quote_identifier(strVal(arg)));
-	}
-	appendStringInfo(&buf, ") REFERENCES %s(",
-					 quote_identifier(pk_table_name));
-	i = 0;
-	foreach(l, pk_attrs)
-	{
-		Value	   *arg = (Value *) lfirst(l);
+		ObjectAddressSet(depender, TriggerRelationId, childTrigId);
 
-		if (i++ > 0)
-			appendStringInfoChar(&buf, ',');
-		appendStringInfoString(&buf, quote_identifier(strVal(arg)));
-	}
-	appendStringInfoChar(&buf, ')');
+		ObjectAddressSet(referenced, TriggerRelationId, parentTrigId);
+		recordDependencyOn(&depender, &referenced, DEPENDENCY_PARTITION_PRI);
 
-	/* Identify class of trigger --- update, delete, or referencing-table */
-	switch (funcoid)
-	{
-		case F_RI_FKEY_CASCADE_UPD:
-		case F_RI_FKEY_RESTRICT_UPD:
-		case F_RI_FKEY_SETNULL_UPD:
-		case F_RI_FKEY_SETDEFAULT_UPD:
-		case F_RI_FKEY_NOACTION_UPD:
-			funcnum = 0;
-			break;
-
-		case F_RI_FKEY_CASCADE_DEL:
-		case F_RI_FKEY_RESTRICT_DEL:
-		case F_RI_FKEY_SETNULL_DEL:
-		case F_RI_FKEY_SETDEFAULT_DEL:
-		case F_RI_FKEY_NOACTION_DEL:
-			funcnum = 1;
-			break;
-
-		default:
-			funcnum = 2;
-			break;
-	}
-
-	/* See if we have a match to this trigger */
-	foreach(l, info_list)
-	{
-		info = (OldTriggerInfo *) lfirst(l);
-		if (info->funcoids[funcnum] == InvalidOid &&
-			equal(info->args, stmt->args))
-		{
-			info->funcoids[funcnum] = funcoid;
-			break;
-		}
-	}
-
-	if (l == NULL)
-	{
-		/* First trigger of set, so create a new list entry */
-		MemoryContext oldContext;
-
-		ereport(NOTICE,
-				(errmsg("ignoring incomplete trigger group for constraint \"%s\" %s",
-						constr_name, buf.data),
-				 errdetail_internal("%s", _(funcdescr[funcnum]))));
-		oldContext = MemoryContextSwitchTo(TopMemoryContext);
-		info = (OldTriggerInfo *) palloc0(sizeof(OldTriggerInfo));
-		info->args = copyObject(stmt->args);
-		info->funcoids[funcnum] = funcoid;
-		info_list = lappend(info_list, info);
-		MemoryContextSwitchTo(oldContext);
-	}
-	else if (info->funcoids[0] == InvalidOid ||
-			 info->funcoids[1] == InvalidOid ||
-			 info->funcoids[2] == InvalidOid)
-	{
-		/* Second trigger of set */
-		ereport(NOTICE,
-				(errmsg("ignoring incomplete trigger group for constraint \"%s\" %s",
-						constr_name, buf.data),
-				 errdetail_internal("%s", _(funcdescr[funcnum]))));
+		ObjectAddressSet(referenced, RelationRelationId, childTableId);
+		recordDependencyOn(&depender, &referenced, DEPENDENCY_PARTITION_SEC);
 	}
 	else
 	{
-		/* OK, we have a set, so make the FK constraint ALTER TABLE cmd */
-		AlterTableStmt *atstmt = makeNode(AlterTableStmt);
-		AlterTableCmd *atcmd = makeNode(AlterTableCmd);
-		Constraint *fkcon = makeNode(Constraint);
-		PlannedStmt *wrapper = makeNode(PlannedStmt);
+		trigForm->tgparentid = InvalidOid;
 
-		ereport(NOTICE,
-				(errmsg("converting trigger group into constraint \"%s\" %s",
-						constr_name, buf.data),
-				 errdetail_internal("%s", _(funcdescr[funcnum]))));
-		fkcon->contype = CONSTR_FOREIGN;
-		fkcon->location = -1;
-		if (funcnum == 2)
-		{
-			/* This trigger is on the FK table */
-			atstmt->relation = stmt->relation;
-			if (stmt->constrrel)
-				fkcon->pktable = stmt->constrrel;
-			else
-			{
-				/* Work around ancient pg_dump bug that omitted constrrel */
-				fkcon->pktable = makeRangeVar(NULL, pk_table_name, -1);
-			}
-		}
-		else
-		{
-			/* This trigger is on the PK table */
-			fkcon->pktable = stmt->relation;
-			if (stmt->constrrel)
-				atstmt->relation = stmt->constrrel;
-			else
-			{
-				/* Work around ancient pg_dump bug that omitted constrrel */
-				atstmt->relation = makeRangeVar(NULL, fk_table_name, -1);
-			}
-		}
-		atstmt->cmds = list_make1(atcmd);
-		atstmt->relkind = OBJECT_TABLE;
-		atcmd->subtype = AT_AddConstraint;
-		atcmd->def = (Node *) fkcon;
-		if (strcmp(constr_name, "<unnamed>") == 0)
-			fkcon->conname = NULL;
-		else
-			fkcon->conname = constr_name;
-		fkcon->fk_attrs = fk_attrs;
-		fkcon->pk_attrs = pk_attrs;
-		fkcon->fk_matchtype = fk_matchtype;
-		switch (info->funcoids[0])
-		{
-			case F_RI_FKEY_NOACTION_UPD:
-				fkcon->fk_upd_action = FKCONSTR_ACTION_NOACTION;
-				break;
-			case F_RI_FKEY_CASCADE_UPD:
-				fkcon->fk_upd_action = FKCONSTR_ACTION_CASCADE;
-				break;
-			case F_RI_FKEY_RESTRICT_UPD:
-				fkcon->fk_upd_action = FKCONSTR_ACTION_RESTRICT;
-				break;
-			case F_RI_FKEY_SETNULL_UPD:
-				fkcon->fk_upd_action = FKCONSTR_ACTION_SETNULL;
-				break;
-			case F_RI_FKEY_SETDEFAULT_UPD:
-				fkcon->fk_upd_action = FKCONSTR_ACTION_SETDEFAULT;
-				break;
-			default:
-				/* can't get here because of earlier checks */
-				elog(ERROR, "confused about RI update function");
-		}
-		switch (info->funcoids[1])
-		{
-			case F_RI_FKEY_NOACTION_DEL:
-				fkcon->fk_del_action = FKCONSTR_ACTION_NOACTION;
-				break;
-			case F_RI_FKEY_CASCADE_DEL:
-				fkcon->fk_del_action = FKCONSTR_ACTION_CASCADE;
-				break;
-			case F_RI_FKEY_RESTRICT_DEL:
-				fkcon->fk_del_action = FKCONSTR_ACTION_RESTRICT;
-				break;
-			case F_RI_FKEY_SETNULL_DEL:
-				fkcon->fk_del_action = FKCONSTR_ACTION_SETNULL;
-				break;
-			case F_RI_FKEY_SETDEFAULT_DEL:
-				fkcon->fk_del_action = FKCONSTR_ACTION_SETDEFAULT;
-				break;
-			default:
-				/* can't get here because of earlier checks */
-				elog(ERROR, "confused about RI delete function");
-		}
-		fkcon->deferrable = stmt->deferrable;
-		fkcon->initdeferred = stmt->initdeferred;
-		fkcon->skip_validation = false;
-		fkcon->initially_valid = true;
+		CatalogTupleUpdate(trigRel, &tuple->t_self, newtup);
 
-		/* finally, wrap it in a dummy PlannedStmt */
-		wrapper->commandType = CMD_UTILITY;
-		wrapper->canSetTag = false;
-		wrapper->utilityStmt = (Node *) atstmt;
-		wrapper->stmt_location = -1;
-		wrapper->stmt_len = -1;
-
-		/* ... and execute it */
-		ProcessUtility(wrapper,
-					   "(generated ALTER TABLE ADD FOREIGN KEY command)",
-					   PROCESS_UTILITY_SUBCOMMAND, NULL, NULL,
-#ifdef PGXC
-					   false, None_Receiver, NULL);
-#else
-					   None_Receiver, NULL);
-#endif /* PGXC */
-		/* Remove the matched item from the list */
-		info_list = list_delete_ptr(info_list, info);
-		pfree(info);
-		/* We leak the copied args ... not worth worrying about */
+		deleteDependencyRecordsForClass(TriggerRelationId, childTrigId,
+										TriggerRelationId,
+										DEPENDENCY_PARTITION_PRI);
+		deleteDependencyRecordsForClass(TriggerRelationId, childTrigId,
+										RelationRelationId,
+										DEPENDENCY_PARTITION_SEC);
 	}
+
+	heap_freetuple(newtup);
+	systable_endscan(tgscan);
 }
+
 
 /*
  * Guts of trigger deletion.
@@ -1563,8 +1385,9 @@ RemoveTriggerById(Oid trigOid)
 		rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table, view, or foreign table",
-						RelationGetRelationName(rel))));
+				 errmsg("relation \"%s\" cannot have triggers",
+						RelationGetRelationName(rel)),
+				 errdetail_relkind_not_supported(rel->rd_rel->relkind)));
 
 	if (!allowSystemTableMods && IsSystemRelation(rel))
 		ereport(ERROR,
@@ -1669,8 +1492,9 @@ RangeVarCallbackForRenameTrigger(const RangeVar *rv, Oid relid, Oid oldrelid,
 		form->relkind != RELKIND_PARTITIONED_TABLE)
 		ereport(ERROR,
 				(errcode(ERRCODE_WRONG_OBJECT_TYPE),
-				 errmsg("\"%s\" is not a table, view, or foreign table",
-						rv->relname)));
+				 errmsg("relation \"%s\" cannot have triggers",
+						rv->relname),
+				 errdetail_relkind_not_supported(form->relkind)));
 
 	/* you must own the table to rename one of its triggers */
 	if (!pg_class_ownercheck(relid, GetUserId()))
@@ -1722,38 +1546,16 @@ renametrig(RenameStmt *stmt)
 	targetrel = relation_open(relid, NoLock);
 
 	/*
-	 * Scan pg_trigger twice for existing triggers on relation.  We do this in
-	 * order to ensure a trigger does not exist with newname (The unique index
-	 * on tgrelid/tgname would complain anyway) and to ensure a trigger does
-	 * exist with oldname.
-	 *
-	 * NOTE that this is cool only because we have AccessExclusiveLock on the
-	 * relation, so the trigger set won't be changing underneath us.
+	 * On partitioned tables, this operation recurses to partitions.  Lock all
+	 * tables upfront.
 	 */
+	if (targetrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		(void) find_all_inheritors(relid, AccessExclusiveLock, NULL);
+
 	tgrel = table_open(TriggerRelationId, RowExclusiveLock);
 
 	/*
-	 * First pass -- look for name conflict
-	 */
-	ScanKeyInit(&key[0],
-				Anum_pg_trigger_tgrelid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relid));
-	ScanKeyInit(&key[1],
-				Anum_pg_trigger_tgname,
-				BTEqualStrategyNumber, F_NAMEEQ,
-				PointerGetDatum(stmt->newname));
-	tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
-								NULL, 2, key);
-	if (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
-		ereport(ERROR,
-				(errcode(ERRCODE_DUPLICATE_OBJECT),
-				 errmsg("trigger \"%s\" for relation \"%s\" already exists",
-						stmt->newname, RelationGetRelationName(targetrel))));
-	systable_endscan(tgscan);
-
-	/*
-	 * Second pass -- look for trigger existing with oldname and update
+	 * Search for the trigger to modify.
 	 */
 	ScanKeyInit(&key[0],
 				Anum_pg_trigger_tgrelid,
@@ -1769,27 +1571,40 @@ renametrig(RenameStmt *stmt)
 	{
 		Form_pg_trigger trigform;
 
-		/*
-		 * Update pg_trigger tuple with new tgname.
-		 */
-		tuple = heap_copytuple(tuple);	/* need a modifiable copy */
 		trigform = (Form_pg_trigger) GETSTRUCT(tuple);
 		tgoid = trigform->oid;
 
-		namestrcpy(&trigform->tgname,
-				   stmt->newname);
-
-		CatalogTupleUpdate(tgrel, &tuple->t_self, tuple);
-
-		InvokeObjectPostAlterHook(TriggerRelationId,
-								  tgoid, 0);
-
 		/*
-		 * Invalidate relation's relcache entry so that other backends (and
-		 * this one too!) are sent SI message to make them rebuild relcache
-		 * entries.  (Ideally this should happen automatically...)
+		 * If the trigger descends from a trigger on a parent partitioned
+		 * table, reject the rename.  We don't allow a trigger in a partition
+		 * to differ in name from that of its parent: that would lead to an
+		 * inconsistency that pg_dump would not reproduce.
 		 */
-		CacheInvalidateRelcache(targetrel);
+		if (OidIsValid(trigform->tgparentid))
+			ereport(ERROR,
+					errmsg("cannot rename trigger \"%s\" on table \"%s\"",
+						   stmt->subname, RelationGetRelationName(targetrel)),
+					errhint("Rename the trigger on the partitioned table \"%s\" instead.",
+							get_rel_name(get_partition_parent(relid, false))));
+
+
+		/* Rename the trigger on this relation ... */
+		renametrig_internal(tgrel, targetrel, tuple, stmt->newname,
+							stmt->subname);
+
+		/* ... and if it is partitioned, recurse to its partitions */
+		if (targetrel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		{
+			PartitionDesc partdesc = RelationGetPartitionDesc(targetrel, true);
+
+			for (int i = 0; i < partdesc->nparts; i++)
+			{
+				Oid			partitionId = partdesc->oids[i];
+
+				renametrig_partition(tgrel, partitionId, trigform->oid,
+									 stmt->newname, stmt->subname);
+			}
+		}
 	}
 	else
 	{
@@ -1813,6 +1628,137 @@ renametrig(RenameStmt *stmt)
 	return address;
 }
 
+/*
+ * Subroutine for renametrig -- perform the actual work of renaming one
+ * trigger on one table.
+ *
+ * If the trigger has a name different from the expected one, raise a
+ * NOTICE about it.
+ */
+static void
+renametrig_internal(Relation tgrel, Relation targetrel, HeapTuple trigtup,
+					const char *newname, const char *expected_name)
+{
+	HeapTuple	tuple;
+	Form_pg_trigger tgform;
+	ScanKeyData key[2];
+	SysScanDesc tgscan;
+
+	/* If the trigger already has the new name, nothing to do. */
+	tgform = (Form_pg_trigger) GETSTRUCT(trigtup);
+	if (strcmp(NameStr(tgform->tgname), newname) == 0)
+		return;
+
+	/*
+	 * Before actually trying the rename, search for triggers with the same
+	 * name.  The update would fail with an ugly message in that case, and it
+	 * is better to throw a nicer error.
+	 */
+	ScanKeyInit(&key[0],
+				Anum_pg_trigger_tgrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(RelationGetRelid(targetrel)));
+	ScanKeyInit(&key[1],
+				Anum_pg_trigger_tgname,
+				BTEqualStrategyNumber, F_NAMEEQ,
+				PointerGetDatum(newname));
+	tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
+								NULL, 2, key);
+	if (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
+		ereport(ERROR,
+				(errcode(ERRCODE_DUPLICATE_OBJECT),
+				 errmsg("trigger \"%s\" for relation \"%s\" already exists",
+						newname, RelationGetRelationName(targetrel))));
+	systable_endscan(tgscan);
+
+	/*
+	 * The target name is free; update the existing pg_trigger tuple with it.
+	 */
+	tuple = heap_copytuple(trigtup);	/* need a modifiable copy */
+	tgform = (Form_pg_trigger) GETSTRUCT(tuple);
+
+	/*
+	 * If the trigger has a name different from what we expected, let the user
+	 * know. (We can proceed anyway, since we must have reached here following
+	 * a tgparentid link.)
+	 */
+	if (strcmp(NameStr(tgform->tgname), expected_name) != 0)
+		ereport(NOTICE,
+				errmsg("renamed trigger \"%s\" on relation \"%s\"",
+					   NameStr(tgform->tgname),
+					   RelationGetRelationName(targetrel)));
+
+	namestrcpy(&tgform->tgname, newname);
+
+	CatalogTupleUpdate(tgrel, &tuple->t_self, tuple);
+
+	InvokeObjectPostAlterHook(TriggerRelationId, tgform->oid, 0);
+
+	/*
+	 * Invalidate relation's relcache entry so that other backends (and this
+	 * one too!) are sent SI message to make them rebuild relcache entries.
+	 * (Ideally this should happen automatically...)
+	 */
+	CacheInvalidateRelcache(targetrel);
+}
+
+/*
+ * Subroutine for renametrig -- Helper for recursing to partitions when
+ * renaming triggers on a partitioned table.
+ */
+static void
+renametrig_partition(Relation tgrel, Oid partitionId, Oid parentTriggerOid,
+					 const char *newname, const char *expected_name)
+{
+	SysScanDesc tgscan;
+	ScanKeyData key;
+	HeapTuple	tuple;
+
+	/*
+	 * Given a relation and the OID of a trigger on parent relation, find the
+	 * corresponding trigger in the child and rename that trigger to the given
+	 * name.
+	 */
+	ScanKeyInit(&key,
+				Anum_pg_trigger_tgrelid,
+				BTEqualStrategyNumber, F_OIDEQ,
+				ObjectIdGetDatum(partitionId));
+	tgscan = systable_beginscan(tgrel, TriggerRelidNameIndexId, true,
+								NULL, 1, &key);
+	while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
+	{
+		Form_pg_trigger tgform = (Form_pg_trigger) GETSTRUCT(tuple);
+		Relation	partitionRel;
+
+		if (tgform->tgparentid != parentTriggerOid)
+			continue;			/* not our trigger */
+
+		partitionRel = table_open(partitionId, NoLock);
+
+		/* Rename the trigger on this partition */
+		renametrig_internal(tgrel, partitionRel, tuple, newname, expected_name);
+
+		/* And if this relation is partitioned, recurse to its partitions */
+		if (partitionRel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+		{
+			PartitionDesc partdesc = RelationGetPartitionDesc(partitionRel,
+															  true);
+
+			for (int i = 0; i < partdesc->nparts; i++)
+			{
+				Oid			partitionId = partdesc->oids[i];
+
+				renametrig_partition(tgrel, partitionId, tgform->oid, newname,
+									 NameStr(tgform->tgname));
+			}
+		}
+		table_close(partitionRel, NoLock);
+
+		/* There should be at most one matching tuple */
+		break;
+	}
+	systable_endscan(tgscan);
+}
 
 /*
  * EnableDisableTrigger()
@@ -1821,7 +1767,8 @@ renametrig(RenameStmt *stmt)
  *	to change 'tgenabled' field for the specified trigger(s)
  *
  * rel: relation to process (caller must hold suitable lock on it)
- * tgname: trigger to process, or NULL to scan all triggers
+ * tgname: name of trigger to process, or NULL to scan all triggers
+ * tgparent: if not zero, process only triggers with this tgparentid
  * fires_when: new value for tgenabled field. In addition to generic
  *			   enablement/disablement, this also defines when the trigger
  *			   should be fired in session replication roles.
@@ -1833,9 +1780,9 @@ renametrig(RenameStmt *stmt)
  * system triggers
  */
 void
-EnableDisableTriggerNew(Relation rel, const char *tgname,
-						char fires_when, bool skip_system, bool recurse,
-						LOCKMODE lockmode)
+EnableDisableTriggerNew2(Relation rel, const char *tgname, Oid tgparent,
+						 char fires_when, bool skip_system, bool recurse,
+						 LOCKMODE lockmode)
 {
 	Relation	tgrel;
 	int			nkeys;
@@ -1871,6 +1818,9 @@ EnableDisableTriggerNew(Relation rel, const char *tgname,
 	while (HeapTupleIsValid(tuple = systable_getnext(tgscan)))
 	{
 		Form_pg_trigger oldtrig = (Form_pg_trigger) GETSTRUCT(tuple);
+
+		if (OidIsValid(tgparent) && tgparent != oldtrig->tgparentid)
+			continue;
 
 		if (oldtrig->tgisinternal)
 		{
@@ -1914,7 +1864,7 @@ EnableDisableTriggerNew(Relation rel, const char *tgname,
 			rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE &&
 			(TRIGGER_FOR_ROW(oldtrig->tgtype)))
 		{
-			PartitionDesc partdesc = RelationGetPartitionDesc(rel);
+			PartitionDesc partdesc = RelationGetPartitionDesc(rel, true);
 			int			i;
 
 			for (i = 0; i < partdesc->nparts; i++)
@@ -1922,9 +1872,10 @@ EnableDisableTriggerNew(Relation rel, const char *tgname,
 				Relation	part;
 
 				part = relation_open(partdesc->oids[i], lockmode);
-				EnableDisableTriggerNew(part, NameStr(oldtrig->tgname),
-										fires_when, skip_system, recurse,
-										lockmode);
+				/* Match on child triggers' tgparentid, not their name */
+				EnableDisableTriggerNew2(part, NULL, oldtrig->oid,
+										 fires_when, skip_system, recurse,
+										 lockmode);
 				table_close(part, NoLock);	/* keep lock till commit */
 			}
 		}
@@ -1953,16 +1904,27 @@ EnableDisableTriggerNew(Relation rel, const char *tgname,
 }
 
 /*
- * ABI-compatible wrapper for the above.  To keep as close possible to the old
- * behavior, this never recurses.  Do not call this function in new code.
+ * ABI-compatible wrappers to emulate old versions of the above function.
+ * Do not call these versions in new code.
  */
+void
+EnableDisableTriggerNew(Relation rel, const char *tgname,
+						char fires_when, bool skip_system, bool recurse,
+						LOCKMODE lockmode)
+{
+	EnableDisableTriggerNew2(rel, tgname, InvalidOid,
+							 fires_when, skip_system,
+							 recurse, lockmode);
+}
+
 void
 EnableDisableTrigger(Relation rel, const char *tgname,
 					 char fires_when, bool skip_system,
 					 LOCKMODE lockmode)
 {
-	EnableDisableTriggerNew(rel, tgname, fires_when, skip_system,
-							true, lockmode);
+	EnableDisableTriggerNew2(rel, tgname, InvalidOid,
+							 fires_when, skip_system,
+							 true, lockmode);
 }
 
 
@@ -2034,6 +1996,7 @@ RelationBuildTriggers(Relation relation)
 		build->tgtype = pg_trigger->tgtype;
 		build->tgenabled = pg_trigger->tgenabled;
 		build->tgisinternal = pg_trigger->tgisinternal;
+		build->tgisclone = OidIsValid(pg_trigger->tgparentid);
 		build->tgconstrrelid = pg_trigger->tgconstrrelid;
 		build->tgconstrindid = pg_trigger->tgconstrindid;
 		build->tgconstraint = pg_trigger->tgconstraint;
@@ -2337,6 +2300,8 @@ equalTriggerDescs(TriggerDesc *trigdesc1, TriggerDesc *trigdesc2)
 				return false;
 			if (trig1->tgisinternal != trig2->tgisinternal)
 				return false;
+			if (trig1->tgisclone != trig2->tgisclone)
+				return false;
 			if (trig1->tgconstrrelid != trig2->tgconstrrelid)
 				return false;
 			if (trig1->tgconstrindid != trig2->tgconstrindid)
@@ -2481,13 +2446,11 @@ ExecCallTriggerFunc(TriggerData *trigdata,
 	{
 		result = FunctionCallInvoke(fcinfo);
 	}
-	PG_CATCH();
+	PG_FINALLY();
 	{
 		MyTriggerDepth--;
-		PG_RE_THROW();
 	}
 	PG_END_TRY();
-	MyTriggerDepth--;
 
 	pgstat_end_function_usage(&fcusage, true);
 
@@ -2518,7 +2481,7 @@ ExecBSInsertTriggers(EState *estate, ResultRelInfo *relinfo)
 {
 	TriggerDesc *trigdesc;
 	int			i;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 
 #ifdef PGXC
 	/* Know whether we should fire triggers on this node. */
@@ -2545,12 +2508,6 @@ ExecBSInsertTriggers(EState *estate, ResultRelInfo *relinfo)
 	LocTriggerData.tg_event = TRIGGER_EVENT_INSERT |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
@@ -2586,8 +2543,10 @@ ExecASInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 
 	if (trigdesc && trigdesc->trig_insert_after_statement)
-		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_INSERT,
-							  false, NULL, NULL, NIL, NULL, transition_capture);
+		AfterTriggerSaveEvent(estate, relinfo, NULL, NULL,
+							  TRIGGER_EVENT_INSERT,
+							  false, NULL, NULL, NIL, NULL, transition_capture,
+							  false);
 }
 
 bool
@@ -2597,7 +2556,7 @@ ExecBRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	HeapTuple	newtuple = NULL;
 	bool		should_free;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	int			i;
 #ifdef PGXC
 	bool exec_all_triggers;
@@ -2617,12 +2576,6 @@ ExecBRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 		TRIGGER_EVENT_ROW |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
@@ -2664,6 +2617,21 @@ ExecBRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 		{
 			ExecForceStoreHeapTuple(newtuple, slot, false);
 
+			/*
+			 * After a tuple in a partition goes through a trigger, the user
+			 * could have changed the partition key enough that the tuple no
+			 * longer fits the partition.  Verify that.
+			 */
+			if (trigger->tgisclone &&
+				!ExecPartitionCheck(relinfo, slot, estate, false))
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("moving row to another partition during a BEFORE FOR EACH ROW trigger is not supported"),
+						 errdetail("Before executing trigger \"%s\", the row was to be in partition \"%s.%s\".",
+								   trigger->tgname,
+								   get_namespace_name(RelationGetNamespace(relinfo->ri_RelationDesc)),
+								   RelationGetRelationName(relinfo->ri_RelationDesc))));
+
 			if (should_free)
 				heap_freetuple(oldtuple);
 
@@ -2684,10 +2652,12 @@ ExecARInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 
 	if ((trigdesc && trigdesc->trig_insert_after_row) ||
 		(transition_capture && transition_capture->tcs_insert_new_table))
-		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_INSERT,
+		AfterTriggerSaveEvent(estate, relinfo, NULL, NULL,
+							  TRIGGER_EVENT_INSERT,
 							  true, NULL, slot,
 							  recheckIndexes, NULL,
-							  transition_capture);
+							  transition_capture,
+							  false);
 }
 
 bool
@@ -2697,7 +2667,7 @@ ExecIRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	HeapTuple	newtuple = NULL;
 	bool		should_free;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	int			i;
 #ifdef PGXC
 	bool exec_all_triggers;
@@ -2718,12 +2688,6 @@ ExecIRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 		TRIGGER_EVENT_ROW |
 		TRIGGER_EVENT_INSTEAD;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
@@ -2780,7 +2744,7 @@ ExecBSDeleteTriggers(EState *estate, ResultRelInfo *relinfo)
 {
 	TriggerDesc *trigdesc;
 	int			i;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 #ifdef PGXC
 	/* Know whether we should fire these type of triggers on this node */
 	if (!pgxc_should_exec_triggers(relinfo->ri_RelationDesc,
@@ -2806,12 +2770,6 @@ ExecBSDeleteTriggers(EState *estate, ResultRelInfo *relinfo)
 	LocTriggerData.tg_event = TRIGGER_EVENT_DELETE |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
@@ -2847,8 +2805,10 @@ ExecASDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 
 	if (trigdesc && trigdesc->trig_delete_after_statement)
-		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_DELETE,
-							  false, NULL, NULL, NIL, NULL, transition_capture);
+		AfterTriggerSaveEvent(estate, relinfo, NULL, NULL,
+							  TRIGGER_EVENT_DELETE,
+							  false, NULL, NULL, NIL, NULL, transition_capture,
+							  false);
 }
 
 /*
@@ -2859,16 +2819,18 @@ ExecASDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
  * back the concurrently updated tuple if any.
  */
 bool
-ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
-					 ResultRelInfo *relinfo,
-					 ItemPointer tupleid,
-					 HeapTuple fdw_trigtuple,
-					 TupleTableSlot **epqslot)
+ExecBRDeleteTriggersNew(EState *estate, EPQState *epqstate,
+						ResultRelInfo *relinfo,
+						ItemPointer tupleid,
+						HeapTuple fdw_trigtuple,
+						TupleTableSlot **epqslot,
+						TM_Result *tmresult,
+						TM_FailureData *tmfd)
 {
 	TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	bool		result = true;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	HeapTuple	trigtuple;
 	bool		should_free = false;
 	int			i;
@@ -2912,7 +2874,8 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 		TupleTableSlot *epqslot_candidate = NULL;
 
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
-								LockTupleExclusive, slot, &epqslot_candidate))
+								LockTupleExclusive, slot, &epqslot_candidate,
+								tmresult, tmfd))
 			return false;
 
 		/*
@@ -2927,7 +2890,6 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 		}
 
 		trigtuple = ExecFetchSlotHeapTuple(slot, true, &should_free);
-
 	}
 	else
 	{
@@ -2943,12 +2905,6 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 		TRIGGER_EVENT_ROW |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		HeapTuple	newtuple;
@@ -2985,18 +2941,40 @@ ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
 	return result;
 }
 
-void
-ExecARDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
+/*
+ * ABI-compatible wrapper to emulate old version of the above function.
+ * Do not call this version in new code.
+ */
+bool
+ExecBRDeleteTriggers(EState *estate, EPQState *epqstate,
+					 ResultRelInfo *relinfo,
 					 ItemPointer tupleid,
 					 HeapTuple fdw_trigtuple,
-					 TransitionCaptureState *transition_capture)
+					 TupleTableSlot **epqslot)
+{
+	return ExecBRDeleteTriggersNew(estate, epqstate, relinfo, tupleid,
+								   fdw_trigtuple, epqslot, NULL, NULL);
+}
+
+/*
+ * Note: is_crosspart_update must be true if the DELETE is being performed
+ * as part of a cross-partition update.
+ */
+void
+ExecARDeleteTriggers(EState *estate,
+					 ResultRelInfo *relinfo,
+					 ItemPointer tupleid,
+					 HeapTuple fdw_trigtuple,
+					 TransitionCaptureState *transition_capture,
+					 bool is_crosspart_update)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
-	TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
 
 	if ((trigdesc && trigdesc->trig_delete_after_row) ||
 		(transition_capture && transition_capture->tcs_delete_old_table))
 	{
+		TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
+
 #ifdef PGXC
 		if (IS_PGXC_COORDINATOR && RelationGetLocInfo(relinfo->ri_RelationDesc))
 		{
@@ -3019,15 +2997,19 @@ ExecARDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 							   tupleid,
 							   LockTupleExclusive,
 							   slot,
+							   NULL,
+							   NULL,
 							   NULL);
 		else
 			ExecForceStoreHeapTuple(fdw_trigtuple, slot, false);
 #ifdef PGXC
 		}
 #endif
-		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_DELETE,
+		AfterTriggerSaveEvent(estate, relinfo, NULL, NULL,
+							  TRIGGER_EVENT_DELETE,
 							  true, slot, NULL, NIL, NULL,
-							  transition_capture);
+							  transition_capture,
+							  is_crosspart_update);
 	}
 }
 
@@ -3037,7 +3019,7 @@ ExecIRDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	TupleTableSlot *slot = ExecGetTriggerOldSlot(estate, relinfo);
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	int			i;
 #ifdef PGXC
 	bool exec_all_triggers;
@@ -3057,12 +3039,6 @@ ExecIRDeleteTriggers(EState *estate, ResultRelInfo *relinfo,
 		TRIGGER_EVENT_ROW |
 		TRIGGER_EVENT_INSTEAD;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 
 	ExecForceStoreHeapTuple(trigtuple, slot, false);
 
@@ -3106,7 +3082,7 @@ ExecBSUpdateTriggers(EState *estate, ResultRelInfo *relinfo)
 {
 	TriggerDesc *trigdesc;
 	int			i;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	Bitmapset  *updatedCols;
 #ifdef PGXC
 	/* Know whether we should fire these type of triggers on this node */
@@ -3138,12 +3114,7 @@ ExecBSUpdateTriggers(EState *estate, ResultRelInfo *relinfo)
 	LocTriggerData.tg_event = TRIGGER_EVENT_UPDATE |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
+	LocTriggerData.tg_updatedcols = updatedCols;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
@@ -3182,18 +3153,22 @@ ExecASUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 	Assert(relinfo->ri_RootResultRelInfo == NULL);
 
 	if (trigdesc && trigdesc->trig_update_after_statement)
-		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_UPDATE,
+		AfterTriggerSaveEvent(estate, relinfo, NULL, NULL,
+							  TRIGGER_EVENT_UPDATE,
 							  false, NULL, NULL, NIL,
 							  ExecGetAllUpdatedCols(relinfo, estate),
-							  transition_capture);
+							  transition_capture,
+							  false);
 }
 
 bool
-ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
-					 ResultRelInfo *relinfo,
-					 ItemPointer tupleid,
-					 HeapTuple fdw_trigtuple,
-					 TupleTableSlot *newslot)
+ExecBRUpdateTriggersNew(EState *estate, EPQState *epqstate,
+						ResultRelInfo *relinfo,
+						ItemPointer tupleid,
+						HeapTuple fdw_trigtuple,
+						TupleTableSlot *newslot,
+						TM_Result *tmresult,
+						TM_FailureData *tmfd)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 	TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
@@ -3201,7 +3176,7 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 	HeapTuple	trigtuple;
 	bool		should_free_trig = false;
 	bool		should_free_new = false;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	int			i;
 	Bitmapset  *updatedCols;
 	LockTupleMode lockmode;
@@ -3253,35 +3228,56 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 
 		/* get a copy of the on-disk tuple we are planning to update */
 		if (!GetTupleForTrigger(estate, epqstate, relinfo, tupleid,
-								lockmode, oldslot, &epqslot_candidate))
+								lockmode, oldslot, &epqslot_candidate,
+								tmresult, tmfd))
 			return false;		/* cancel the update action */
 
 		/*
 		 * In READ COMMITTED isolation level it's possible that target tuple
 		 * was changed due to concurrent update.  In that case we have a raw
-		 * subplan output tuple in epqslot_candidate, and need to run it
-		 * through the junk filter to produce an insertable tuple.
-		 *
-		 * Caution: more than likely, the passed-in slot is the same as the
-		 * junkfilter's output slot, so we are clobbering the original value
-		 * of slottuple by doing the filtering.  This is OK since neither we
-		 * nor our caller have any more interest in the prior contents of that
-		 * slot.
+		 * subplan output tuple in epqslot_candidate, and need to form a new
+		 * insertable tuple using ExecGetUpdateNewTuple to replace the one we
+		 * received in newslot.  Neither we nor our callers have any further
+		 * interest in the passed-in tuple, so it's okay to overwrite newslot
+		 * with the newer data.
 		 */
 		if (epqslot_candidate != NULL)
 		{
 			TupleTableSlot *epqslot_clean;
 
-			epqslot_clean = ExecFilterJunk(relinfo->ri_junkFilter, epqslot_candidate);
+			epqslot_clean = ExecGetUpdateNewTuple(relinfo, epqslot_candidate,
+												  oldslot);
 
-			if (newslot != epqslot_clean)
+			/*
+			 * Typically, the caller's newslot was also generated by
+			 * ExecGetUpdateNewTuple, so that epqslot_clean will be the same
+			 * slot and copying is not needed.  But do the right thing if it
+			 * isn't.
+			 */
+			if (unlikely(newslot != epqslot_clean))
 				ExecCopySlot(newslot, epqslot_clean);
+
+			/*
+			 * At this point newslot contains a virtual tuple that may
+			 * reference some fields of oldslot's tuple in some disk buffer.
+			 * If that tuple is in a different page than the original target
+			 * tuple, then our only pin on that buffer is oldslot's, and we're
+			 * about to release it.  Hence we'd better materialize newslot to
+			 * ensure it doesn't contain references into an unpinned buffer.
+			 * (We'd materialize it below anyway, but too late for safety.)
+			 */
+			ExecMaterializeSlot(newslot);
 		}
 
+		/*
+		 * Here we convert oldslot to a materialized slot holding trigtuple.
+		 * Neither slot passed to the triggers will hold any buffer pin.
+		 */
 		trigtuple = ExecFetchSlotHeapTuple(oldslot, true, &should_free_trig);
 	}
 	else
 	{
+		/* Put the FDW-supplied tuple into oldslot to unify the cases */
 		ExecForceStoreHeapTuple(fdw_trigtuple, oldslot, false);
 		trigtuple = fdw_trigtuple;
 	}
@@ -3295,9 +3291,8 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 		TRIGGER_EVENT_ROW |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 	updatedCols = ExecGetAllUpdatedCols(relinfo, estate);
+	LocTriggerData.tg_updatedcols = updatedCols;
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
@@ -3365,18 +3360,44 @@ ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
 	return true;
 }
 
+/*
+ * ABI-compatible wrapper to emulate old version of the above function.
+ * Do not call this version in new code.
+ */
+bool
+ExecBRUpdateTriggers(EState *estate, EPQState *epqstate,
+					 ResultRelInfo *relinfo,
+					 ItemPointer tupleid,
+					 HeapTuple fdw_trigtuple,
+					 TupleTableSlot *newslot,
+					 TM_FailureData *tmfd)
+{
+	return ExecBRUpdateTriggersNew(estate, epqstate, relinfo, tupleid,
+								   fdw_trigtuple, newslot, NULL, tmfd);
+}
+
+/*
+ * Note: 'src_partinfo' and 'dst_partinfo', when non-NULL, refer to the source
+ * and destination partitions, respectively, of a cross-partition update of
+ * the root partitioned table mentioned in the query, given by 'relinfo'.
+ * 'tupleid' in that case refers to the ctid of the "old" tuple in the source
+ * partition, and 'newslot' contains the "new" tuple in the destination
+ * partition.  This interface allows to support the requirements of
+ * ExecCrossPartitionUpdateForeignKey(); is_crosspart_update must be true in
+ * that case.
+ */
 void
 ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
+					 ResultRelInfo *src_partinfo,
+					 ResultRelInfo *dst_partinfo,
 					 ItemPointer tupleid,
 					 HeapTuple fdw_trigtuple,
 					 TupleTableSlot *newslot,
 					 List *recheckIndexes,
-					 TransitionCaptureState *transition_capture)
+					 TransitionCaptureState *transition_capture,
+					 bool is_crosspart_update)
 {
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
-	TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
-
-	ExecClearTuple(oldslot);
 
 	if ((trigdesc && trigdesc->trig_update_after_row) ||
 		(transition_capture &&
@@ -3402,23 +3423,38 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 		 * separately for DELETE and INSERT to capture transition table rows.
 		 * In such case, either old tuple or new tuple can be NULL.
 		 */
+		TupleTableSlot *oldslot;
+		ResultRelInfo *tupsrc;
+
+		Assert((src_partinfo != NULL && dst_partinfo != NULL) ||
+			   !is_crosspart_update);
+
+		tupsrc = src_partinfo ? src_partinfo : relinfo;
+		oldslot = ExecGetTriggerOldSlot(estate, tupsrc);
+
 		if (fdw_trigtuple == NULL && ItemPointerIsValid(tupleid))
 			GetTupleForTrigger(estate,
 							   NULL,
-							   relinfo,
+							   tupsrc,
 							   tupleid,
 							   LockTupleExclusive,
 							   oldslot,
+							   NULL,
+							   NULL,
 							   NULL);
 		else if (fdw_trigtuple != NULL)
 			ExecForceStoreHeapTuple(fdw_trigtuple, oldslot, false);
-#ifdef PGXC
-		}
-#endif
-		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_UPDATE,
-							  true, oldslot, newslot, recheckIndexes,
+		else
+			ExecClearTuple(oldslot);
+
+		AfterTriggerSaveEvent(estate, relinfo,
+							  src_partinfo, dst_partinfo,
+							  TRIGGER_EVENT_UPDATE,
+							  true,
+							  oldslot, newslot, recheckIndexes,
 							  ExecGetAllUpdatedCols(relinfo, estate),
-							  transition_capture);
+							  transition_capture,
+							  is_crosspart_update);
 	}
 }
 
@@ -3430,7 +3466,7 @@ ExecIRUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 	TupleTableSlot *oldslot = ExecGetTriggerOldSlot(estate, relinfo);
 	HeapTuple	newtuple = NULL;
 	bool		should_free;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	int			i;
 #ifdef PGXC
 	bool exec_all_triggers;
@@ -3450,8 +3486,6 @@ ExecIRUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 		TRIGGER_EVENT_ROW |
 		TRIGGER_EVENT_INSTEAD;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 
 	ExecForceStoreHeapTuple(trigtuple, oldslot, false);
 
@@ -3512,7 +3546,7 @@ ExecBSTruncateTriggers(EState *estate, ResultRelInfo *relinfo)
 {
 	TriggerDesc *trigdesc;
 	int			i;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 #ifdef PGXC
 	/* Know whether we should fire these type of triggers on this node */
 	if (!pgxc_should_exec_triggers(relinfo->ri_RelationDesc,
@@ -3533,12 +3567,6 @@ ExecBSTruncateTriggers(EState *estate, ResultRelInfo *relinfo)
 	LocTriggerData.tg_event = TRIGGER_EVENT_TRUNCATE |
 		TRIGGER_EVENT_BEFORE;
 	LocTriggerData.tg_relation = relinfo->ri_RelationDesc;
-	LocTriggerData.tg_trigtuple = NULL;
-	LocTriggerData.tg_newtuple = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
-	LocTriggerData.tg_oldtable = NULL;
-	LocTriggerData.tg_newtable = NULL;
 
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
@@ -3574,8 +3602,11 @@ ExecASTruncateTriggers(EState *estate, ResultRelInfo *relinfo)
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
 
 	if (trigdesc && trigdesc->trig_truncate_after_statement)
-		AfterTriggerSaveEvent(estate, relinfo, TRIGGER_EVENT_TRUNCATE,
-							  false, NULL, NULL, NIL, NULL, NULL);
+		AfterTriggerSaveEvent(estate, relinfo,
+							  NULL, NULL,
+							  TRIGGER_EVENT_TRUNCATE,
+							  false, NULL, NULL, NIL, NULL, NULL,
+							  false);
 }
 
 
@@ -3589,7 +3620,9 @@ GetTupleForTrigger(EState *estate,
 				   ItemPointer tid,
 				   LockTupleMode lockmode,
 				   TupleTableSlot *oldslot,
-				   TupleTableSlot **epqslot)
+				   TupleTableSlot **epqslot,
+				   TM_Result *tmresultp,
+				   TM_FailureData *tmfdp)
 {
 	Relation	relation = relinfo->ri_RelationDesc;
 
@@ -3615,6 +3648,12 @@ GetTupleForTrigger(EState *estate,
 								lockflags,
 								&tmfd);
 
+		/* Let the caller know about the status of this operation */
+		if (tmresultp)
+			*tmresultp = test;
+		if (tmfdp)
+			*tmfdp = tmfd;
+
 		switch (test)
 		{
 			case TM_SelfModified:
@@ -3639,6 +3678,18 @@ GetTupleForTrigger(EState *estate,
 			case TM_Ok:
 				if (tmfd.traversed)
 				{
+					/*
+					 * Recheck the tuple using EPQ. For MERGE, we leave this
+					 * to the caller (it must do additional rechecking, and
+					 * might end up executing a different action entirely).
+					 */
+					if (estate->es_plannedstmt->commandType == CMD_MERGE)
+					{
+						if (tmresultp)
+							*tmresultp = TM_Updated;
+						return false;
+					}
+
 					*epqslot = EvalPlanQual(epqstate,
 											relation,
 											relinfo->ri_RangeTableIndex,
@@ -3856,9 +3907,9 @@ typedef SetConstraintStateData *SetConstraintState;
  * Per-trigger-event data
  *
  * The actual per-event data, AfterTriggerEventData, includes DONE/IN_PROGRESS
- * status bits and up to two tuple CTIDs.  Each event record also has an
- * associated AfterTriggerSharedData that is shared across all instances of
- * similar events within a "chunk".
+ * status bits, up to two tuple CTIDs, and optionally two OIDs of partitions.
+ * Each event record also has an associated AfterTriggerSharedData that is
+ * shared across all instances of similar events within a "chunk".
  *
  * For row-level triggers, we arrange not to waste storage on unneeded ctid
  * fields.  Updates of regular tables use two; inserts and deletes of regular
@@ -3868,6 +3919,11 @@ typedef SetConstraintStateData *SetConstraintState;
  * AFTER_TRIGGER_FDW_REUSE directs it to use the most-recently-retrieved
  * tuple(s).  This permits storing tuples once regardless of the number of
  * row-level triggers on a foreign table.
+ *
+ * When updates on partitioned tables cause rows to move between partitions,
+ * the OIDs of both partitions are stored too, so that the tuples can be
+ * fetched; such entries are marked AFTER_TRIGGER_CP_UPDATE (for "cross-
+ * partition update").
  *
  * Note that we need triggers on foreign tables to be fired in exactly the
  * order they were queued, so that the tuples come out of the tuplestore in
@@ -3891,16 +3947,16 @@ typedef SetConstraintStateData *SetConstraintState;
  */
 typedef uint32 TriggerFlags;
 
-#define AFTER_TRIGGER_OFFSET			0x0FFFFFFF	/* must be low-order bits */
-#define AFTER_TRIGGER_DONE				0x10000000
-#define AFTER_TRIGGER_IN_PROGRESS		0x20000000
+#define AFTER_TRIGGER_OFFSET			0x07FFFFFF	/* must be low-order bits */
+#define AFTER_TRIGGER_DONE				0x80000000
+#define AFTER_TRIGGER_IN_PROGRESS		0x40000000
 /* bits describing the size and tuple sources of this event */
 #define AFTER_TRIGGER_FDW_REUSE			0x00000000
-#define AFTER_TRIGGER_FDW_FETCH			0x80000000
-#define AFTER_TRIGGER_1CTID				0x40000000
-#define AFTER_TRIGGER_2CTID				0xC0000000
-#define AFTER_TRIGGER_TUP_BITS			0xC0000000
-
+#define AFTER_TRIGGER_FDW_FETCH			0x20000000
+#define AFTER_TRIGGER_1CTID				0x10000000
+#define AFTER_TRIGGER_2CTID				0x30000000
+#define AFTER_TRIGGER_CP_UPDATE			0x08000000
+#define AFTER_TRIGGER_TUP_BITS			0x38000000
 typedef struct AfterTriggerSharedData *AfterTriggerShared;
 
 typedef struct AfterTriggerSharedData
@@ -3910,6 +3966,7 @@ typedef struct AfterTriggerSharedData
 	Oid			ats_relid;		/* the relation it's on */
 	CommandId	ats_firing_id;	/* ID for firing cycle */
 	struct AfterTriggersTableData *ats_table;	/* transition table access */
+	Bitmapset  *ats_modifiedcols;	/* modified columns */
 } AfterTriggerSharedData;
 
 typedef struct AfterTriggerEventData *AfterTriggerEvent;
@@ -4009,9 +4066,25 @@ typedef struct AfterTriggerEventData
 	ItemPointerData ate_ctid1;	/* inserted, deleted, or old updated tuple */
 #endif
 	ItemPointerData ate_ctid2;	/* new updated tuple */
+
+	/*
+	 * During a cross-partition update of a partitioned table, we also store
+	 * the OIDs of source and destination partitions that are needed to fetch
+	 * the old (ctid1) and the new tuple (ctid2) from, respectively.
+	 */
+	Oid			ate_src_part;
+	Oid			ate_dst_part;
 } AfterTriggerEventData;
 
-/* AfterTriggerEventData, minus ate_ctid2 */
+/* AfterTriggerEventData, minus ate_src_part, ate_dst_part */
+typedef struct AfterTriggerEventDataNoOids
+{
+	TriggerFlags ate_flags;
+	ItemPointerData ate_ctid1;
+	ItemPointerData ate_ctid2;
+}			AfterTriggerEventDataNoOids;
+
+/* AfterTriggerEventData, minus ate_*_part and ate_ctid2 */
 typedef struct AfterTriggerEventDataOneCtid
 {
 	TriggerFlags ate_flags;		/* status bits and offset to shared data */
@@ -4027,18 +4100,20 @@ typedef struct AfterTriggerEventDataOneCtid
 #define xc_ate_row xc_ate_cor.cor_rpid
 #endif
 
-/* AfterTriggerEventData, minus ate_ctid1 and ate_ctid2 */
+/* AfterTriggerEventData, minus ate_*_part, ate_ctid1 and ate_ctid2 */
 typedef struct AfterTriggerEventDataZeroCtids
 {
 	TriggerFlags ate_flags;		/* status bits and offset to shared data */
 }			AfterTriggerEventDataZeroCtids;
 
 #define SizeofTriggerEvent(evt) \
-	(((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_2CTID ? \
+	(((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_CP_UPDATE ? \
 	 sizeof(AfterTriggerEventData) : \
-		((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_1CTID ? \
-		sizeof(AfterTriggerEventDataOneCtid) : \
-			sizeof(AfterTriggerEventDataZeroCtids))
+	 (((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_2CTID ? \
+	  sizeof(AfterTriggerEventDataNoOids) : \
+	  (((evt)->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_1CTID ? \
+	   sizeof(AfterTriggerEventDataOneCtid) : \
+	   sizeof(AfterTriggerEventDataZeroCtids))))
 
 #define GetTriggerSharedData(evt) \
 	((AfterTriggerShared) ((char *) (evt) + ((evt)->ate_flags & AFTER_TRIGGER_OFFSET)))
@@ -4216,8 +4291,23 @@ struct AfterTriggersTableData
 	bool		before_trig_done;	/* did we already queue BS triggers? */
 	bool		after_trig_done;	/* did we already queue AS triggers? */
 	AfterTriggerEventList after_trig_events;	/* if so, saved list pointer */
-	Tuplestorestate *old_tuplestore;	/* "old" transition table, if any */
-	Tuplestorestate *new_tuplestore;	/* "new" transition table, if any */
+
+	/*
+	 * We maintain separate transition tables for UPDATE/INSERT/DELETE since
+	 * MERGE can run all three actions in a single statement. Note that UPDATE
+	 * needs both old and new transition tables whereas INSERT needs only new,
+	 * and DELETE needs only old.
+	 */
+
+	/* "old" transition table for UPDATE, if any */
+	Tuplestorestate *old_upd_tuplestore;
+	/* "new" transition table for UPDATE, if any */
+	Tuplestorestate *new_upd_tuplestore;
+	/* "old" transition table for DELETE, if any */
+	Tuplestorestate *old_del_tuplestore;
+	/* "new" transition table for INSERT, if any */
+	Tuplestorestate *new_ins_tuplestore;
+
 	TupleTableSlot *storeslot;	/* for converting to tuplestore's format */
 };
 
@@ -4226,6 +4316,8 @@ static AfterTriggersData afterTriggers;
 static void AfterTriggerExecute(EState *estate,
 								AfterTriggerEvent event,
 								ResultRelInfo *relInfo,
+								ResultRelInfo *src_relInfo,
+								ResultRelInfo *dst_relInfo,
 								TriggerDesc *trigdesc,
 								FmgrInfo *finfo,
 								Instrumentation *instr,
@@ -4236,6 +4328,16 @@ static AfterTriggersTableData *GetAfterTriggersTableData(Oid relid,
 														 CmdType cmdType);
 static TupleTableSlot *GetAfterTriggersStoreSlot(AfterTriggersTableData *table,
 												 TupleDesc tupdesc);
+static Tuplestorestate *GetAfterTriggersTransitionTable(int event,
+														TupleTableSlot *oldslot,
+														TupleTableSlot *newslot,
+														TransitionCaptureState *transition_capture);
+static void TransitionTableAddTuple(EState *estate,
+									TransitionCaptureState *transition_capture,
+									ResultRelInfo *relinfo,
+									TupleTableSlot *slot,
+									TupleTableSlot *original_insert_tuple,
+									Tuplestorestate *tuplestore);
 static void AfterTriggerFreeQuery(AfterTriggersQueryData *qs);
 static SetConstraintState SetConstraintStateCreate(int numalloc);
 static SetConstraintState SetConstraintStateCopy(SetConstraintState state);
@@ -4336,6 +4438,30 @@ afterTriggerCheckState(AfterTriggerShared evtshared)
 	return ((evtshared->ats_event & AFTER_TRIGGER_INITDEFERRED) != 0);
 }
 
+/* ----------
+ * afterTriggerCopyBitmap()
+ *
+ * Copy bitmap into AfterTriggerEvents memory context, which is where the after
+ * trigger events are kept.
+ * ----------
+ */
+static Bitmapset *
+afterTriggerCopyBitmap(Bitmapset *src)
+{
+	Bitmapset	   *dst;
+	MemoryContext	oldcxt;
+
+	if (src == NULL)
+		return NULL;
+
+	oldcxt = MemoryContextSwitchTo(afterTriggers.event_cxt);
+
+	dst = bms_copy(src);
+
+	MemoryContextSwitchTo(oldcxt);
+
+	return dst;
+}
 
 /* ----------
  * afterTriggerAddEvent()
@@ -4429,16 +4555,21 @@ afterTriggerAddEvent(AfterTriggerEventList *events,
 		 (char *) newshared >= chunk->endfree;
 		 newshared--)
 	{
+		/* compare fields roughly by probability of them being different */
 		if (newshared->ats_tgoid == evtshared->ats_tgoid &&
-			newshared->ats_relid == evtshared->ats_relid &&
 			newshared->ats_event == evtshared->ats_event &&
+			newshared->ats_firing_id == 0 &&
 			newshared->ats_table == evtshared->ats_table &&
-			newshared->ats_firing_id == 0)
+			newshared->ats_relid == evtshared->ats_relid &&
+			bms_equal(newshared->ats_modifiedcols,
+					  evtshared->ats_modifiedcols))
 			break;
 	}
 	if ((char *) newshared < chunk->endfree)
 	{
 		*newshared = *evtshared;
+		/* now we must make a suitably-long-lived copy of the bitmap */
+		newshared->ats_modifiedcols = afterTriggerCopyBitmap(evtshared->ats_modifiedcols);
 		newshared->ats_firing_id = 0;	/* just to be sure */
 		chunk->endfree = (char *) newshared;
 	}
@@ -4564,8 +4695,16 @@ afterTriggerDeleteHeadEventChunk(AfterTriggersQueryData *qs)
  *	fmgr lookup cache space at the caller level.  (For triggers fired at
  *	the end of a query, we can even piggyback on the executor's state.)
  *
+ *	When fired for a cross-partition update of a partitioned table, the old
+ *	tuple is fetched using 'src_relInfo' (the source leaf partition) and
+ *	the new tuple using 'dst_relInfo' (the destination leaf partition), though
+ *	both are converted into the root partitioned table's format before passing
+ *	to the trigger function.
+ *
  *	event: event currently being fired.
- *	rel: open relation for event.
+ *	relInfo: result relation for event.
+ *	src_relInfo: source partition of a cross-partition update
+ *	dst_relInfo: its destination partition
  *	trigdesc: working copy of rel's trigger info.
  *	finfo: array of fmgr lookup cache entries (one per trigger in trigdesc).
  *	instr: array of EXPLAIN ANALYZE instrumentation nodes (one per trigger),
@@ -4579,6 +4718,8 @@ static void
 AfterTriggerExecute(EState *estate,
 					AfterTriggerEvent event,
 					ResultRelInfo *relInfo,
+					ResultRelInfo *src_relInfo,
+					ResultRelInfo *dst_relInfo,
 					TriggerDesc *trigdesc,
 					FmgrInfo *finfo, Instrumentation *instr,
 					MemoryContext per_tuple_context,
@@ -4586,17 +4727,16 @@ AfterTriggerExecute(EState *estate,
 					TupleTableSlot *trig_tuple_slot2)
 {
 	Relation	rel = relInfo->ri_RelationDesc;
+	Relation	src_rel = src_relInfo->ri_RelationDesc;
+	Relation	dst_rel = dst_relInfo->ri_RelationDesc;
 	AfterTriggerShared evtshared = GetTriggerSharedData(event);
 	Oid			tgoid = evtshared->ats_tgoid;
-	TriggerData LocTriggerData;
+	TriggerData LocTriggerData = {0};
 	HeapTuple	rettuple;
 	int			tgindx;
 	bool		should_free_trig = false;
 	bool		should_free_new = false;
 
-	LocTriggerData.tg_trigger = NULL;
-	LocTriggerData.tg_trigslot = NULL;
-	LocTriggerData.tg_newslot = NULL;
 #ifdef PGXC
 	HeapTuple	rs_tuple1 = NULL;
 	HeapTuple	rs_tuple2 = NULL;
@@ -4703,12 +4843,35 @@ AfterTriggerExecute(EState *estate,
 		default:
 			if (ItemPointerIsValid(&(event->ate_ctid1)))
 			{
-				LocTriggerData.tg_trigslot = ExecGetTriggerOldSlot(estate, relInfo);
+				TupleTableSlot *src_slot = ExecGetTriggerOldSlot(estate,
+																 src_relInfo);
 
-				if (!table_tuple_fetch_row_version(rel, &(event->ate_ctid1),
+				if (!table_tuple_fetch_row_version(src_rel,
+												   &(event->ate_ctid1),
 												   SnapshotAny,
-												   LocTriggerData.tg_trigslot))
+												   src_slot))
 					elog(ERROR, "failed to fetch tuple1 for AFTER trigger");
+
+				/*
+				 * Store the tuple fetched from the source partition into the
+				 * target (root partitioned) table slot, converting if needed.
+				 */
+				if (src_relInfo != relInfo)
+				{
+					TupleConversionMap *map = ExecGetChildToRootMap(src_relInfo);
+
+					LocTriggerData.tg_trigslot = ExecGetTriggerOldSlot(estate, relInfo);
+					if (map)
+					{
+						execute_attr_map_slot(map->attrMap,
+											  src_slot,
+											  LocTriggerData.tg_trigslot);
+					}
+					else
+						ExecCopySlot(LocTriggerData.tg_trigslot, src_slot);
+				}
+				else
+					LocTriggerData.tg_trigslot = src_slot;
 				LocTriggerData.tg_trigtuple =
 					ExecFetchSlotHeapTuple(LocTriggerData.tg_trigslot, false, &should_free_trig);
 			}
@@ -4718,16 +4881,40 @@ AfterTriggerExecute(EState *estate,
 			}
 
 			/* don't touch ctid2 if not there */
-			if ((event->ate_flags & AFTER_TRIGGER_TUP_BITS) ==
-				AFTER_TRIGGER_2CTID &&
+			if (((event->ate_flags & AFTER_TRIGGER_TUP_BITS) == AFTER_TRIGGER_2CTID ||
+				 (event->ate_flags & AFTER_TRIGGER_CP_UPDATE)) &&
 				ItemPointerIsValid(&(event->ate_ctid2)))
 			{
-				LocTriggerData.tg_newslot = ExecGetTriggerNewSlot(estate, relInfo);
+				TupleTableSlot *dst_slot = ExecGetTriggerNewSlot(estate,
+																 dst_relInfo);
 
-				if (!table_tuple_fetch_row_version(rel, &(event->ate_ctid2),
+				if (!table_tuple_fetch_row_version(dst_rel,
+												   &(event->ate_ctid2),
 												   SnapshotAny,
-												   LocTriggerData.tg_newslot))
+												   dst_slot))
 					elog(ERROR, "failed to fetch tuple2 for AFTER trigger");
+
+				/*
+				 * Store the tuple fetched from the destination partition into
+				 * the target (root partitioned) table slot, converting if
+				 * needed.
+				 */
+				if (dst_relInfo != relInfo)
+				{
+					TupleConversionMap *map = ExecGetChildToRootMap(dst_relInfo);
+
+					LocTriggerData.tg_newslot = ExecGetTriggerNewSlot(estate, relInfo);
+					if (map)
+					{
+						execute_attr_map_slot(map->attrMap,
+											  dst_slot,
+											  LocTriggerData.tg_newslot);
+					}
+					else
+						ExecCopySlot(LocTriggerData.tg_newslot, dst_slot);
+				}
+				else
+					LocTriggerData.tg_newslot = dst_slot;
 				LocTriggerData.tg_newtuple =
 					ExecFetchSlotHeapTuple(LocTriggerData.tg_newslot, false, &should_free_new);
 			}
@@ -4752,13 +4939,19 @@ AfterTriggerExecute(EState *estate,
 	{
 		if (LocTriggerData.tg_trigger->tgoldtable)
 		{
-			LocTriggerData.tg_oldtable = evtshared->ats_table->old_tuplestore;
+			if (TRIGGER_FIRED_BY_UPDATE(evtshared->ats_event))
+				LocTriggerData.tg_oldtable = evtshared->ats_table->old_upd_tuplestore;
+			else
+				LocTriggerData.tg_oldtable = evtshared->ats_table->old_del_tuplestore;
 			evtshared->ats_table->closed = true;
 		}
 
 		if (LocTriggerData.tg_trigger->tgnewtable)
 		{
-			LocTriggerData.tg_newtable = evtshared->ats_table->new_tuplestore;
+			if (TRIGGER_FIRED_BY_INSERT(evtshared->ats_event))
+				LocTriggerData.tg_newtable = evtshared->ats_table->new_ins_tuplestore;
+			else
+				LocTriggerData.tg_newtable = evtshared->ats_table->new_upd_tuplestore;
 			evtshared->ats_table->closed = true;
 		}
 	}
@@ -4770,6 +4963,8 @@ AfterTriggerExecute(EState *estate,
 	LocTriggerData.tg_event =
 		evtshared->ats_event & (TRIGGER_EVENT_OPMASK | TRIGGER_EVENT_ROW);
 	LocTriggerData.tg_relation = rel;
+	if (TRIGGER_FOR_UPDATE(LocTriggerData.tg_trigger->tgtype))
+		LocTriggerData.tg_updatedcols = evtshared->ats_modifiedcols;
 
 	MemoryContextReset(per_tuple_context);
 
@@ -4974,14 +5169,20 @@ afterTriggerInvokeEvents(AfterTriggerEventList *events,
 			if ((event->ate_flags & AFTER_TRIGGER_IN_PROGRESS) &&
 				evtshared->ats_firing_id == firing_id)
 			{
+				ResultRelInfo *src_rInfo,
+						   *dst_rInfo;
+
 				/*
 				 * So let's fire it... but first, find the correct relation if
 				 * this is not the same relation as before.
 				 */
 				if (rel == NULL || RelationGetRelid(rel) != evtshared->ats_relid)
 				{
-					rInfo = ExecGetTriggerResultRel(estate, evtshared->ats_relid);
+					rInfo = ExecGetTriggerResultRel(estate, evtshared->ats_relid,
+													NULL);
 					rel = rInfo->ri_RelationDesc;
+					/* Catch calls with insufficient relcache refcounting */
+					Assert(!RelationHasReferenceCountZero(rel));
 					trigdesc = rInfo->ri_TrigDesc;
 					/* caution: trigdesc could be NULL here */
 					finfo = rInfo->ri_TrigFunctions;
@@ -5002,11 +5203,32 @@ afterTriggerInvokeEvents(AfterTriggerEventList *events,
 				}
 
 				/*
+				 * Look up source and destination partition result rels of a
+				 * cross-partition update event.
+				 */
+				if ((event->ate_flags & AFTER_TRIGGER_TUP_BITS) ==
+					AFTER_TRIGGER_CP_UPDATE)
+				{
+					Assert(OidIsValid(event->ate_src_part) &&
+						   OidIsValid(event->ate_dst_part));
+					src_rInfo = ExecGetTriggerResultRel(estate,
+														event->ate_src_part,
+														rInfo);
+					dst_rInfo = ExecGetTriggerResultRel(estate,
+														event->ate_dst_part,
+														rInfo);
+				}
+				else
+					src_rInfo = dst_rInfo = rInfo;
+
+				/*
 				 * Fire it.  Note that the AFTER_TRIGGER_IN_PROGRESS flag is
 				 * still set, so recursive examinations of the event list
 				 * won't try to re-fire it.
 				 */
-				AfterTriggerExecute(estate, event, rInfo, trigdesc, finfo, instr,
+				AfterTriggerExecute(estate, event, rInfo,
+									src_rInfo, dst_rInfo,
+									trigdesc, finfo, instr,
 									per_tuple_context, slot1, slot2);
 
 				/*
@@ -5049,7 +5271,7 @@ afterTriggerInvokeEvents(AfterTriggerEventList *events,
 
 	if (local_estate)
 	{
-		ExecCleanUpTriggerState(estate);
+		ExecCloseResultRelations(estate);
 		ExecResetTupleTable(estate->es_tupleTable, false);
 		FreeExecutorState(estate);
 	}
@@ -5114,7 +5336,7 @@ GetAfterTriggersStoreSlot(AfterTriggersTableData *table,
 	/* Create it if not already done. */
 	if (!table->storeslot)
 	{
-		MemoryContext	oldcxt;
+		MemoryContext oldcxt;
 
 		/*
 		 * We need this slot only until AfterTriggerEndQuery, but making it
@@ -5141,9 +5363,10 @@ GetAfterTriggersStoreSlot(AfterTriggersTableData *table,
  * If there are no triggers in 'trigdesc' that request relevant transition
  * tables, then return NULL.
  *
- * The resulting object can be passed to the ExecAR* functions.  The caller
- * should set tcs_map or tcs_original_insert_tuple as appropriate when dealing
- * with child tables.
+ * The resulting object can be passed to the ExecAR* functions.  When
+ * dealing with child tables, the caller can set tcs_original_insert_tuple
+ * to avoid having to reconstruct the original tuple in the root table's
+ * format.
  *
  * Note that we copy the flags from a parent table into this struct (rather
  * than subsequently using the relation's TriggerDesc directly) so that we can
@@ -5159,8 +5382,10 @@ TransitionCaptureState *
 MakeTransitionCaptureState(TriggerDesc *trigdesc, Oid relid, CmdType cmdType)
 {
 	TransitionCaptureState *state;
-	bool		need_old,
-				need_new;
+	bool		need_old_upd,
+				need_new_upd,
+				need_old_del,
+				need_new_ins;
 	AfterTriggersTableData *table;
 	MemoryContext oldcxt;
 	ResourceOwner saveResourceOwner;
@@ -5172,23 +5397,31 @@ MakeTransitionCaptureState(TriggerDesc *trigdesc, Oid relid, CmdType cmdType)
 	switch (cmdType)
 	{
 		case CMD_INSERT:
-			need_old = false;
-			need_new = trigdesc->trig_insert_new_table;
+			need_old_upd = need_old_del = need_new_upd = false;
+			need_new_ins = trigdesc->trig_insert_new_table;
 			break;
 		case CMD_UPDATE:
-			need_old = trigdesc->trig_update_old_table;
-			need_new = trigdesc->trig_update_new_table;
+			need_old_upd = trigdesc->trig_update_old_table;
+			need_new_upd = trigdesc->trig_update_new_table;
+			need_old_del = need_new_ins = false;
 			break;
 		case CMD_DELETE:
-			need_old = trigdesc->trig_delete_old_table;
-			need_new = false;
+			need_old_del = trigdesc->trig_delete_old_table;
+			need_old_upd = need_new_upd = need_new_ins = false;
+			break;
+		case CMD_MERGE:
+			need_old_upd = trigdesc->trig_update_old_table;
+			need_new_upd = trigdesc->trig_update_new_table;
+			need_old_del = trigdesc->trig_delete_old_table;
+			need_new_ins = trigdesc->trig_insert_new_table;
 			break;
 		default:
 			elog(ERROR, "unexpected CmdType: %d", (int) cmdType);
-			need_old = need_new = false;	/* keep compiler quiet */
+			/* keep compiler quiet */
+			need_old_upd = need_new_upd = need_old_del = need_new_ins = false;
 			break;
 	}
-	if (!need_old && !need_new)
+	if (!need_old_upd && !need_new_upd && !need_new_ins && !need_old_del)
 		return NULL;
 
 	/* Check state, like AfterTriggerSaveEvent. */
@@ -5218,20 +5451,24 @@ MakeTransitionCaptureState(TriggerDesc *trigdesc, Oid relid, CmdType cmdType)
 	saveResourceOwner = CurrentResourceOwner;
 	CurrentResourceOwner = CurTransactionResourceOwner;
 
-	if (need_old && table->old_tuplestore == NULL)
-		table->old_tuplestore = tuplestore_begin_heap(false, false, work_mem);
-	if (need_new && table->new_tuplestore == NULL)
-		table->new_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+	if (need_old_upd && table->old_upd_tuplestore == NULL)
+		table->old_upd_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+	if (need_new_upd && table->new_upd_tuplestore == NULL)
+		table->new_upd_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+	if (need_old_del && table->old_del_tuplestore == NULL)
+		table->old_del_tuplestore = tuplestore_begin_heap(false, false, work_mem);
+	if (need_new_ins && table->new_ins_tuplestore == NULL)
+		table->new_ins_tuplestore = tuplestore_begin_heap(false, false, work_mem);
 
 	CurrentResourceOwner = saveResourceOwner;
 	MemoryContextSwitchTo(oldcxt);
 
 	/* Now build the TransitionCaptureState struct, in caller's context */
 	state = (TransitionCaptureState *) palloc0(sizeof(TransitionCaptureState));
-	state->tcs_delete_old_table = trigdesc->trig_delete_old_table;
-	state->tcs_update_old_table = trigdesc->trig_update_old_table;
-	state->tcs_update_new_table = trigdesc->trig_update_new_table;
-	state->tcs_insert_new_table = trigdesc->trig_insert_new_table;
+	state->tcs_delete_old_table = need_old_del;
+	state->tcs_update_old_table = need_old_upd;
+	state->tcs_update_new_table = need_new_upd;
+	state->tcs_insert_new_table = need_new_ins;
 	state->tcs_private = table;
 
 	return state;
@@ -5463,12 +5700,20 @@ AfterTriggerFreeQuery(AfterTriggersQueryData *qs)
 	{
 		AfterTriggersTableData *table = (AfterTriggersTableData *) lfirst(lc);
 
-		ts = table->old_tuplestore;
-		table->old_tuplestore = NULL;
+		ts = table->old_upd_tuplestore;
+		table->old_upd_tuplestore = NULL;
 		if (ts)
 			tuplestore_end(ts);
-		ts = table->new_tuplestore;
-		table->new_tuplestore = NULL;
+		ts = table->new_upd_tuplestore;
+		table->new_upd_tuplestore = NULL;
+		if (ts)
+			tuplestore_end(ts);
+		ts = table->old_del_tuplestore;
+		table->old_del_tuplestore = NULL;
+		if (ts)
+			tuplestore_end(ts);
+		ts = table->new_ins_tuplestore;
+		table->new_ins_tuplestore = NULL;
 		if (ts)
 			tuplestore_end(ts);
 		if (table->storeslot)
@@ -5750,6 +5995,92 @@ AfterTriggerEndSubXact(bool isCommit)
 			}
 		}
 	}
+}
+
+/*
+ * Get the transition table for the given event and depending on whether we are
+ * processing the old or the new tuple.
+ */
+static Tuplestorestate *
+GetAfterTriggersTransitionTable(int event,
+								TupleTableSlot *oldslot,
+								TupleTableSlot *newslot,
+								TransitionCaptureState *transition_capture)
+{
+	Tuplestorestate *tuplestore = NULL;
+	bool		delete_old_table = transition_capture->tcs_delete_old_table;
+	bool		update_old_table = transition_capture->tcs_update_old_table;
+	bool		update_new_table = transition_capture->tcs_update_new_table;
+	bool		insert_new_table = transition_capture->tcs_insert_new_table;
+
+	/*
+	 * For INSERT events NEW should be non-NULL, for DELETE events OLD should
+	 * be non-NULL, whereas for UPDATE events normally both OLD and NEW are
+	 * non-NULL.  But for UPDATE events fired for capturing transition tuples
+	 * during UPDATE partition-key row movement, OLD is NULL when the event is
+	 * for a row being inserted, whereas NEW is NULL when the event is for a
+	 * row being deleted.
+	 */
+	Assert(!(event == TRIGGER_EVENT_DELETE && delete_old_table &&
+			 TupIsNull(oldslot)));
+	Assert(!(event == TRIGGER_EVENT_INSERT && insert_new_table &&
+			 TupIsNull(newslot)));
+
+	if (!TupIsNull(oldslot))
+	{
+		Assert(TupIsNull(newslot));
+		if (event == TRIGGER_EVENT_DELETE && delete_old_table)
+			tuplestore = transition_capture->tcs_private->old_del_tuplestore;
+		else if (event == TRIGGER_EVENT_UPDATE && update_old_table)
+			tuplestore = transition_capture->tcs_private->old_upd_tuplestore;
+	}
+	else if (!TupIsNull(newslot))
+	{
+		Assert(TupIsNull(oldslot));
+		if (event == TRIGGER_EVENT_INSERT && insert_new_table)
+			tuplestore = transition_capture->tcs_private->new_ins_tuplestore;
+		else if (event == TRIGGER_EVENT_UPDATE && update_new_table)
+			tuplestore = transition_capture->tcs_private->new_upd_tuplestore;
+	}
+
+	return tuplestore;
+}
+
+/*
+ * Add the given heap tuple to the given tuplestore, applying the conversion
+ * map if necessary.
+ *
+ * If original_insert_tuple is given, we can add that tuple without conversion.
+ */
+static void
+TransitionTableAddTuple(EState *estate,
+						TransitionCaptureState *transition_capture,
+						ResultRelInfo *relinfo,
+						TupleTableSlot *slot,
+						TupleTableSlot *original_insert_tuple,
+						Tuplestorestate *tuplestore)
+{
+	TupleConversionMap *map;
+
+	/*
+	 * Nothing needs to be done if we don't have a tuplestore.
+	 */
+	if (tuplestore == NULL)
+		return;
+
+	if (original_insert_tuple)
+		tuplestore_puttupleslot(tuplestore, original_insert_tuple);
+	else if ((map = ExecGetChildToRootMap(relinfo)) != NULL)
+	{
+		AfterTriggersTableData *table = transition_capture->tcs_private;
+		TupleTableSlot *storeslot;
+
+		storeslot = GetAfterTriggersStoreSlot(table, map->outdesc);
+		execute_attr_map_slot(map->attrMap, slot, storeslot);
+		tuplestore_puttupleslot(tuplestore, storeslot);
+	}
+	else
+		tuplestore_puttupleslot(tuplestore, slot);
 }
 
 /* ----------
@@ -6254,7 +6585,6 @@ AfterTriggerPendingOnRel(Oid relid)
 	return false;
 }
 
-
 /* ----------
  * AfterTriggerSaveEvent()
  *
@@ -6276,14 +6606,35 @@ AfterTriggerPendingOnRel(Oid relid)
  *	Transition tuplestores are built now, rather than when events are pulled
  *	off of the queue because AFTER ROW triggers are allowed to select from the
  *	transition tables for the statement.
+ *
+ *	This contains special support to queue the update events for the case where
+ *	a partitioned table undergoing a cross-partition update may have foreign
+ *	keys pointing into it.  Normally, a partitioned table's row triggers are
+ *	not fired because the leaf partition(s) which are modified as a result of
+ *	the operation on the partitioned table contain the same triggers which are
+ *	fired instead. But that general scheme can cause problematic behavior with
+ *	foreign key triggers during cross-partition updates, which are implemented
+ *	as DELETE on the source partition followed by INSERT into the destination
+ *	partition.  Specifically, firing DELETE triggers would lead to the wrong
+ *	foreign key action to be enforced considering that the original command is
+ *	UPDATE; in this case, this function is called with relinfo as the
+ *	partitioned table, and src_partinfo and dst_partinfo referring to the
+ *	source and target leaf partitions, respectively.
+ *
+ *	is_crosspart_update is true either when a DELETE event is fired on the
+ *	source partition (which is to be ignored) or an UPDATE event is fired on
+ *	the root partitioned table.
  * ----------
  */
 static void
 AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
+					  ResultRelInfo *src_partinfo,
+					  ResultRelInfo *dst_partinfo,
 					  int event, bool row_trigger,
 					  TupleTableSlot *oldslot, TupleTableSlot *newslot,
 					  List *recheckIndexes, Bitmapset *modifiedCols,
-					  TransitionCaptureState *transition_capture)
+					  TransitionCaptureState *transition_capture,
+					  bool is_crosspart_update)
 {
 	Relation	rel = relinfo->ri_RelationDesc;
 	TriggerDesc *trigdesc = relinfo->ri_TrigDesc;
@@ -6331,75 +6682,45 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 	if (row_trigger && transition_capture != NULL)
 	{
 		TupleTableSlot *original_insert_tuple = transition_capture->tcs_original_insert_tuple;
-		TupleConversionMap *map = transition_capture->tcs_map;
-		bool		delete_old_table = transition_capture->tcs_delete_old_table;
-		bool		update_old_table = transition_capture->tcs_update_old_table;
-		bool		update_new_table = transition_capture->tcs_update_new_table;
-		bool		insert_new_table = transition_capture->tcs_insert_new_table;
 
 		/*
-		 * For INSERT events NEW should be non-NULL, for DELETE events OLD
-		 * should be non-NULL, whereas for UPDATE events normally both OLD and
-		 * NEW are non-NULL.  But for UPDATE events fired for capturing
-		 * transition tuples during UPDATE partition-key row movement, OLD is
-		 * NULL when the event is for a row being inserted, whereas NEW is
-		 * NULL when the event is for a row being deleted.
+		 * Capture the old tuple in the appropriate transition table based on
+		 * the event.
 		 */
-		Assert(!(event == TRIGGER_EVENT_DELETE && delete_old_table &&
-				 TupIsNull(oldslot)));
-		Assert(!(event == TRIGGER_EVENT_INSERT && insert_new_table &&
-				 TupIsNull(newslot)));
-
-		if (!TupIsNull(oldslot) &&
-			((event == TRIGGER_EVENT_DELETE && delete_old_table) ||
-			 (event == TRIGGER_EVENT_UPDATE && update_old_table)))
+		if (!TupIsNull(oldslot))
 		{
 			Tuplestorestate *old_tuplestore;
 
-			old_tuplestore = transition_capture->tcs_private->old_tuplestore;
-
-			if (map != NULL)
-			{
-				AfterTriggersTableData *table = transition_capture->tcs_private;
-				TupleTableSlot *storeslot;
-
-				storeslot = GetAfterTriggersStoreSlot(table, map->outdesc);
-				execute_attr_map_slot(map->attrMap, oldslot, storeslot);
-				tuplestore_puttupleslot(old_tuplestore, storeslot);
-			}
-			else
-				tuplestore_puttupleslot(old_tuplestore, oldslot);
+			old_tuplestore = GetAfterTriggersTransitionTable(event,
+															 oldslot,
+															 NULL,
+															 transition_capture);
+			TransitionTableAddTuple(estate, transition_capture, relinfo,
+									oldslot, NULL, old_tuplestore);
 		}
-		if (!TupIsNull(newslot) &&
-			((event == TRIGGER_EVENT_INSERT && insert_new_table) ||
-			 (event == TRIGGER_EVENT_UPDATE && update_new_table)))
+
+		/*
+		 * Capture the new tuple in the appropriate transition table based on
+		 * the event.
+		 */
+		if (!TupIsNull(newslot))
 		{
 			Tuplestorestate *new_tuplestore;
 
-			new_tuplestore = transition_capture->tcs_private->new_tuplestore;
-
-			if (original_insert_tuple != NULL)
-				tuplestore_puttupleslot(new_tuplestore,
-										original_insert_tuple);
-			else if (map != NULL)
-			{
-				AfterTriggersTableData *table = transition_capture->tcs_private;
-				TupleTableSlot *storeslot;
-
-				storeslot = GetAfterTriggersStoreSlot(table, map->outdesc);
-				execute_attr_map_slot(map->attrMap, newslot, storeslot);
-				tuplestore_puttupleslot(new_tuplestore, storeslot);
-			}
-			else
-				tuplestore_puttupleslot(new_tuplestore, newslot);
+			new_tuplestore = GetAfterTriggersTransitionTable(event,
+															 NULL,
+															 newslot,
+															 transition_capture);
+			TransitionTableAddTuple(estate, transition_capture, relinfo,
+									newslot, original_insert_tuple, new_tuplestore);
 		}
 
 		/*
 		 * If transition tables are the only reason we're here, return. As
 		 * mentioned above, we can also be here during update tuple routing in
 		 * presence of transition tables, in which case this function is
-		 * called separately for oldtup and newtup, so we expect exactly one
-		 * of them to be NULL.
+		 * called separately for OLD and NEW, so we expect exactly one of them
+		 * to be NULL.
 		 */
 		if (trigdesc == NULL ||
 			(event == TRIGGER_EVENT_DELETE && !trigdesc->trig_delete_after_row) ||
@@ -6408,6 +6729,19 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 			(event == TRIGGER_EVENT_UPDATE && (TupIsNull(oldslot) ^ TupIsNull(newslot))))
 			return;
 	}
+
+	/*
+	 * We normally don't see partitioned tables here for row level triggers
+	 * except in the special case of a cross-partition update.  In that case,
+	 * nodeModifyTable.c:ExecCrossPartitionUpdateForeignKey() calls here to
+	 * queue an update event on the root target partitioned table, also
+	 * passing the source and destination partitions and their tuples.
+	 */
+	Assert(!row_trigger ||
+		   rel->rd_rel->relkind != RELKIND_PARTITIONED_TABLE ||
+		   (is_crosspart_update &&
+			TRIGGER_FIRED_BY_UPDATE(event) &&
+			src_partinfo != NULL && dst_partinfo != NULL));
 
 	/*
 	 * Validate the event code and collect the associated tuple CTIDs.
@@ -6477,6 +6811,19 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 				Assert(newslot != NULL);
 				ItemPointerCopy(&(oldslot->tts_tid), &(new_event.ate_ctid1));
 				ItemPointerCopy(&(newslot->tts_tid), &(new_event.ate_ctid2));
+
+				/*
+				 * Also remember the OIDs of partitions to fetch these tuples
+				 * out of later in AfterTriggerExecute().
+				 */
+				if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+				{
+					Assert(src_partinfo != NULL && dst_partinfo != NULL);
+					new_event.ate_src_part =
+						RelationGetRelid(src_partinfo->ri_RelationDesc);
+					new_event.ate_dst_part =
+						RelationGetRelid(dst_partinfo->ri_RelationDesc);
+				}
 			}
 			else
 			{
@@ -6501,12 +6848,52 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 			break;
 	}
 
+	/* Determine flags */
 	if (!(relkind == RELKIND_FOREIGN_TABLE && row_trigger))
-		new_event.ate_flags = (row_trigger && event == TRIGGER_EVENT_UPDATE) ?
-			AFTER_TRIGGER_2CTID : AFTER_TRIGGER_1CTID;
+	{
+		if (row_trigger && event == TRIGGER_EVENT_UPDATE)
+		{
+			if (relkind == RELKIND_PARTITIONED_TABLE)
+				new_event.ate_flags = AFTER_TRIGGER_CP_UPDATE;
+			else
+				new_event.ate_flags = AFTER_TRIGGER_2CTID;
+		}
+		else
+			new_event.ate_flags = AFTER_TRIGGER_1CTID;
+	}
+
 	/* else, we'll initialize ate_flags for each trigger */
 
 	tgtype_level = (row_trigger ? TRIGGER_TYPE_ROW : TRIGGER_TYPE_STATEMENT);
+
+	/*
+	 * Must convert/copy the source and destination partition tuples into the
+	 * root partitioned table's format/slot, because the processing in the
+	 * loop below expects both oldslot and newslot tuples to be in that form.
+	 */
+	if (row_trigger && rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+	{
+		TupleTableSlot *rootslot;
+		TupleConversionMap *map;
+
+		rootslot = ExecGetTriggerOldSlot(estate, relinfo);
+		map = ExecGetChildToRootMap(src_partinfo);
+		if (map)
+			oldslot = execute_attr_map_slot(map->attrMap,
+											oldslot,
+											rootslot);
+		else
+			oldslot = ExecCopySlot(rootslot, oldslot);
+
+		rootslot = ExecGetTriggerNewSlot(estate, relinfo);
+		map = ExecGetChildToRootMap(dst_partinfo);
+		if (map)
+			newslot = execute_attr_map_slot(map->attrMap,
+											newslot,
+											rootslot);
+		else
+			newslot = ExecCopySlot(rootslot, newslot);
+	}
 #ifdef PGXC
 	/*
 	 * Know whether we should fire triggers on this node. But since internal
@@ -6577,13 +6964,30 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 		/*
 		 * If the trigger is a foreign key enforcement trigger, there are
 		 * certain cases where we can skip queueing the event because we can
-		 * tell by inspection that the FK constraint will still pass.
+		 * tell by inspection that the FK constraint will still pass. There
+		 * are also some cases during cross-partition updates of a partitioned
+		 * table where queuing the event can be skipped.
 		 */
 		if (TRIGGER_FIRED_BY_UPDATE(event) || TRIGGER_FIRED_BY_DELETE(event))
 		{
 			switch (RI_FKey_trigger_type(trigger->tgfoid))
 			{
 				case RI_TRIGGER_PK:
+
+					/*
+					 * For cross-partitioned updates of partitioned PK table,
+					 * skip the event fired by the component delete on the
+					 * source leaf partition unless the constraint originates
+					 * in the partition itself (!tgisclone), because the
+					 * update event that will be fired on the root
+					 * (partitioned) target table will be used to perform the
+					 * necessary foreign key enforcement action.
+					 */
+					if (is_crosspart_update &&
+						TRIGGER_FIRED_BY_DELETE(event) &&
+						trigger->tgisclone)
+						continue;
+
 					/* Update or delete on trigger's PK table */
 					if (!RI_FKey_pk_upd_check_required(trigger, rel,
 													   oldslot, newslot))
@@ -6594,8 +6998,20 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 					break;
 
 				case RI_TRIGGER_FK:
-					/* Update on trigger's FK table */
-					if (!RI_FKey_fk_upd_check_required(trigger, rel,
+
+					/*
+					 * Update on trigger's FK table.  We can skip the update
+					 * event fired on a partitioned table during a
+					 * cross-partition of that table, because the insert event
+					 * that is fired on the destination leaf partition would
+					 * suffice to perform the necessary foreign key check.
+					 * Moreover, RI_FKey_fk_upd_check_required() expects to be
+					 * passed a tuple that contains system attributes, most of
+					 * which are not present in the virtual slot belonging to
+					 * a partitioned table.
+					 */
+					if (rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE ||
+						!RI_FKey_fk_upd_check_required(trigger, rel,
 													   oldslot, newslot))
 					{
 						/* skip queuing this event */
@@ -6604,7 +7020,18 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 					break;
 
 				case RI_TRIGGER_NONE:
-					/* Not an FK trigger */
+
+					/*
+					 * Not an FK trigger.  No need to queue the update event
+					 * fired during a cross-partitioned update of a
+					 * partitioned table, because the same row trigger must be
+					 * present in the leaf partition(s) that are affected as
+					 * part of this update and the events fired on them are
+					 * queued instead.
+					 */
+					if (row_trigger &&
+						rel->rd_rel->relkind == RELKIND_PARTITIONED_TABLE)
+						continue;
 					break;
 			}
 		}
@@ -6638,6 +7065,17 @@ AfterTriggerSaveEvent(EState *estate, ResultRelInfo *relinfo,
 			new_shared.ats_table = transition_capture->tcs_private;
 		else
 			new_shared.ats_table = NULL;
+		new_shared.ats_modifiedcols = modifiedCols;
+
+#ifdef PGXC
+		if (is_remote_relation &&
+			IsRowPointerValid(&new_event.xc_ate_row))
+		{
+			event_added = true;
+			if (trigger->tginitdeferred)
+				is_deferred = true;
+		}
+#endif
 
 #ifdef PGXC
 		if (is_remote_relation &&

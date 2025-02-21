@@ -59,6 +59,23 @@ SELECT 'trues'::json;			-- ERROR, not a keyword
 SELECT ''::json;				-- ERROR, no value
 SELECT '    '::json;			-- ERROR, no value
 
+-- Multi-line JSON input to check ERROR reporting
+SELECT '{
+		"one": 1,
+		"two":"two",
+		"three":
+		true}'::json; -- OK
+SELECT '{
+		"one": 1,
+		"two":,"two",  -- ERROR extraneous comma before field "two"
+		"three":
+		true}'::json;
+SELECT '{
+		"one": 1,
+		"two":"two",
+		"averyveryveryveryveryveryveryveryveryverylongfieldname":}'::json;
+-- ERROR missing value for last field
+
 --constructors
 -- array_to_json
 
@@ -106,9 +123,13 @@ SELECT row_to_json(row((select array_agg(x) as d from generate_series(5,10) x)),
 
 -- anyarray column
 
-select to_json(histogram_bounds) histogram_bounds
+analyze rows;
+
+select attname, to_json(histogram_bounds) histogram_bounds
 from pg_stats
-where attname = 'tmplname' and tablename = 'pg_pltemplate';
+where tablename = 'rows' and
+      schemaname = pg_my_temp_schema()::regnamespace::text
+order by 1;
 
 -- to_json, timestamps
 

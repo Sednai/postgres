@@ -15,17 +15,19 @@ override CPPFLAGS := -I. -I$(srcdir) $(TCL_INCLUDE_SPEC) $(CPPFLAGS)
 
 # On Windows, we don't link directly with the Tcl library; see below
 ifneq ($(PORTNAME), win32)
-SHLIB_LINK = $(TCL_LIB_SPEC) $(TCL_LIBS) -lc
+SHLIB_LINK = $(TCL_LIB_SPEC) $(TCL_LIBS)
 endif
 
 PGFILEDESC = "PL/Tcl - procedural language"
 
 NAME = pltcl
 
-OBJS = pltcl.o $(WIN32RES)
+OBJS = \
+	$(WIN32RES) \
+	pltcl.o
 
-DATA = pltcl.control pltcl--1.0.sql pltcl--unpackaged--1.0.sql \
-       pltclu.control pltclu--1.0.sql pltclu--unpackaged--1.0.sql
+DATA = pltcl.control pltcl--1.0.sql \
+       pltclu.control pltclu--1.0.sql
 
 REGRESS_OPTS = --dbname=$(PL_TESTDB) --load-extension=pltcl
 REGRESS = pltcl_setup pltcl_queries pltcl_trigger pltcl_call pltcl_start_proc pltcl_subxact pltcl_unicode pltcl_transaction

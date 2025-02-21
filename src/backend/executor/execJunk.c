@@ -3,7 +3,7 @@
  * execJunk.c
  *	  Junk attribute support stuff....
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -60,6 +60,8 @@ JunkFilter *
 ExecInitJunkFilter(List *targetList, TupleTableSlot *slot)
 {
 	TupleDesc	cleanTupType;
+	int			cleanLength;
+	AttrNumber *cleanMap;
 
 	/*
 	 * Compute the tuple descriptor for the cleaned tuple.
@@ -117,6 +119,9 @@ ExecInitJunkFilterInsertion(List *targetList,
 	cleanLength = cleanTupType->natts;
 	if (cleanLength > 0)
 	{
+		AttrNumber	cleanResno;
+		ListCell   *t;
+
 		cleanMap = (AttrNumber *) palloc(cleanLength * sizeof(AttrNumber));
 		cleanResno = 0;
 		foreach(t, targetList)
@@ -199,7 +204,7 @@ ExecInitJunkFilterConversion(List *targetList,
 			{
 				TargetEntry *tle = lfirst(t);
 
-				t = lnext(t);
+				t = lnext(targetList, t);
 				if (!tle->resjunk)
 				{
 					cleanMap[i] = tle->resno;
@@ -260,22 +265,6 @@ ExecFindJunkAttributeInTlist(List *targetlist, const char *attrName)
 	}
 
 	return InvalidAttrNumber;
-}
-
-/*
- * ExecGetJunkAttribute
- *
- * Given a junk filter's input tuple (slot) and a junk attribute's number
- * previously found by ExecFindJunkAttribute, extract & return the value and
- * isNull flag of the attribute.
- */
-Datum
-ExecGetJunkAttribute(TupleTableSlot *slot, AttrNumber attno,
-					 bool *isNull)
-{
-	Assert(attno > 0);
-
-	return slot_getattr(slot, attno, isNull);
 }
 
 /*

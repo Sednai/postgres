@@ -797,6 +797,10 @@ SELECT t1.a, t2.b, t1.ctid FROM t1, t2 WHERE t1.a = t2.a;
     relation points at a subquery range-table entry, which will not
     work.  There are several ways in which <productname>PostgreSQL</productname>
     can support the appearance of updating a view, however.
+    In order of user-experienced complexity those are: automatically substitute
+    in the underlying table for the view, execute a user-defined trigger,
+    or rewrite the query per a user-defined rule.
+    These options are discussed below.
 </para>
 
 <para>
@@ -812,7 +816,8 @@ SELECT t1.a, t2.b, t1.ctid FROM t1, t2 WHERE t1.a = t2.a;
 
 <para>
     Alternatively, the operation may be handled by a user-provided
-    <literal>INSTEAD OF</literal> trigger on the view.
+    <literal>INSTEAD OF</literal> trigger on the view
+    (see <xref linkend="sql-createtrigger"/>).
     Rewriting works slightly differently
     in this case.  For <command>INSERT</command>, the rewriter does
     nothing at all with the view, leaving it as the result relation
@@ -1005,7 +1010,7 @@ VACUUM ANALYZE wrd;
 <programlisting>
 SELECT count(*) FROM words WHERE word = 'caterpiler';
 
- count 
+ count
 -------
      0
 (1 row)
@@ -1036,12 +1041,13 @@ SELECT count(*) FROM words WHERE word = 'caterpiler';
 </programlisting>
 
     Either way, the word is spelled wrong, so let's look for what we might
-    have wanted.  Again using <literal>file_fdw</literal>:
+    have wanted.  Again using <literal>file_fdw</literal> and
+    <literal>pg_trgm</literal>:
 
 <programlisting>
 SELECT word FROM words ORDER BY word &lt;-&gt; 'caterpiler' LIMIT 10;
 
-     word     
+     word
 ---------------
  cater
  caterpillar
@@ -1331,7 +1337,7 @@ UPDATE shoelace_data SET sl_avail = 6 WHERE sl_name = 'sl7';
 <programlisting>
 SELECT * FROM shoelace_log;
 
- sl_name | sl_avail | log_who | log_when                        
+ sl_name | sl_avail | log_who | log_when
 ---------+----------+---------+----------------------------------
  sl7     |        6 | Al      | Tue Oct 20 16:14:45 1998 MET DST
 (1 row)
@@ -1712,7 +1718,7 @@ SELECT * FROM shoelace ORDER BY sl_name;
 
 SELECT * FROM shoelace_log;
 
- sl_name | sl_avail | log_who| log_when                        
+ sl_name | sl_avail | log_who| log_when
 ---------+----------+--------+----------------------------------
  sl7     |        6 | Al     | Tue Oct 20 19:14:45 1998 MET DST
  sl3     |       10 | Al     | Tue Oct 20 19:25:16 1998 MET DST
@@ -1937,7 +1943,7 @@ DELETE FROM shoelace WHERE EXISTS
              WHERE sl_name = shoelace.sl_name);
 </programlisting>
 
-    <foreignphrase>Voil&agrave;</foreignphrase>:
+    The results are:
 
 <programlisting>
 SELECT * FROM shoelace;
@@ -2001,11 +2007,14 @@ SELECT * FROM shoelace;
     a relation (table or view) is automatically the owner of the
     rewrite rules that are defined for it.
     The <productname>PostgreSQL</productname> rule system changes the
-    behavior of the default access control system. Relations that
-    are used due to rules get checked against the
+    behavior of the default access control system. With the exception of
+    <literal>SELECT</literal> rules associated with security invoker views
+    (see <link linkend="sql-createview"><command>CREATE VIEW</command></link>),
+    all relations that are used due to rules get checked against the
     privileges of the rule owner, not the user invoking the rule.
-    This means that users only need the required privileges
-    for the tables/views that are explicitly named in their queries.
+    This means that, except for security invoker views, users only need the
+    required privileges for the tables/views that are explicitly named in
+    their queries.
 </para>
 
 <para>
@@ -2114,7 +2123,7 @@ SELECT * FROM phone_number WHERE tricky(person, phone);
 </para>
 
 <para>
-    When it is necessary for a view to provide row level security, the
+    When it is necessary for a view to provide row-level security, the
     <literal>security_barrier</literal> attribute should be applied to
     the view.  This prevents maliciously-chosen functions and operators from
     being passed values from rows until after the view has done its work.  For

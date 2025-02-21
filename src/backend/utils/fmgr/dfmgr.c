@@ -3,7 +3,7 @@
  * dfmgr.c
  *	  Dynamic function manager code.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -23,7 +23,7 @@
  * On macOS, <dlfcn.h> insists on including <stdbool.h>.  If we're not
  * using stdbool, undef bool to undo the damage.
  */
-#ifndef USE_STDBOOL
+#ifndef PG_USE_STDBOOL
 #ifdef bool
 #undef bool
 #endif
@@ -37,9 +37,8 @@
 #include "utils/hsearch.h"
 
 
-/* signatures for PostgreSQL-specific library init/fini functions */
+/* signature for PostgreSQL-specific library init function */
 typedef void (*PG_init_t) (void);
-typedef void (*PG_fini_t) (void);
 
 /* hashtable entry for rendezvous variables */
 typedef struct
@@ -79,7 +78,6 @@ char	   *Dynamic_library_path;
 static void *internal_load_library(const char *libname);
 static void incompatible_module_error(const char *libname,
 									  const Pg_magic_struct *module_magic_data) pg_attribute_noreturn();
-static void internal_unload_library(const char *libname);
 static bool file_exists(const char *name);
 static char *expand_dynamic_library_name(const char *name);
 static void check_restricted_library_name(const char *name);
@@ -95,7 +93,7 @@ static const Pg_magic_struct magic_data = PG_MODULE_MAGIC_DATA;
  * named funcname in it.
  *
  * If the function is not found, we raise an error if signalNotFound is true,
- * else return (PGFunction) NULL.  Note that errors in loading the library
+ * else return NULL.  Note that errors in loading the library
  * will provoke ereport() regardless of signalNotFound.
  *
  * If filehandle is not NULL, then *filehandle will be set to a handle
@@ -103,13 +101,13 @@ static const Pg_magic_struct magic_data = PG_MODULE_MAGIC_DATA;
  * lookup_external_function to lookup additional functions in the same file
  * at less cost than repeating load_external_function.
  */
-PGFunction
+void *
 load_external_function(const char *filename, const char *funcname,
 					   bool signalNotFound, void **filehandle)
 {
 	char	   *fullname;
 	void	   *lib_handle;
-	PGFunction	retval;
+	void	   *retval;
 
 	/* Expand the possibly-abbreviated filename to an exact path name */
 	fullname = expand_dynamic_library_name(filename);
@@ -122,7 +120,7 @@ load_external_function(const char *filename, const char *funcname,
 		*filehandle = lib_handle;
 
 	/* Look up the function within the library. */
-	retval = (PGFunction) dlsym(lib_handle, funcname);
+	retval = dlsym(lib_handle, funcname);
 
 	if (retval == NULL && signalNotFound)
 		ereport(ERROR,
@@ -154,9 +152,6 @@ load_file(const char *filename, bool restricted)
 	/* Expand the possibly-abbreviated filename to an exact path name */
 	fullname = expand_dynamic_library_name(filename);
 
-	/* Unload the library if currently loaded */
-	internal_unload_library(fullname);
-
 	/* Load the shared library */
 	(void) internal_load_library(fullname);
 
@@ -165,12 +160,12 @@ load_file(const char *filename, bool restricted)
 
 /*
  * Lookup a function whose library file is already loaded.
- * Return (PGFunction) NULL if not found.
+ * Return NULL if not found.
  */
-PGFunction
+void *
 lookup_external_function(void *filehandle, const char *funcname)
 {
-	return (PGFunction) dlsym(filehandle, funcname);
+	return dlsym(filehandle, funcname);
 }
 
 
@@ -179,6 +174,11 @@ lookup_external_function(void *filehandle, const char *funcname)
  * loaded.  Return the pg_dl* handle for the file.
  *
  * Note: libname is expected to be an exact name for the library file.
+ *
+ * NB: There is presently no way to unload a dynamically loaded file.  We might
+ * add one someday if we can convince ourselves we have safe protocols for un-
+ * hooking from hook function pointers, releasing custom GUC variables, and
+ * perhaps other things that are definitely unsafe currently.
  */
 static void *
 internal_load_library(const char *libname)
@@ -331,6 +331,21 @@ incompatible_module_error(const char *libname,
 	}
 
 	/*
+	 * Similarly, if the ABI extra field doesn't match, error out.  Other
+	 * fields below might also mismatch, but that isn't useful information if
+	 * you're using the wrong product altogether.
+	 */
+	if (strcmp(module_magic_data->abi_extra, magic_data.abi_extra) != 0)
+	{
+		ereport(ERROR,
+				(errmsg("incompatible library \"%s\": ABI mismatch",
+						libname),
+				 errdetail("Server has ABI \"%s\", library has \"%s\".",
+						   magic_data.abi_extra,
+						   module_magic_data->abi_extra)));
+	}
+
+	/*
 	 * Otherwise, spell out which fields don't agree.
 	 *
 	 * XXX this code has to be adjusted any time the set of fields in a magic
@@ -365,15 +380,6 @@ incompatible_module_error(const char *libname,
 						 magic_data.namedatalen,
 						 module_magic_data->namedatalen);
 	}
-	if (module_magic_data->float4byval != magic_data.float4byval)
-	{
-		if (details.len)
-			appendStringInfoChar(&details, '\n');
-		appendStringInfo(&details,
-						 _("Server has FLOAT4PASSBYVAL = %s, library has %s."),
-						 magic_data.float4byval ? "true" : "false",
-						 module_magic_data->float4byval ? "true" : "false");
-	}
 	if (module_magic_data->float8byval != magic_data.float8byval)
 	{
 		if (details.len)
@@ -394,71 +400,6 @@ incompatible_module_error(const char *libname,
 			 errdetail_internal("%s", details.data)));
 }
 
-/*
- * Unload the specified dynamic-link library file, if it is loaded.
- *
- * Note: libname is expected to be an exact name for the library file.
- *
- * XXX for the moment, this is disabled, resulting in LOAD of an already-loaded
- * library always being a no-op.  We might re-enable it someday if we can
- * convince ourselves we have safe protocols for un-hooking from hook function
- * pointers, releasing custom GUC variables, and perhaps other things that
- * are definitely unsafe currently.
- */
-static void
-internal_unload_library(const char *libname)
-{
-#ifdef NOT_USED
-	DynamicFileList *file_scanner,
-			   *prv,
-			   *nxt;
-	struct stat stat_buf;
-	PG_fini_t	PG_fini;
-
-	/*
-	 * We need to do stat() in order to determine whether this is the same
-	 * file as a previously loaded file; it's also handy so as to give a good
-	 * error message if bogus file name given.
-	 */
-	if (stat(libname, &stat_buf) == -1)
-		ereport(ERROR,
-				(errcode_for_file_access(),
-				 errmsg("could not access file \"%s\": %m", libname)));
-
-	/*
-	 * We have to zap all entries in the list that match on either filename or
-	 * inode, else internal_load_library() will still think it's present.
-	 */
-	prv = NULL;
-	for (file_scanner = file_list; file_scanner != NULL; file_scanner = nxt)
-	{
-		nxt = file_scanner->next;
-		if (strcmp(libname, file_scanner->filename) == 0 ||
-			SAME_INODE(stat_buf, *file_scanner))
-		{
-			if (prv)
-				prv->next = nxt;
-			else
-				file_list = nxt;
-
-			/*
-			 * If the library has a _PG_fini() function, call it.
-			 */
-			PG_fini = (PG_fini_t) dlsym(file_scanner->handle, "_PG_fini");
-			if (PG_fini)
-				(*PG_fini) ();
-
-			clear_external_function_hash(file_scanner->handle);
-			dlclose(file_scanner->handle);
-			free((char *) file_scanner);
-			/* prv does not change */
-		}
-		else
-			prv = file_scanner;
-	}
-#endif							/* NOT_USED */
-}
-
 static bool
 file_exists(const char *name)
 {
@@ -467,7 +408,7 @@ file_exists(const char *name)
 	AssertArg(name != NULL);
 
 	if (stat(name, &st) == 0)
-		return S_ISDIR(st.st_mode) ? false : true;
+		return !S_ISDIR(st.st_mode);
 	else if (!(errno == ENOENT || errno == ENOTDIR || errno == EACCES))
 		ereport(ERROR,
 				(errcode_for_file_access(),
@@ -476,11 +417,6 @@ file_exists(const char *name)
 	return false;
 }
 
-
-/* Example format: ".so" */
-#ifndef DLSUFFIX
-#error "DLSUFFIX must be defined to compile this file."
-#endif
 
 /*
  * If name contains a slash, check if the file exists, if so return
@@ -689,13 +625,12 @@ find_rendezvous_variable(const char *varName)
 	{
 		HASHCTL		ctl;
 
-		MemSet(&ctl, 0, sizeof(ctl));
 		ctl.keysize = NAMEDATALEN;
 		ctl.entrysize = sizeof(rendezvousHashEntry);
 		rendezvousHash = hash_create("Rendezvous variable hash",
 									 16,
 									 &ctl,
-									 HASH_ELEM);
+									 HASH_ELEM | HASH_STRINGS);
 	}
 
 	/* Find or create the hashtable entry for this varName */

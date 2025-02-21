@@ -116,11 +116,19 @@
     operated on, while row-level <literal>AFTER</literal> triggers fire at the end of
     the statement (but before any statement-level <literal>AFTER</literal> triggers).
     These types of triggers may only be defined on tables and
-    foreign tables, not views; <literal>BEFORE</literal> row-level triggers may not
-    be defined on partitioned tables.
+    foreign tables, not views.
     <literal>INSTEAD OF</literal> triggers may only be
     defined on views, and only at row level; they fire immediately as each
     row in the view is identified as needing to be operated on.
+   </para>
+
+   <para>
+    The execution of an <literal>AFTER</literal> trigger can be deferred
+    to the end of the transaction, rather than the end of the statement,
+    if it was defined as a <firstterm>constraint trigger</firstterm>.
+    In all cases, a trigger is executed as part of the same transaction as
+    the statement that triggered it, so if either the statement or the
+    trigger causes an error, the effects of both will be rolled back.
    </para>
 
    <para>
@@ -182,6 +190,28 @@
     even if row movement occurs; only the <command>UPDATE</command> triggers
     defined on the target table used in the <command>UPDATE</command> statement
     will be fired.
+   </para>
+
+   <para>
+    No separate triggers are defined for <command>MERGE</command>. Instead,
+    statement-level or row-level <command>UPDATE</command>,
+    <command>DELETE</command>, and <command>INSERT</command> triggers are fired
+    depending on (for statement-level triggers) what actions are specified in
+    the <command>MERGE</command> query and (for row-level triggers) what
+    actions are performed.
+   </para>
+
+   <para>
+    While running a <command>MERGE</command> command, statement-level
+    <literal>BEFORE</literal> and <literal>AFTER</literal> triggers are
+    fired for events specified in the actions of the <command>MERGE</command>
+    command, irrespective of whether or not the action is ultimately performed.
+    This is the same as an <command>UPDATE</command> statement that updates
+    no rows, yet statement-level triggers are fired.
+    The row-level triggers are fired only when a row is actually updated,
+    inserted or deleted. So it's perfectly legal that while statement-level
+    triggers are fired for certain types of action, no row-level triggers
+    are fired for the same kind of action.
    </para>
 
    <para>
@@ -412,7 +442,7 @@
        trigger <emphasis>will</emphasis> see the effects of data
        changes for rows previously processed in the same outer
        command.  This requires caution, since the ordering of these
-       change events is not in general predictable; a SQL command that
+       change events is not in general predictable; an SQL command that
        affects multiple rows can visit the rows in any order.
       </para>
      </listitem>
@@ -517,6 +547,7 @@ typedef struct TriggerData
     TupleTableSlot  *tg_newslot;
     Tuplestorestate *tg_oldtable;
     Tuplestorestate *tg_newtable;
+    const Bitmapset *tg_updatedcols;
 } TriggerData;
 </programlisting>
 
@@ -690,6 +721,7 @@ typedef struct Trigger
     int16       tgtype;
     char        tgenabled;
     bool        tgisinternal;
+    bool        tgisclone;
     Oid         tgconstrrelid;
     Oid         tgconstrindid;
     Oid         tgconstraint;
@@ -759,6 +791,30 @@ typedef struct Trigger
       </listitem>
      </varlistentry>
 
+     <varlistentry>
+      <term><structfield>tg_updatedcols</structfield></term>
+      <listitem>
+       <para>
+        For <literal>UPDATE</literal> triggers, a bitmap set indicating the
+        columns that were updated by the triggering command.  Generic trigger
+        functions can use this to optimize actions by not having to deal with
+        columns that were not changed.
+       </para>
+
+       <para>
+        As an example, to determine whether a column with attribute number
+        <varname>attnum</varname> (1-based) is a member of this bitmap set,
+        call <literal>bms_is_member(attnum -
+        FirstLowInvalidHeapAttributeNumber,
+        trigdata->tg_updatedcols))</literal>.
+       </para>
+
+       <para>
+        For triggers other than <literal>UPDATE</literal> triggers, this will
+        be <symbol>NULL</symbol>.
+       </para>
+      </listitem>
+     </varlistentry>
     </variablelist>
    </para>
 

@@ -121,6 +121,25 @@ SELECT relname, d.* FROM ONLY d, pg_class where d.tableoid = pg_class.oid;
 CREATE TEMP TABLE z (b TEXT, PRIMARY KEY(aa, b)) inherits (a);
 INSERT INTO z VALUES (NULL, 'text'); -- should fail
 
+-- Check inherited UPDATE with first child excluded
+create table some_tab (f1 int, f2 int, f3 int, check (f1 < 10) no inherit);
+create table some_tab_child () inherits(some_tab);
+insert into some_tab_child select i, i+1, 0 from generate_series(1,1000) i;
+create index on some_tab_child(f1, f2);
+-- while at it, also check that statement-level triggers fire
+create function some_tab_stmt_trig_func() returns trigger as
+$$begin raise notice 'updating some_tab'; return NULL; end;$$
+language plpgsql;
+create trigger some_tab_stmt_trig
+  before update on some_tab execute function some_tab_stmt_trig_func();
+
+explain (costs off)
+update some_tab set f3 = 11 where f1 = 12 and f2 = 13;
+update some_tab set f3 = 11 where f1 = 12 and f2 = 13;
+
+drop table some_tab cascade;
+drop function some_tab_stmt_trig_func();
+
 -- Check inherited UPDATE with all children excluded
 create table some_tab (a int, b int) distribute by replication;
 create table some_tab_child () inherits (some_tab);
@@ -567,6 +586,14 @@ select min(1-id) from matest0;
 reset enable_seqscan;
 reset enable_parallel_append;
 
+explain (verbose, costs off)  -- bug #18652
+select 1 - id as c from
+(select id from matest3 t1 union all select id * 2 from matest3 t2) ss
+order by c;
+select 1 - id as c from
+(select id from matest3 t1 union all select id * 2 from matest3 t2) ss
+order by c;
+
 drop table matest0 cascade;
 
 --
@@ -846,6 +873,8 @@ explain (costs off) select a, abs(b) from mcrparted order by a, abs(b), c;
 -- during planning.
 explain (costs off) select * from mcrparted where a < 20 order by a, abs(b), c;
 
+set enable_bitmapscan to off;
+set enable_sort to off;
 create table mclparted (a int) partition by list(a);
 create table mclparted1 partition of mclparted for values in(1);
 create table mclparted2 partition of mclparted for values in(2);
@@ -860,8 +889,33 @@ create table mclparted3_5 partition of mclparted for values in(3,5);
 create table mclparted4 partition of mclparted for values in(4);
 
 explain (costs off) select * from mclparted order by a;
+explain (costs off) select * from mclparted where a in(3,4,5) order by a;
+
+-- Introduce a NULL and DEFAULT partition so we can test more complex cases
+create table mclparted_null partition of mclparted for values in(null);
+create table mclparted_def partition of mclparted default;
+
+-- Append can be used providing we don't scan the interleaved partition
+explain (costs off) select * from mclparted where a in(1,2,4) order by a;
+explain (costs off) select * from mclparted where a in(1,2,4) or a is null order by a;
+
+-- Test a more complex case where the NULL partition allows some other value
+drop table mclparted_null;
+create table mclparted_0_null partition of mclparted for values in(0,null);
+
+-- Ensure MergeAppend is used since 0 and NULLs are in the same partition.
+explain (costs off) select * from mclparted where a in(1,2,4) or a is null order by a;
+explain (costs off) select * from mclparted where a in(0,1,2,4) order by a;
+
+-- Ensure Append is used when the null partition is pruned
+explain (costs off) select * from mclparted where a in(1,2,4) order by a;
+
+-- Ensure MergeAppend is used when the default partition is not pruned
+explain (costs off) select * from mclparted where a in(1,2,4,100) order by a;
 
 drop table mclparted;
+reset enable_sort;
+reset enable_bitmapscan;
 
 -- Ensure subplans which don't have a path with the correct pathkeys get
 -- sorted correctly.

@@ -3,7 +3,7 @@
  * wparser_def.c
  *		Default text search parser
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -298,11 +298,10 @@ TParserInit(char *str, int len)
 	 */
 	if (prs->charmaxlen > 1)
 	{
-		Oid			collation = DEFAULT_COLLATION_OID;	/* TODO */
 		pg_locale_t mylocale = 0;	/* TODO */
 
 		prs->usewide = true;
-		if (lc_ctype_is_c(collation))
+		if (database_ctype_is_c)
 		{
 			/*
 			 * char2wchar doesn't work for C-locale and sizeof(pg_wchar) could
@@ -325,12 +324,6 @@ TParserInit(char *str, int len)
 	prs->state->state = TPS_Base;
 
 #ifdef WPARSER_TRACE
-
-	/*
-	 * Use of %.*s here is a bit risky since it can misbehave if the data is
-	 * not in what libc thinks is the prevailing encoding.  However, since
-	 * this is just a debugging aid, we choose to live with that.
-	 */
 	fprintf(stderr, "parsing \"%.*s\"\n", len, str);
 #endif
 
@@ -367,7 +360,6 @@ TParserCopyInit(const TParser *orig)
 	prs->state->state = TPS_Base;
 
 #ifdef WPARSER_TRACE
-	/* See note above about %.*s */
 	fprintf(stderr, "parsing copy of \"%.*s\"\n", prs->lenstr, prs->str);
 #endif
 
@@ -1878,7 +1870,7 @@ TParserGet(TParser *prs)
 		}
 	}
 
-	return (item && (item->flags & A_BINGO)) ? true : false;
+	return (item && (item->flags & A_BINGO));
 }
 
 Datum
@@ -1980,7 +1972,7 @@ typedef struct
 /*
  * TS_execute callback for matching a tsquery operand to headline words
  */
-static bool
+static TSTernaryValue
 checkcondition_HL(void *opaque, QueryOperand *val, ExecPhraseData *data)
 {
 	hlCheck    *checkval = (hlCheck *) opaque;
@@ -1993,7 +1985,7 @@ checkcondition_HL(void *opaque, QueryOperand *val, ExecPhraseData *data)
 		{
 			/* if data == NULL, don't need to report positions */
 			if (!data)
-				return true;
+				return TS_YES;
 
 			if (!data->pos)
 			{
@@ -2010,9 +2002,9 @@ checkcondition_HL(void *opaque, QueryOperand *val, ExecPhraseData *data)
 	}
 
 	if (data && data->npos > 0)
-		return true;
+		return TS_YES;
 
-	return false;
+	return TS_NO;
 }
 
 /*

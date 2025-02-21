@@ -4,7 +4,7 @@
  *	   routines for accessing the system catalogs
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -20,29 +20,30 @@
 #include "access/genam.h"
 #include "access/htup_details.h"
 #include "access/nbtree.h"
-#include "access/tableam.h"
 #include "access/sysattr.h"
 #include "access/table.h"
+#include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xlog.h"
 #include "catalog/catalog.h"
-#include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_statistic_ext.h"
+#include "catalog/pg_statistic_ext_data.h"
 #include "foreign/fdwapi.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
+#include "nodes/nodeFuncs.h"
 #include "nodes/supportnodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/optimizer.h"
 #include "optimizer/plancat.h"
 #include "optimizer/prep.h"
-#include "partitioning/partdesc.h"
 #include "parser/parse_relation.h"
 #include "parser/parsetree.h"
+#include "partitioning/partdesc.h"
 #include "rewrite/rewriteManip.h"
 #include "statistics/statistics.h"
 #include "storage/bufmgr.h"
@@ -51,9 +52,8 @@
 #include "utils/lsyscache.h"
 #include "utils/partcache.h"
 #include "utils/rel.h"
-#include "utils/syscache.h"
 #include "utils/snapmgr.h"
-
+#include "utils/syscache.h"
 
 /* GUC parameter */
 int			constraint_exclusion = CONSTRAINT_EXCLUSION_PARTITION;
@@ -79,6 +79,9 @@ static void set_relation_partition_info(PlannerInfo *root, RelOptInfo *rel,
 static PartitionScheme find_partition_scheme(PlannerInfo *root, Relation rel);
 static void set_baserel_partition_key_exprs(Relation relation,
 											RelOptInfo *rel);
+static void set_baserel_partition_constraint(Relation relation,
+											 RelOptInfo *rel);
+
 
 /*
  * get_relation_info -
@@ -128,7 +131,8 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 	 * Relations without a table AM can be used in a query only if they are of
 	 * special-cased relkinds.  This check prevents us from crashing later if,
 	 * for example, a view's ON SELECT rule has gone missing.  Note that
-	 * table_open() already rejected indexes and composite types.
+	 * table_open() already rejected indexes and composite types; spell the
+	 * error the same way it does.
 	 */
 	if (!relation->rd_tableam)
 	{
@@ -137,11 +141,12 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			ereport(ERROR,
 					(errcode(ERRCODE_WRONG_OBJECT_TYPE),
 					 errmsg("cannot open relation \"%s\"",
-							RelationGetRelationName(relation))));
+							RelationGetRelationName(relation)),
+					 errdetail_relkind_not_supported(relation->rd_rel->relkind)));
 	}
 
 	/* Temporary and unlogged relations are inaccessible during recovery. */
-	if (!RelationNeedsWAL(relation) && RecoveryInProgress())
+	if (!RelationIsPermanent(relation) && RecoveryInProgress())
 		ereport(ERROR,
 				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
 				 errmsg("cannot access temporary or unlogged relations during recovery")));
@@ -295,6 +300,9 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 			info->amcostestimate = amroutine->amcostestimate;
 			Assert(info->amcostestimate != NULL);
 
+			/* Fetch index opclass options */
+			info->opclassoptions = RelationGetIndexAttOptions(indexRelation, true);
+
 			/*
 			 * Fetch the ordering information for the index, if any.
 			 */
@@ -438,6 +446,13 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 
 			index_close(indexRelation, NoLock);
 
+			/*
+			 * We've historically used lcons() here.  It'd make more sense to
+			 * use lappend(), but that causes the planner to change behavior
+			 * in cases where two indexes seem equally attractive.  For now,
+			 * stick with lcons() --- few tables should have so many indexes
+			 * that the O(N^2) behavior of lcons() is really a problem.
+			 */
 			indexinfos = lcons(info, indexinfos);
 		}
 
@@ -473,6 +488,12 @@ get_relation_info(PlannerInfo *root, Oid relationObjectId, bool inhparent,
 
 	/* Collect info about relation's foreign keys, if relevant */
 	get_relation_foreign_keys(root, rel, relation, inhparent);
+
+	/* Collect info about functions implemented by the rel's table AM. */
+	if (relation->rd_tableam &&
+		relation->rd_tableam->scan_set_tidrange != NULL &&
+		relation->rd_tableam->scan_getnextslot_tidrange != NULL)
+		rel->amflags |= AMFLAG_HAS_TID_RANGE;
 
 	/*
 	 * Collect info about relation's partitioning scheme, if any. Only
@@ -585,9 +606,11 @@ get_relation_foreign_keys(PlannerInfo *root, RelOptInfo *rel,
 			memcpy(info->conpfeqop, cachedfk->conpfeqop, sizeof(info->conpfeqop));
 			/* zero out fields to be filled by match_foreign_keys_to_quals */
 			info->nmatched_ec = 0;
+			info->nconst_ec = 0;
 			info->nmatched_rcols = 0;
 			info->nmatched_ri = 0;
 			memset(info->eclass, 0, sizeof(info->eclass));
+			memset(info->fk_eclass_member, 0, sizeof(info->fk_eclass_member));
 			memset(info->rinfos, 0, sizeof(info->rinfos));
 
 			root->fkey_list = lappend(root->fkey_list, info);
@@ -980,120 +1003,104 @@ estimate_rel_size(Relation rel, int32 *attr_widths,
 	BlockNumber relallvisible;
 	double		density;
 
-	switch (rel->rd_rel->relkind)
+	if (RELKIND_HAS_TABLE_AM(rel->rd_rel->relkind))
 	{
-		case RELKIND_RELATION:
-		case RELKIND_MATVIEW:
-		case RELKIND_TOASTVALUE:
-			table_relation_estimate_size(rel, attr_widths, pages, tuples,
-										 allvisfrac);
-			break;
+		table_relation_estimate_size(rel, attr_widths, pages, tuples,
+									 allvisfrac);
+	}
+	else if (rel->rd_rel->relkind == RELKIND_INDEX)
+	{
+		/*
+		 * XXX: It'd probably be good to move this into a callback, individual
+		 * index types e.g. know if they have a metapage.
+		 */
 
-		case RELKIND_INDEX:
+		/* it has storage, ok to call the smgr */
+		curpages = RelationGetNumberOfBlocks(rel);
 
-			/*
-			 * XXX: It'd probably be good to move this into a callback,
-			 * individual index types e.g. know if they have a metapage.
-			 */
-
-			/* it has storage, ok to call the smgr */
-			curpages = RelationGetNumberOfBlocks(rel);
-
-			/* coerce values in pg_class to more desirable types */
-			relpages = (BlockNumber) rel->rd_rel->relpages;
-			reltuples = (double) rel->rd_rel->reltuples;
-			relallvisible = (BlockNumber) rel->rd_rel->relallvisible;
-
-			/* report estimated # pages */
-			*pages = curpages;
-			/* quick exit if rel is clearly empty */
-			if (curpages == 0)
-			{
-				*tuples = 0;
-				*allvisfrac = 0;
-				break;
-			}
-			/* coerce values in pg_class to more desirable types */
-			relpages = (BlockNumber) rel->rd_rel->relpages;
-			reltuples = (double) rel->rd_rel->reltuples;
-			relallvisible = (BlockNumber) rel->rd_rel->relallvisible;
-
-			/*
-			 * Discount the metapage while estimating the number of tuples.
-			 * This is a kluge because it assumes more than it ought to about
-			 * index structure.  Currently it's OK for btree, hash, and GIN
-			 * indexes but suspect for GiST indexes.
-			 */
-			if (relpages > 0)
-			{
-				curpages--;
-				relpages--;
-			}
-
-			/* estimate number of tuples from previous tuple density */
-			if (relpages > 0)
-				density = reltuples / (double) relpages;
-			else
-			{
-				/*
-				 * When we have no data because the relation was truncated,
-				 * estimate tuple width from attribute datatypes.  We assume
-				 * here that the pages are completely full, which is OK for
-				 * tables (since they've presumably not been VACUUMed yet) but
-				 * is probably an overestimate for indexes.  Fortunately
-				 * get_relation_info() can clamp the overestimate to the
-				 * parent table's size.
-				 *
-				 * Note: this code intentionally disregards alignment
-				 * considerations, because (a) that would be gilding the lily
-				 * considering how crude the estimate is, and (b) it creates
-				 * platform dependencies in the default plans which are kind
-				 * of a headache for regression testing.
-				 *
-				 * XXX: Should this logic be more index specific?
-				 */
-				int32		tuple_width;
-
-				tuple_width = get_rel_data_width(rel, attr_widths);
-				tuple_width += MAXALIGN(SizeofHeapTupleHeader);
-				tuple_width += sizeof(ItemIdData);
-				/* note: integer division is intentional here */
-				density = (BLCKSZ - SizeOfPageHeaderData) / tuple_width;
-			}
-			*tuples = rint(density * (double) curpages);
-
-			/*
-			 * We use relallvisible as-is, rather than scaling it up like we
-			 * do for the pages and tuples counts, on the theory that any
-			 * pages added since the last VACUUM are most likely not marked
-			 * all-visible.  But costsize.c wants it converted to a fraction.
-			 */
-			if (relallvisible == 0 || curpages <= 0)
-				*allvisfrac = 0;
-			else if ((double) relallvisible >= curpages)
-				*allvisfrac = 1;
-			else
-				*allvisfrac = (double) relallvisible / curpages;
-			break;
-
-		case RELKIND_SEQUENCE:
-			/* Sequences always have a known size */
-			*pages = 1;
-			*tuples = 1;
-			*allvisfrac = 0;
-			break;
-		case RELKIND_FOREIGN_TABLE:
-			/* Just use whatever's in pg_class */
-			*pages = rel->rd_rel->relpages;
-			*tuples = rel->rd_rel->reltuples;
-			*allvisfrac = 0;
-			break;
-		default:
-			/* else it has no disk storage; probably shouldn't get here? */
-			*pages = 0;
+		/* report estimated # pages */
+		*pages = curpages;
+		/* quick exit if rel is clearly empty */
+		if (curpages == 0)
+		{
 			*tuples = 0;
 			*allvisfrac = 0;
-			break;
+			return;
+		}
+
+		/* coerce values in pg_class to more desirable types */
+		relpages = (BlockNumber) rel->rd_rel->relpages;
+		reltuples = (double) rel->rd_rel->reltuples;
+		relallvisible = (BlockNumber) rel->rd_rel->relallvisible;
+
+		/*
+		 * Discount the metapage while estimating the number of tuples. This
+		 * is a kluge because it assumes more than it ought to about index
+		 * structure.  Currently it's OK for btree, hash, and GIN indexes but
+		 * suspect for GiST indexes.
+		 */
+		if (relpages > 0)
+		{
+			curpages--;
+			relpages--;
+		}
+
+		/* estimate number of tuples from previous tuple density */
+		if (reltuples >= 0 && relpages > 0)
+			density = reltuples / (double) relpages;
+		else
+		{
+			/*
+			 * If we have no data because the relation was never vacuumed,
+			 * estimate tuple width from attribute datatypes.  We assume here
+			 * that the pages are completely full, which is OK for tables
+			 * (since they've presumably not been VACUUMed yet) but is
+			 * probably an overestimate for indexes.  Fortunately
+			 * get_relation_info() can clamp the overestimate to the parent
+			 * table's size.
+			 *
+			 * Note: this code intentionally disregards alignment
+			 * considerations, because (a) that would be gilding the lily
+			 * considering how crude the estimate is, and (b) it creates
+			 * platform dependencies in the default plans which are kind of a
+			 * headache for regression testing.
+			 *
+			 * XXX: Should this logic be more index specific?
+			 */
+			int32		tuple_width;
+
+			tuple_width = get_rel_data_width(rel, attr_widths);
+			tuple_width += MAXALIGN(SizeofHeapTupleHeader);
+			tuple_width += sizeof(ItemIdData);
+			/* note: integer division is intentional here */
+			density = (BLCKSZ - SizeOfPageHeaderData) / tuple_width;
+		}
+		*tuples = rint(density * (double) curpages);
+
+		/*
+		 * We use relallvisible as-is, rather than scaling it up like we do
+		 * for the pages and tuples counts, on the theory that any pages added
+		 * since the last VACUUM are most likely not marked all-visible.  But
+		 * costsize.c wants it converted to a fraction.
+		 */
+		if (relallvisible == 0 || curpages <= 0)
+			*allvisfrac = 0;
+		else if ((double) relallvisible >= curpages)
+			*allvisfrac = 1;
+		else
+			*allvisfrac = (double) relallvisible / curpages;
+	}
+	else
+	{
+		/*
+		 * Just use whatever's in pg_class.  This covers foreign tables,
+		 * sequences, and also relkinds without storage (shouldn't get here?);
+		 * see initializations in AddNewRelationTuple().  Note that FDW must
+		 * cope if reltuples is -1!
+		 */
+		*pages = rel->rd_rel->relpages;
+		*tuples = rel->rd_rel->reltuples;
+		*allvisfrac = 0;
 	}
 }
 
@@ -1297,30 +1304,95 @@ get_relation_constraints(PlannerInfo *root,
 	 */
 	if (include_partition && relation->rd_rel->relispartition)
 	{
-		List	   *pcqual = RelationGetPartitionQual(relation);
-
-		if (pcqual)
-		{
-			/*
-			 * Run the partition quals through const-simplification similar to
-			 * check constraints.  We skip canonicalize_qual, though, because
-			 * partition quals should be in canonical form already; also,
-			 * since the qual is in implicit-AND format, we'd have to
-			 * explicitly convert it to explicit-AND format and back again.
-			 */
-			pcqual = (List *) eval_const_expressions(root, (Node *) pcqual);
-
-			/* Fix Vars to have the desired varno */
-			if (varno != 1)
-				ChangeVarNodes((Node *) pcqual, 1, varno, 0);
-
-			result = list_concat(result, pcqual);
-		}
+		/* make sure rel->partition_qual is set */
+		set_baserel_partition_constraint(relation, rel);
+		result = list_concat(result, rel->partition_qual);
 	}
 
 	table_close(relation, NoLock);
 
 	return result;
+}
+
+/*
+ * Try loading data for the statistics object.
+ *
+ * We don't know if the data (specified by statOid and inh value) exist.
+ * The result is stored in stainfos list.
+ */
+static void
+get_relation_statistics_worker(List **stainfos, RelOptInfo *rel,
+							   Oid statOid, bool inh,
+							   Bitmapset *keys, List *exprs)
+{
+	Form_pg_statistic_ext_data dataForm;
+	HeapTuple	dtup;
+
+	dtup = SearchSysCache2(STATEXTDATASTXOID,
+						   ObjectIdGetDatum(statOid), BoolGetDatum(inh));
+	if (!HeapTupleIsValid(dtup))
+		return;
+
+	dataForm = (Form_pg_statistic_ext_data) GETSTRUCT(dtup);
+
+	/* add one StatisticExtInfo for each kind built */
+	if (statext_is_kind_built(dtup, STATS_EXT_NDISTINCT))
+	{
+		StatisticExtInfo *info = makeNode(StatisticExtInfo);
+
+		info->statOid = statOid;
+		info->inherit = dataForm->stxdinherit;
+		info->rel = rel;
+		info->kind = STATS_EXT_NDISTINCT;
+		info->keys = bms_copy(keys);
+		info->exprs = exprs;
+
+		*stainfos = lappend(*stainfos, info);
+	}
+
+	if (statext_is_kind_built(dtup, STATS_EXT_DEPENDENCIES))
+	{
+		StatisticExtInfo *info = makeNode(StatisticExtInfo);
+
+		info->statOid = statOid;
+		info->inherit = dataForm->stxdinherit;
+		info->rel = rel;
+		info->kind = STATS_EXT_DEPENDENCIES;
+		info->keys = bms_copy(keys);
+		info->exprs = exprs;
+
+		*stainfos = lappend(*stainfos, info);
+	}
+
+	if (statext_is_kind_built(dtup, STATS_EXT_MCV))
+	{
+		StatisticExtInfo *info = makeNode(StatisticExtInfo);
+
+		info->statOid = statOid;
+		info->inherit = dataForm->stxdinherit;
+		info->rel = rel;
+		info->kind = STATS_EXT_MCV;
+		info->keys = bms_copy(keys);
+		info->exprs = exprs;
+
+		*stainfos = lappend(*stainfos, info);
+	}
+
+	if (statext_is_kind_built(dtup, STATS_EXT_EXPRESSIONS))
+	{
+		StatisticExtInfo *info = makeNode(StatisticExtInfo);
+
+		info->statOid = statOid;
+		info->inherit = dataForm->stxdinherit;
+		info->rel = rel;
+		info->kind = STATS_EXT_EXPRESSIONS;
+		info->keys = bms_copy(keys);
+		info->exprs = exprs;
+
+		*stainfos = lappend(*stainfos, info);
+	}
+
+	ReleaseSysCache(dtup);
 }
 
 /*
@@ -1334,6 +1406,7 @@ get_relation_constraints(PlannerInfo *root,
 static List *
 get_relation_statistics(RelOptInfo *rel, Relation relation)
 {
+	Index		varno = rel->relid;
 	List	   *statoidlist;
 	List	   *stainfos = NIL;
 	ListCell   *l;
@@ -1345,18 +1418,14 @@ get_relation_statistics(RelOptInfo *rel, Relation relation)
 		Oid			statOid = lfirst_oid(l);
 		Form_pg_statistic_ext staForm;
 		HeapTuple	htup;
-		HeapTuple	dtup;
 		Bitmapset  *keys = NULL;
+		List	   *exprs = NIL;
 		int			i;
 
 		htup = SearchSysCache1(STATEXTOID, ObjectIdGetDatum(statOid));
 		if (!HeapTupleIsValid(htup))
 			elog(ERROR, "cache lookup failed for statistics object %u", statOid);
 		staForm = (Form_pg_statistic_ext) GETSTRUCT(htup);
-
-		dtup = SearchSysCache1(STATEXTDATASTXOID, ObjectIdGetDatum(statOid));
-		if (!HeapTupleIsValid(dtup))
-			elog(ERROR, "cache lookup failed for statistics object %u", statOid);
 
 		/*
 		 * First, build the array of columns covered.  This is ultimately
@@ -1366,45 +1435,61 @@ get_relation_statistics(RelOptInfo *rel, Relation relation)
 		for (i = 0; i < staForm->stxkeys.dim1; i++)
 			keys = bms_add_member(keys, staForm->stxkeys.values[i]);
 
-		/* add one StatisticExtInfo for each kind built */
-		if (statext_is_kind_built(dtup, STATS_EXT_NDISTINCT))
+		/*
+		 * Preprocess expressions (if any). We read the expressions, run them
+		 * through eval_const_expressions, and fix the varnos.
+		 *
+		 * XXX We don't know yet if there are any data for this stats object,
+		 * with either stxdinherit value. But it's reasonable to assume there
+		 * is at least one of those, possibly both. So it's better to process
+		 * keys and expressions here.
+		 */
 		{
-			StatisticExtInfo *info = makeNode(StatisticExtInfo);
+			bool		isnull;
+			Datum		datum;
 
-			info->statOid = statOid;
-			info->rel = rel;
-			info->kind = STATS_EXT_NDISTINCT;
-			info->keys = bms_copy(keys);
+			/* decode expression (if any) */
+			datum = SysCacheGetAttr(STATEXTOID, htup,
+									Anum_pg_statistic_ext_stxexprs, &isnull);
 
-			stainfos = lcons(info, stainfos);
+			if (!isnull)
+			{
+				char	   *exprsString;
+
+				exprsString = TextDatumGetCString(datum);
+				exprs = (List *) stringToNode(exprsString);
+				pfree(exprsString);
+
+				/*
+				 * Run the expressions through eval_const_expressions. This is
+				 * not just an optimization, but is necessary, because the
+				 * planner will be comparing them to similarly-processed qual
+				 * clauses, and may fail to detect valid matches without this.
+				 * We must not use canonicalize_qual, however, since these
+				 * aren't qual expressions.
+				 */
+				exprs = (List *) eval_const_expressions(NULL, (Node *) exprs);
+
+				/* May as well fix opfuncids too */
+				fix_opfuncids((Node *) exprs);
+
+				/*
+				 * Modify the copies we obtain from the relcache to have the
+				 * correct varno for the parent relation, so that they match
+				 * up correctly against qual clauses.
+				 */
+				if (varno != 1)
+					ChangeVarNodes((Node *) exprs, 1, varno, 0);
+			}
 		}
 
-		if (statext_is_kind_built(dtup, STATS_EXT_DEPENDENCIES))
-		{
-			StatisticExtInfo *info = makeNode(StatisticExtInfo);
+		/* extract statistics for possible values of stxdinherit flag */
 
-			info->statOid = statOid;
-			info->rel = rel;
-			info->kind = STATS_EXT_DEPENDENCIES;
-			info->keys = bms_copy(keys);
+		get_relation_statistics_worker(&stainfos, rel, statOid, true, keys, exprs);
 
-			stainfos = lcons(info, stainfos);
-		}
-
-		if (statext_is_kind_built(dtup, STATS_EXT_MCV))
-		{
-			StatisticExtInfo *info = makeNode(StatisticExtInfo);
-
-			info->statOid = statOid;
-			info->rel = rel;
-			info->kind = STATS_EXT_MCV;
-			info->keys = bms_copy(keys);
-
-			stainfos = lcons(info, stainfos);
-		}
+		get_relation_statistics_worker(&stainfos, rel, statOid, false, keys, exprs);
 
 		ReleaseSysCache(htup);
-		ReleaseSysCache(dtup);
 		bms_free(keys);
 	}
 
@@ -1490,18 +1575,11 @@ relation_excluded_by_constraints(PlannerInfo *root,
 
 			/*
 			 * When constraint_exclusion is set to 'partition' we only handle
-			 * appendrel members.  Normally, they are RELOPT_OTHER_MEMBER_REL
-			 * relations, but we also consider inherited target relations as
-			 * appendrel members for the purposes of constraint exclusion
-			 * (since, indeed, they were appendrel members earlier in
-			 * inheritance_planner).
-			 *
-			 * In both cases, partition pruning was already applied, so there
-			 * is no need to consider the rel's partition constraints here.
+			 * appendrel members.  Partition pruning has already been applied,
+			 * so there is no need to consider the rel's partition constraints
+			 * here.
 			 */
-			if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL ||
-				(rel->relid == root->parse->resultRelation &&
-				 root->inhTargetKind != INHKIND_NONE))
+			if (rel->reloptkind == RELOPT_OTHER_MEMBER_REL)
 				break;			/* appendrel member, so process it */
 			return false;
 
@@ -1514,9 +1592,7 @@ relation_excluded_by_constraints(PlannerInfo *root,
 			 * its partition constraints haven't been considered yet, so
 			 * include them in the processing here.
 			 */
-			if (rel->reloptkind == RELOPT_BASEREL &&
-				!(rel->relid == root->parse->resultRelation &&
-				  root->inhTargetKind != INHKIND_NONE))
+			if (rel->reloptkind == RELOPT_BASEREL)
 				include_partition = true;
 			break;				/* always try to exclude */
 	}
@@ -1790,7 +1866,7 @@ build_index_tlist(PlannerInfo *root, IndexOptInfo *index,
 			if (indexpr_item == NULL)
 				elog(ERROR, "wrong number of index expressions");
 			indexvar = (Expr *) lfirst(indexpr_item);
-			indexpr_item = lnext(indexpr_item);
+			indexpr_item = lnext(index->indexprs, indexpr_item);
 		}
 
 		tlist = lappend(tlist,
@@ -2139,6 +2215,10 @@ has_row_triggers(PlannerInfo *root, Index rti, CmdType event)
 				 trigDesc->trig_delete_before_row))
 				result = true;
 			break;
+			/* There is no separate event for MERGE, only INSERT/UPDATE/DELETE */
+		case CMD_MERGE:
+			result = false;
+			break;
 		default:
 			elog(ERROR, "unrecognized CmdType: %d", (int) event);
 			break;
@@ -2148,6 +2228,11 @@ has_row_triggers(PlannerInfo *root, Index rti, CmdType event)
 	return result;
 }
 
+/*
+ * has_stored_generated_columns
+ *
+ * Does table identified by RTI have any STORED GENERATED columns?
+ */
 bool
 has_stored_generated_columns(PlannerInfo *root, Index rti)
 {
@@ -2157,14 +2242,65 @@ has_stored_generated_columns(PlannerInfo *root, Index rti)
 	bool		result = false;
 
 	/* Assume we already have adequate lock */
-	relation = heap_open(rte->relid, NoLock);
+	relation = table_open(rte->relid, NoLock);
 
 	tupdesc = RelationGetDescr(relation);
 	result = tupdesc->constr && tupdesc->constr->has_generated_stored;
 
-	heap_close(relation, NoLock);
+	table_close(relation, NoLock);
 
 	return result;
+}
+
+/*
+ * get_dependent_generated_columns
+ *
+ * Get the column numbers of any STORED GENERATED columns of the relation
+ * that depend on any column listed in target_cols.  Both the input and
+ * result bitmapsets contain column numbers offset by
+ * FirstLowInvalidHeapAttributeNumber.
+ */
+Bitmapset *
+get_dependent_generated_columns(PlannerInfo *root, Index rti,
+								Bitmapset *target_cols)
+{
+	Bitmapset  *dependentCols = NULL;
+	RangeTblEntry *rte = planner_rt_fetch(rti, root);
+	Relation	relation;
+	TupleDesc	tupdesc;
+	TupleConstr *constr;
+
+	/* Assume we already have adequate lock */
+	relation = table_open(rte->relid, NoLock);
+
+	tupdesc = RelationGetDescr(relation);
+	constr = tupdesc->constr;
+
+	if (constr && constr->has_generated_stored)
+	{
+		for (int i = 0; i < constr->num_defval; i++)
+		{
+			AttrDefault *defval = &constr->defval[i];
+			Node	   *expr;
+			Bitmapset  *attrs_used = NULL;
+
+			/* skip if not generated column */
+			if (!TupleDescAttr(tupdesc, defval->adnum - 1)->attgenerated)
+				continue;
+
+			/* identify columns this generated column depends on */
+			expr = stringToNode(defval->adbin);
+			pull_varattnos(expr, 1, &attrs_used);
+
+			if (bms_overlap(target_cols, attrs_used))
+				dependentCols = bms_add_member(dependentCols,
+											   defval->adnum - FirstLowInvalidHeapAttributeNumber);
+		}
+	}
+
+	table_close(relation, NoLock);
+
+	return dependentCols;
 }
 
 /*
@@ -2178,10 +2314,14 @@ set_relation_partition_info(PlannerInfo *root, RelOptInfo *rel,
 {
 	PartitionDesc partdesc;
 
-	/* Create the PartitionDirectory infrastructure if we didn't already */
+	/*
+	 * Create the PartitionDirectory infrastructure if we didn't already.
+	 */
 	if (root->glob->partition_directory == NULL)
+	{
 		root->glob->partition_directory =
-			CreatePartitionDirectory(CurrentMemoryContext);
+			CreatePartitionDirectory(CurrentMemoryContext, true);
+	}
 
 	partdesc = PartitionDirectoryLookup(root->glob->partition_directory,
 										relation);
@@ -2190,7 +2330,7 @@ set_relation_partition_info(PlannerInfo *root, RelOptInfo *rel,
 	rel->boundinfo = partdesc->boundinfo;
 	rel->nparts = partdesc->nparts;
 	set_baserel_partition_key_exprs(relation, rel);
-	rel->partition_qual = RelationGetPartitionQual(relation);
+	set_baserel_partition_constraint(relation, rel);
 }
 
 /*
@@ -2302,9 +2442,8 @@ find_partition_scheme(PlannerInfo *root, Relation relation)
 /*
  * set_baserel_partition_key_exprs
  *
- * Builds partition key expressions for the given base relation and sets them
- * in given RelOptInfo.  Any single column partition keys are converted to Var
- * nodes.  All Var nodes are restamped with the relid of given relation.
+ * Builds partition key expressions for the given base relation and fills
+ * rel->partexprs.
  */
 static void
 set_baserel_partition_key_exprs(Relation relation,
@@ -2349,19 +2488,52 @@ set_baserel_partition_key_exprs(Relation relation,
 			/* Re-stamp the expression with given varno. */
 			partexpr = (Expr *) copyObject(lfirst(lc));
 			ChangeVarNodes((Node *) partexpr, 1, varno, 0);
-			lc = lnext(lc);
+			lc = lnext(partkey->partexprs, lc);
 		}
 
+		/* Base relations have a single expression per key. */
 		partexprs[cnt] = list_make1(partexpr);
 	}
 
 	rel->partexprs = partexprs;
 
 	/*
-	 * A base relation can not have nullable partition key expressions. We
-	 * still allocate array of empty expressions lists to keep partition key
-	 * expression handling code simple. See build_joinrel_partition_info() and
-	 * match_expr_to_partition_keys().
+	 * A base relation does not have nullable partition key expressions, since
+	 * no outer join is involved.  We still allocate an array of empty
+	 * expression lists to keep partition key expression handling code simple.
+	 * See build_joinrel_partition_info() and match_expr_to_partition_keys().
 	 */
 	rel->nullable_partexprs = (List **) palloc0(sizeof(List *) * partnatts);
+}
+
+/*
+ * set_baserel_partition_constraint
+ *
+ * Builds the partition constraint for the given base relation and sets it
+ * in the given RelOptInfo.  All Var nodes are restamped with the relid of the
+ * given relation.
+ */
+static void
+set_baserel_partition_constraint(Relation relation, RelOptInfo *rel)
+{
+	List	   *partconstr;
+
+	if (rel->partition_qual)	/* already done */
+		return;
+
+	/*
+	 * Run the partition quals through const-simplification similar to check
+	 * constraints.  We skip canonicalize_qual, though, because partition
+	 * quals should be in canonical form already; also, since the qual is in
+	 * implicit-AND format, we'd have to explicitly convert it to explicit-AND
+	 * format and back again.
+	 */
+	partconstr = RelationGetPartitionQual(relation);
+	if (partconstr)
+	{
+		partconstr = (List *) expression_planner((Expr *) partconstr);
+		if (rel->relid != 1)
+			ChangeVarNodes((Node *) partconstr, 1, rel->relid, 0);
+		rel->partition_qual = partconstr;
+	}
 }

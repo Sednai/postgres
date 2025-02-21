@@ -3,7 +3,7 @@
  * passwordcheck.c
  *
  *
- * Copyright (c) 2009-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2009-2022, PostgreSQL Global Development Group
  *
  * Author: Laurenz Albe <laurenz.albe@wien.gv.at>
  *
@@ -21,8 +21,8 @@
 #endif
 
 #include "commands/user.h"
-#include "libpq/crypt.h"
 #include "fmgr.h"
+#include "libpq/crypt.h"
 
 PG_MODULE_MAGIC;
 
@@ -74,7 +74,7 @@ check_password(const char *username,
 		 *
 		 * We only check for username = password.
 		 */
-		char	   *logdetail;
+		const char *logdetail = NULL;
 
 		if (plain_crypt_verify(username, shadow_pass, username, &logdetail) == STATUS_OK)
 			ereport(ERROR,
@@ -91,6 +91,9 @@ check_password(const char *username,
 		int			i;
 		bool		pwd_has_letter,
 					pwd_has_nonletter;
+#ifdef USE_CRACKLIB
+		const char *reason;
+#endif
 
 		/* enforce minimum length */
 		if (pwdlen < MIN_PWD_LENGTH)
@@ -125,10 +128,11 @@ check_password(const char *username,
 
 #ifdef USE_CRACKLIB
 		/* call cracklib to check password */
-		if (FascistCheck(password, CRACKLIB_DICTPATH))
+		if ((reason = FascistCheck(password, CRACKLIB_DICTPATH)))
 			ereport(ERROR,
 					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
-					 errmsg("password is easily cracked")));
+					 errmsg("password is easily cracked"),
+					 errdetail_log("cracklib diagnostic: %s", reason)));
 #endif
 	}
 

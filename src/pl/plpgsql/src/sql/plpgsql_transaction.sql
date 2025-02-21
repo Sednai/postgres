@@ -530,11 +530,11 @@ SELECT * FROM test2;
 
 -- another snapshot handling case: argument expressions of a CALL need
 -- to be evaluated with an up-to-date snapshot
-CREATE FUNCTION report_count() RETURNS bigint
+CREATE FUNCTION report_count() RETURNS int
 STABLE LANGUAGE sql
 AS $$ SELECT COUNT(*) FROM test2 $$;
 
-CREATE PROCEDURE transaction_test9b(cnt bigint)
+CREATE PROCEDURE transaction_test9b(cnt int)
 LANGUAGE plpgsql
 AS $$
 BEGIN

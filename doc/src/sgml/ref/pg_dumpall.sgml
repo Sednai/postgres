@@ -38,7 +38,8 @@ PostgreSQL documentation
    linkend="app-psql"/> to restore the databases.  It does this by
    calling <xref linkend="app-pgdump"/> for each database in the cluster.
    <application>pg_dumpall</application> also dumps global objects
-   that are common to all databases, that is, database roles and tablespaces.
+   that are common to all databases, namely database roles, tablespaces,
+   and privilege grants for configuration parameters.
    (<application>pg_dump</application> does not save these objects.)
   </para>
 
@@ -205,7 +206,9 @@ PostgreSQL documentation
         Specifies verbose mode.  This will cause
         <application>pg_dumpall</application> to output start/stop
         times to the dump file, and progress messages to standard error.
-        It will also enable verbose output in <application>pg_dump</application>.
+        Repeating the option causes additional debug-level messages
+        to appear on standard error.
+        The option is also passed down to <application>pg_dump</application>.
        </para>
       </listitem>
      </varlistentry>
@@ -291,18 +294,6 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
-      <term><option>--extra-float-digits=<replaceable class="parameter">ndigits</replaceable></option></term>
-      <listitem>
-       <para>
-        Use the specified value of extra_float_digits when dumping
-        floating-point data, instead of the maximum available precision.
-        Routine dumps made for backup purposes should not use this option.
-       </para>
-      </listitem>
-     </varlistentry>
-
-
-     <varlistentry>
       <term><option>--exclude-database=<replaceable class="parameter">pattern</replaceable></option></term>
       <listitem>
        <para>
@@ -313,11 +304,21 @@ PostgreSQL documentation
         <replaceable class="parameter">pattern</replaceable> parameter is
         interpreted as a pattern according to the same rules used by
         <application>psql</application>'s <literal>\d</literal>
-        commands (see <xref
-        linkend="app-psql-patterns" endterm="app-psql-patterns-title"/>),
+        commands (see <xref linkend="app-psql-patterns"/> below),
         so multiple databases can also be excluded by writing wildcard
         characters in the pattern.  When using wildcards, be careful to
         quote the pattern if needed to prevent shell wildcard expansion.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--extra-float-digits=<replaceable class="parameter">ndigits</replaceable></option></term>
+      <listitem>
+       <para>
+        Use the specified value of extra_float_digits when dumping
+        floating-point data, instead of the maximum available precision.
+        Routine dumps made for backup purposes should not use this option.
        </para>
       </listitem>
      </varlistentry>
@@ -376,10 +377,7 @@ PostgreSQL documentation
         the dump. Instead, fail if unable to lock a table within the specified
         <replaceable class="parameter">timeout</replaceable>. The timeout may be
         specified in any of the formats accepted by <command>SET
-        statement_timeout</command>.  Allowed values vary depending on the server
-        version you are dumping from, but an integer number of milliseconds
-        is accepted by all versions since 7.3.  This option is ignored when
-        dumping from a pre-7.3 server.
+        statement_timeout</command>.
        </para>
       </listitem>
      </varlistentry>
@@ -451,6 +449,17 @@ PostgreSQL documentation
      </varlistentry>
 
      <varlistentry>
+      <term><option>--no-table-access-method</option></term>
+      <listitem>
+       <para>
+        Do not output commands to select table access methods.
+        With this option, all objects will be created with whichever
+        table access method is the default during restore.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
       <term><option>--no-tablespaces</option></term>
       <listitem>
        <para>
@@ -458,6 +467,18 @@ PostgreSQL documentation
         for objects.
         With this option, all objects will be created in whichever
         tablespace is the default during restore.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-toast-compression</option></term>
+      <listitem>
+       <para>
+        Do not output commands to set <acronym>TOAST</acronym> compression
+        methods.
+        With this option, all columns will be restored with the default
+        compression setting.
        </para>
       </listitem>
      </varlistentry>
@@ -765,6 +786,17 @@ PostgreSQL documentation
    database creation will fail for databases in non-default
    locations.
   </para>
+
+  <para>
+   It is generally recommended to use the <option>-X</option>
+   (<option>--no-psqlrc</option>) option when restoring a database from a
+   <application>pg_dumpall</application> script to ensure a clean restore
+   process and prevent potential conflicts with non-default
+   <application>psql</application> configurations. Additionally, because
+   the <application>pg_dumpall</application> script may
+   include <application>psql</application> meta-commands, it may be
+   incompatible with clients other than <application>psql</application>.
+  </para>
  </refsect1>
 
 
@@ -781,9 +813,9 @@ PostgreSQL documentation
   <para>
    To restore database(s) from this file, you can use:
 <screen>
-<prompt>$</prompt> <userinput>psql -f db.out postgres</userinput>
+<prompt>$</prompt> <userinput>psql -X -f db.out -d postgres</userinput>
 </screen>
-   It is not important to which database you connect here since the
+   It is not important which database you connect to here since the
    script file created by <application>pg_dumpall</application> will
    contain the appropriate commands to create and connect to the saved
    databases.  An exception is that if you specified <option>--clean</option>,

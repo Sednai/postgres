@@ -4,7 +4,7 @@
  *	  creator functions for various nodes. The functions here are for the
  *	  most frequently created nodes.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,7 +17,6 @@
 
 #include "catalog/pg_class.h"
 #include "catalog/pg_type.h"
-#include "fmgr.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
 #include "utils/lsyscache.h"
@@ -64,7 +63,7 @@ makeSimpleA_Expr(A_Expr_Kind kind, char *name,
  *	  creates a Var node
  */
 Var *
-makeVar(Index varno,
+makeVar(int varno,
 		AttrNumber varattno,
 		Oid vartype,
 		int32 vartypmod,
@@ -81,13 +80,13 @@ makeVar(Index varno,
 	var->varlevelsup = varlevelsup;
 
 	/*
-	 * Since few if any routines ever create Var nodes with varnoold/varoattno
-	 * different from varno/varattno, we don't provide separate arguments for
-	 * them, but just initialize them to the given varno/varattno. This
+	 * Only a few callers need to make Var nodes with varnosyn/varattnosyn
+	 * different from varno/varattno.  We don't provide separate arguments for
+	 * them, but just initialize them to the given varno/varattno.  This
 	 * reduces code clutter and chance of error for most callers.
 	 */
-	var->varnoold = varno;
-	var->varoattno = varattno;
+	var->varnosyn = (Index) varno;
+	var->varattnosyn = varattno;
 
 	/* Likewise, we just set location to "unknown" here */
 	var->location = -1;
@@ -101,7 +100,7 @@ makeVar(Index varno,
  *		TargetEntry
  */
 Var *
-makeVarFromTargetEntry(Index varno,
+makeVarFromTargetEntry(int varno,
 					   TargetEntry *tle)
 {
 	return makeVar(varno,
@@ -132,7 +131,7 @@ makeVarFromTargetEntry(Index varno,
  */
 Var *
 makeWholeRowVar(RangeTblEntry *rte,
-				Index varno,
+				int varno,
 				Index varlevelsup,
 				bool allowScalar)
 {
@@ -146,8 +145,10 @@ makeWholeRowVar(RangeTblEntry *rte,
 			/* relation: the rowtype is a named composite type */
 			toid = get_rel_type_id(rte->relid);
 			if (!OidIsValid(toid))
-				elog(ERROR, "could not find type OID for relation %u",
-					 rte->relid);
+				ereport(ERROR,
+						(errcode(ERRCODE_WRONG_OBJECT_TYPE),
+						 errmsg("relation \"%s\" does not have a composite type",
+								get_rel_name(rte->relid))));
 			result = makeVar(varno,
 							 InvalidAttrNumber,
 							 toid,
@@ -586,7 +587,7 @@ makeDefElemExtended(char *nameSpace, char *name, Node *arg,
  * supply.  Any non-default parameters have to be inserted by the caller.
  */
 FuncCall *
-makeFuncCall(List *name, List *args, int location)
+makeFuncCall(List *name, List *args, CoercionForm funcformat, int location)
 {
 	FuncCall   *n = makeNode(FuncCall);
 
@@ -594,11 +595,12 @@ makeFuncCall(List *name, List *args, int location)
 	n->args = args;
 	n->agg_order = NIL;
 	n->agg_filter = NULL;
+	n->over = NULL;
 	n->agg_within_group = false;
 	n->agg_star = false;
 	n->agg_distinct = false;
 	n->func_variadic = false;
-	n->over = NULL;
+	n->funcformat = funcformat;
 	n->location = location;
 	return n;
 }
@@ -744,7 +746,7 @@ make_ands_implicit(Expr *clause)
  */
 IndexInfo *
 makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid, List *expressions,
-			  List *predicates, bool unique, bool isready, bool concurrent)
+			  List *predicates, bool unique, bool nulls_not_distinct, bool isready, bool concurrent)
 {
 	IndexInfo  *n = makeNode(IndexInfo);
 
@@ -753,7 +755,10 @@ makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid, List *expressions,
 	Assert(n->ii_NumIndexKeyAttrs != 0);
 	Assert(n->ii_NumIndexKeyAttrs <= n->ii_NumIndexAttrs);
 	n->ii_Unique = unique;
+	n->ii_NullsNotDistinct = nulls_not_distinct;
 	n->ii_ReadyForInserts = isready;
+	n->ii_CheckedUnchanged = false;
+	n->ii_IndexUnchanged = false;
 	n->ii_Concurrent = concurrent;
 
 	/* expressions */
@@ -768,6 +773,9 @@ makeIndexInfo(int numattrs, int numkeyattrs, Oid amoid, List *expressions,
 	n->ii_ExclusionOps = NULL;
 	n->ii_ExclusionProcs = NULL;
 	n->ii_ExclusionStrats = NULL;
+
+	/* opclass options */
+	n->ii_OpclassOptions = NULL;
 
 	/* speculative inserts */
 	n->ii_UniqueOps = NULL;

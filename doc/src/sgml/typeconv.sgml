@@ -40,7 +40,7 @@ has an associated data type which determines its behavior and allowed usage.
 <productname>PostgreSQL</productname> has an extensible type system that is
 more general and flexible than other <acronym>SQL</acronym> implementations.
 Hence, most type conversion behavior in <productname>PostgreSQL</productname>
-is governed by general rules rather than by <foreignphrase>ad hoc</foreignphrase>
+is governed by general rules rather than by ad hoc
 heuristics.  This allows the use of mixed-type expressions even with
 user-defined types.
 </para>
@@ -97,8 +97,8 @@ Operators
 <listitem>
 <para>
 <productname>PostgreSQL</productname> allows expressions with
-prefix and postfix unary (one-argument) operators,
-as well as binary (two-argument) operators.  Like functions, operators can
+prefix (one-argument) operators,
+as well as infix (two-argument) operators.  Like functions, operators can
 be overloaded, so the same problem of selecting the right operator
 exists.
 </para>
@@ -268,7 +268,7 @@ create objects.  In such situations, cast arguments to force an exact match.
 <para>
 If one argument of a binary operator invocation is of the <type>unknown</type> type,
 then assume it is the same type as the other argument for this check.
-Invocations involving two <type>unknown</type> inputs, or a unary operator
+Invocations involving two <type>unknown</type> inputs, or a prefix operator
 with an <type>unknown</type> input, will never find a match at this step.
 </para>
 </step>
@@ -356,20 +356,19 @@ Some examples follow.
 </para>
 
 <example>
-<title>Factorial Operator Type Resolution</title>
+<title>Square Root Operator Type Resolution</title>
 
 <para>
-There is only one factorial operator (postfix <literal>!</literal>)
+There is only one square root operator (prefix <literal>|/</literal>)
 defined in the standard catalog, and it takes an argument of type
-<type>bigint</type>.
+<type>double precision</type>.
 The scanner assigns an initial type of <type>integer</type> to the argument
 in this query expression:
 <screen>
-SELECT 40 ! AS "40 factorial";
-
-                   40 factorial
---------------------------------------------------
- 815915283247897734345611269596115894272000000000
+SELECT |/ 40 AS "square root of 40";
+ square root of 40
+-------------------
+ 6.324555320336759
 (1 row)
 </screen>
 
@@ -377,7 +376,7 @@ So the parser does a type conversion on the operand and the query
 is equivalent to:
 
 <screen>
-SELECT CAST(40 AS bigint) ! AS "40 factorial";
+SELECT |/ CAST(40 AS double precision) AS "square root of 40";
 </screen>
 </para>
 </example>
@@ -1223,7 +1222,7 @@ section consider all of their inputs in one resolution step.
 
 <para>
 The rules given in the preceding sections will result in assignment
-of non-<type>unknown</type> data types to all expressions in a SQL query,
+of non-<type>unknown</type> data types to all expressions in an SQL query,
 except for unspecified-type literals that appear as simple output
 columns of a <command>SELECT</command> command.  For example, in
 

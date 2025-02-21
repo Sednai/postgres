@@ -187,8 +187,8 @@
 
  <para>
   Changing table-level options requires being a superuser or having the privileges
-  of the default role <literal>pg_read_server_files</literal> (to use a filename) or
-  the default role <literal>pg_execute_server_program</literal> (to use a program),
+  of the role <literal>pg_read_server_files</literal> (to use a filename) or
+  the role <literal>pg_execute_server_program</literal> (to use a program),
   for security reasons: only certain users should be able to control which file is
   read or which program is run.  In principle regular users could be allowed to
   change the other options, but that's not supported at present.
@@ -211,7 +211,7 @@
  </para>
 
  <example>
- <title id="csvlog-fdw">Create a Foreign Table for PostgreSQL CSV Logs</title>
+  <title>Create a Foreign Table for PostgreSQL CSV Logs</title>
 
   <para>
    One of the obvious uses for <literal>file_fdw</literal> is to make
@@ -264,9 +264,12 @@ CREATE FOREIGN TABLE pglog (
   query text,
   query_pos integer,
   location text,
-  application_name text
+  application_name text,
+  backend_type text,
+  leader_pid integer,
+  query_id bigint
 ) SERVER pglog
-OPTIONS ( filename '/home/josh/data/log/pglog.csv', format 'csv' );
+OPTIONS ( filename 'log/pglog.csv', format 'csv' );
 </programlisting>
   </para>
 

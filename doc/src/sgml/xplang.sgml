@@ -62,9 +62,7 @@
    </para>
 
    <procedure>
-    <title>
-     Manual Procedural Language Installation
-    </title>
+    <title>Manual Procedural Language Installation</title>
 
     <para>
      A procedural language is installed in a database in five steps,
@@ -105,7 +103,7 @@ CREATE FUNCTION <replaceable>handler_function_name</replaceable>()
      <para>
       Optionally, the language handler can provide an <quote>inline</quote>
       handler function that executes anonymous code blocks
-      (<xref linkend="sql-do"/> commands)
+      (<link linkend="sql-do"><command>DO</command></link> commands)
       written in this language.  If an inline handler function
       is provided by the language, declare it with a command like
 <synopsis>
@@ -190,7 +188,7 @@ CREATE FUNCTION plperl_call_handler() RETURNS language_handler AS
 
 <programlisting>
 CREATE FUNCTION plperl_inline_handler(internal) RETURNS void AS
-    '$libdir/plperl' LANGUAGE C;
+    '$libdir/plperl' LANGUAGE C STRICT;
 
 CREATE FUNCTION plperl_validator(oid) RETURNS void AS
     '$libdir/plperl' LANGUAGE C STRICT;

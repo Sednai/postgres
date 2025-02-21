@@ -85,13 +85,13 @@ SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
 Indexes:
     "test_replica_identity_pkey" PRIMARY KEY, btree (id) REPLICA IDENTITY
     "test_replica_identity_expr" UNIQUE, btree (keya, keyb, (3))
+    "test_replica_identity_hash" hash (nonkey)
+    "test_replica_identity_keyab" btree (keya, keyb)
     "test_replica_identity_keyab_key" UNIQUE, btree (keya, keyb)
     "test_replica_identity_nonkey" UNIQUE, btree (keya, nonkey)
     "test_replica_identity_partial" UNIQUE, btree (keya, keyb) WHERE keyb <> '3'::text
     "test_replica_identity_unique_defer" UNIQUE CONSTRAINT, btree (keya, keyb) DEFERRABLE
     "test_replica_identity_unique_nondefer" UNIQUE CONSTRAINT, btree (keya, keyb)
-    "test_replica_identity_hash" hash (nonkey)
-    "test_replica_identity_keyab" btree (keya, keyb)
 
 -- succeed, nondeferrable unique constraint over nonnullable cols
 ALTER TABLE test_replica_identity REPLICA IDENTITY USING INDEX test_replica_identity_unique_nondefer;
@@ -115,13 +115,13 @@ SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
 Indexes:
     "test_replica_identity_pkey" PRIMARY KEY, btree (id)
     "test_replica_identity_expr" UNIQUE, btree (keya, keyb, (3))
+    "test_replica_identity_hash" hash (nonkey)
+    "test_replica_identity_keyab" btree (keya, keyb)
     "test_replica_identity_keyab_key" UNIQUE, btree (keya, keyb) REPLICA IDENTITY
     "test_replica_identity_nonkey" UNIQUE, btree (keya, nonkey)
     "test_replica_identity_partial" UNIQUE, btree (keya, keyb) WHERE keyb <> '3'::text
     "test_replica_identity_unique_defer" UNIQUE CONSTRAINT, btree (keya, keyb) DEFERRABLE
     "test_replica_identity_unique_nondefer" UNIQUE CONSTRAINT, btree (keya, keyb)
-    "test_replica_identity_hash" hash (nonkey)
-    "test_replica_identity_keyab" btree (keya, keyb)
 
 SELECT count(*) FROM pg_index WHERE indrelid = 'test_replica_identity'::regclass AND indisreplident;
  count 
@@ -163,13 +163,13 @@ SELECT relreplident FROM pg_class WHERE oid = 'test_replica_identity'::regclass;
 Indexes:
     "test_replica_identity_pkey" PRIMARY KEY, btree (id)
     "test_replica_identity_expr" UNIQUE, btree (keya, keyb, (3))
+    "test_replica_identity_hash" hash (nonkey)
+    "test_replica_identity_keyab" btree (keya, keyb)
     "test_replica_identity_keyab_key" UNIQUE, btree (keya, keyb)
     "test_replica_identity_nonkey" UNIQUE, btree (keya, nonkey)
     "test_replica_identity_partial" UNIQUE, btree (keya, keyb) WHERE keyb <> '3'::text
     "test_replica_identity_unique_defer" UNIQUE CONSTRAINT, btree (keya, keyb) DEFERRABLE
     "test_replica_identity_unique_nondefer" UNIQUE CONSTRAINT, btree (keya, keyb)
-    "test_replica_identity_hash" hash (nonkey)
-    "test_replica_identity_keyab" btree (keya, keyb)
 Replica Identity: FULL
 
 ALTER TABLE test_replica_identity REPLICA IDENTITY NOTHING;
@@ -203,7 +203,7 @@ Indexes:
     "test_replica_identity2_id_key" UNIQUE CONSTRAINT, btree (id) REPLICA IDENTITY
 
 -- straight index variant
-CREATE TABLE test_replica_identity3 (id int NOT NULL) DISTRIBUTE BY REPLICATION;
+CREATE TABLE test_replica_identity3 (id int NOT NULL);
 CREATE UNIQUE INDEX test_replica_identity3_id_key ON test_replica_identity3 (id);
 ALTER TABLE test_replica_identity3 REPLICA IDENTITY USING INDEX test_replica_identity3_id_key;
 \d test_replica_identity3
@@ -231,8 +231,8 @@ ERROR:  column "id" is in index used as replica identity
 -- Test that replica identity can be set on an index that's not yet valid.
 -- (This matches the way pg_dump will try to dump a partitioned table.)
 --
-CREATE TABLE test_replica_identity4(id integer NOT NULL) PARTITION BY LIST (id) DISTRIBUTE BY REPLICATION;
-CREATE TABLE test_replica_identity4_1(id integer NOT NULL) DISTRIBUTE BY REPLICATION;
+CREATE TABLE test_replica_identity4(id integer NOT NULL) PARTITION BY LIST (id);
+CREATE TABLE test_replica_identity4_1(id integer NOT NULL);
 ALTER TABLE ONLY test_replica_identity4
   ATTACH PARTITION test_replica_identity4_1 FOR VALUES IN (1);
 ALTER TABLE ONLY test_replica_identity4

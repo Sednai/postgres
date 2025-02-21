@@ -4,7 +4,7 @@
  *	  prototypes for tablecmds.c.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/commands/tablecmds.h
@@ -21,6 +21,8 @@
 #include "storage/lock.h"
 #include "utils/relcache.h"
 
+struct AlterTableUtilityContext;	/* avoid including tcop/utility.h here */
+
 
 extern ObjectAddress DefineRelation(CreateStmt *stmt, char relkind, Oid ownerId,
 									ObjectAddress *typaddress, const char *queryString);
@@ -29,7 +31,8 @@ extern void RemoveRelations(DropStmt *drop);
 
 extern Oid	AlterTableLookupRelation(AlterTableStmt *stmt, LOCKMODE lockmode);
 
-extern void AlterTable(Oid relid, LOCKMODE lockmode, AlterTableStmt *stmt);
+extern void AlterTable(AlterTableStmt *stmt, LOCKMODE lockmode,
+					   struct AlterTableUtilityContext *context);
 
 extern LOCKMODE AlterTableGetLockLevel(List *cmds);
 
@@ -67,9 +70,11 @@ extern void ExecuteTruncateGuts(List *explicit_rels, List *relids, List *relids_
 #endif
 extern void SetRelationHasSubclass(Oid relationId, bool relhassubclass);
 
-extern ObjectAddress renameatt(RenameStmt *stmt);
+extern bool CheckRelationTableSpaceMove(Relation rel, Oid newTableSpaceId);
+extern void SetRelationTableSpace(Relation rel, Oid newTableSpaceId,
+								  Oid newRelFileNode);
 
-extern ObjectAddress renameatt_type(RenameStmt *stmt);
+extern ObjectAddress renameatt(RenameStmt *stmt);
 
 extern ObjectAddress RenameConstraint(RenameStmt *stmt);
 
@@ -78,8 +83,6 @@ extern ObjectAddress RenameRelation(RenameStmt *stmt);
 extern void RenameRelationInternal(Oid myrelid,
 								   const char *newrelname, bool is_internal,
 								   bool is_index);
-
-extern void ResetRelRewrite(Oid myrelid);
 
 extern void ResetRelRewrite(Oid myrelid);
 
@@ -112,7 +115,7 @@ extern void DropTableThrowErrorExternal(RangeVar *relation,
 #endif
 
 extern void RangeVarCallbackOwnsRelation(const RangeVar *relation,
-										 Oid relId, Oid oldRelId, void *noCatalogs);
+										 Oid relId, Oid oldRelId, void *arg);
 extern bool PartConstraintImpliedByRelConstraint(Relation scanrel,
 												 List *partConstraint);
 

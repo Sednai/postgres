@@ -2,7 +2,7 @@
  *
  * dropuser
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/dropuser.c
@@ -13,6 +13,8 @@
 #include "postgres_fe.h"
 #include "common.h"
 #include "common/logging.h"
+#include "common/string.h"
+#include "fe_utils/option_utils.h"
 #include "fe_utils/string_utils.h"
 
 
@@ -48,7 +50,6 @@ main(int argc, char *argv[])
 	ConnParams	cparams;
 	bool		echo = false;
 	bool		interactive = false;
-	char		dropuser_buf[128];
 
 	PQExpBufferData sql;
 
@@ -90,7 +91,8 @@ main(int argc, char *argv[])
 				/* this covers the long options */
 				break;
 			default:
-				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+				/* getopt_long already emitted a complaint */
+				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 				exit(1);
 		}
 	}
@@ -105,7 +107,7 @@ main(int argc, char *argv[])
 		default:
 			pg_log_error("too many command-line arguments (first is \"%s\")",
 						 argv[optind + 1]);
-			fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+			pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 			exit(1);
 	}
 
@@ -113,14 +115,12 @@ main(int argc, char *argv[])
 	{
 		if (interactive)
 		{
-			simple_prompt("Enter name of role to drop: ",
-						  dropuser_buf, sizeof(dropuser_buf), true);
-			dropuser = dropuser_buf;
+			dropuser = simple_prompt("Enter name of role to drop: ", true);
 		}
 		else
 		{
 			pg_log_error("missing required argument role name");
-			fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+			pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 			exit(1);
 		}
 	}
@@ -143,7 +143,8 @@ main(int argc, char *argv[])
 
 	initPQExpBuffer(&sql);
 	appendPQExpBuffer(&sql, "DROP ROLE %s%s;",
-					  (if_exists ? "IF EXISTS " : ""), fmtId(dropuser));
+					  (if_exists ? "IF EXISTS " : ""),
+					  fmtIdEnc(dropuser, PQclientEncoding(conn)));
 
 	if (echo)
 		printf("%s\n", sql.data);
@@ -182,5 +183,6 @@ help(const char *progname)
 	printf(_("  -U, --username=USERNAME   user name to connect as (not the one to drop)\n"));
 	printf(_("  -w, --no-password         never prompt for password\n"));
 	printf(_("  -W, --password            force password prompt\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }

@@ -6,11 +6,9 @@
 
 #include "postgres.h"
 
-#include "plpython.h"
-
-#include "plpy_resultobject.h"
 #include "plpy_elog.h"
-
+#include "plpy_resultobject.h"
+#include "plpython.h"
 
 static void PLy_result_dealloc(PyObject *arg);
 static PyObject *PLy_result_colnames(PyObject *self, PyObject *unused);
@@ -24,9 +22,7 @@ static PyObject *PLy_result_str(PyObject *arg);
 static PyObject *PLy_result_subscript(PyObject *arg, PyObject *item);
 static int	PLy_result_ass_subscript(PyObject *self, PyObject *item, PyObject *value);
 
-static char PLy_result_doc[] = {
-	"Results of a PostgreSQL query"
-};
+static char PLy_result_doc[] = "Results of a PostgreSQL query";
 
 static PySequenceMethods PLy_result_as_sequence = {
 	.sq_length = PLy_result_length,
@@ -80,7 +76,7 @@ PLy_result_new(void)
 
 	Py_INCREF(Py_None);
 	ob->status = Py_None;
-	ob->nrows = PyInt_FromLong(-1);
+	ob->nrows = PyLong_FromLong(-1);
 	ob->rows = PyList_New(0);
 	ob->tupdesc = NULL;
 	if (!ob->rows)
@@ -129,7 +125,7 @@ PLy_result_colnames(PyObject *self, PyObject *unused)
 	{
 		Form_pg_attribute attr = TupleDescAttr(ob->tupdesc, i);
 
-		PyList_SET_ITEM(list, i, PyString_FromString(NameStr(attr->attname)));
+		PyList_SET_ITEM(list, i, PLyUnicode_FromString(NameStr(attr->attname)));
 	}
 
 	return list;
@@ -155,7 +151,7 @@ PLy_result_coltypes(PyObject *self, PyObject *unused)
 	{
 		Form_pg_attribute attr = TupleDescAttr(ob->tupdesc, i);
 
-		PyList_SET_ITEM(list, i, PyInt_FromLong(attr->atttypid));
+		PyList_SET_ITEM(list, i, PyLong_FromLong(attr->atttypid));
 	}
 
 	return list;
@@ -181,7 +177,7 @@ PLy_result_coltypmods(PyObject *self, PyObject *unused)
 	{
 		Form_pg_attribute attr = TupleDescAttr(ob->tupdesc, i);
 
-		PyList_SET_ITEM(list, i, PyInt_FromLong(attr->atttypmod));
+		PyList_SET_ITEM(list, i, PyLong_FromLong(attr->atttypmod));
 	}
 
 	return list;
@@ -230,19 +226,11 @@ PLy_result_str(PyObject *arg)
 {
 	PLyResultObject *ob = (PLyResultObject *) arg;
 
-#if PY_MAJOR_VERSION >= 3
 	return PyUnicode_FromFormat("<%s status=%S nrows=%S rows=%S>",
 								Py_TYPE(ob)->tp_name,
 								ob->status,
 								ob->nrows,
 								ob->rows);
-#else
-	return PyString_FromFormat("<%s status=%ld nrows=%ld rows=%s>",
-							   ob->ob_type->tp_name,
-							   PyInt_AsLong(ob->status),
-							   PyInt_AsLong(ob->nrows),
-							   PyString_AsString(PyObject_Str(ob->rows)));
-#endif
 }
 
 static PyObject *

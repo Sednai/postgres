@@ -24,7 +24,7 @@
  * with collations that match the remote table's columns, which we can
  * consider to be user error.
  *
- * Portions Copyright (c) 2012-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2012-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *		  contrib/postgres_fdw/deparse.c
@@ -32,8 +32,6 @@
  *-------------------------------------------------------------------------
  */
 #include "postgres.h"
-
-#include "postgres_fdw.h"
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
@@ -53,12 +51,13 @@
 #include "optimizer/prep.h"
 #include "optimizer/tlist.h"
 #include "parser/parsetree.h"
+#include "postgres_fdw.h"
 #include "utils/builtins.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
-
+#include "commands/tablecmds.h"
 
 /*
  * Global context for foreign_expr_walker's search of an expression tree.
@@ -118,7 +117,8 @@ typedef struct deparse_expr_cxt
  */
 static bool foreign_expr_walker(Node *node,
 								foreign_glob_cxt *glob_cxt,
-								foreign_loc_cxt *outer_cxt);
+								foreign_loc_cxt *outer_cxt,
+								foreign_loc_cxt *case_arg_cxt);
 static char *deparse_type_name(Oid type_oid, int32 typemod);
 
 /*
@@ -153,6 +153,7 @@ static void deparseParam(Param *node, deparse_expr_cxt *context);
 static void deparseSubscriptingRef(SubscriptingRef *node, deparse_expr_cxt *context);
 static void deparseFuncExpr(FuncExpr *node, deparse_expr_cxt *context);
 static void deparseOpExpr(OpExpr *node, deparse_expr_cxt *context);
+static bool isPlainForeignVar(Expr *node, deparse_expr_cxt *context);
 static void deparseOperatorName(StringInfo buf, Form_pg_operator opform);
 static void deparseDistinctExpr(DistinctExpr *node, deparse_expr_cxt *context);
 static void deparseScalarArrayOpExpr(ScalarArrayOpExpr *node,
@@ -160,6 +161,7 @@ static void deparseScalarArrayOpExpr(ScalarArrayOpExpr *node,
 static void deparseRelabelType(RelabelType *node, deparse_expr_cxt *context);
 static void deparseBoolExpr(BoolExpr *node, deparse_expr_cxt *context);
 static void deparseNullTest(NullTest *node, deparse_expr_cxt *context);
+static void deparseCaseExpr(CaseExpr *node, deparse_expr_cxt *context);
 static void deparseArrayExpr(ArrayExpr *node, deparse_expr_cxt *context);
 static void printRemoteParam(int paramindex, Oid paramtype, int32 paramtypmod,
 							 deparse_expr_cxt *context);
@@ -258,7 +260,7 @@ is_foreign_expr(PlannerInfo *root,
 		glob_cxt.relids = baserel->relids;
 	loc_cxt.collation = InvalidOid;
 	loc_cxt.state = FDW_COLLATE_NONE;
-	if (!foreign_expr_walker((Node *) expr, &glob_cxt, &loc_cxt))
+	if (!foreign_expr_walker((Node *) expr, &glob_cxt, &loc_cxt, NULL))
 		return false;
 
 	/*
@@ -287,6 +289,10 @@ is_foreign_expr(PlannerInfo *root,
  *
  * In addition, *outer_cxt is updated with collation information.
  *
+ * case_arg_cxt is NULL if this subexpression is not inside a CASE-with-arg.
+ * Otherwise, it points to the collation info derived from the arg expression,
+ * which must be consulted by any CaseTestExpr.
+ *
  * We must check that the expression contains only node types we can deparse,
  * that all types/functions/operators are safe to send (they are "shippable"),
  * and that all collations used in the expression derive from Vars of the
@@ -298,7 +304,8 @@ is_foreign_expr(PlannerInfo *root,
 static bool
 foreign_expr_walker(Node *node,
 					foreign_glob_cxt *glob_cxt,
-					foreign_loc_cxt *outer_cxt)
+					foreign_loc_cxt *outer_cxt,
+					foreign_loc_cxt *case_arg_cxt)
 {
 	bool		check_type = true;
 	PgFdwRelationInfo *fpinfo;
@@ -431,23 +438,28 @@ foreign_expr_walker(Node *node,
 					return false;
 
 				/*
-				 * Recurse to remaining subexpressions.  Since the container
-				 * subscripts must yield (noncollatable) integers, they won't
-				 * affect the inner_cxt state.
+				 * Recurse into the remaining subexpressions.  The container
+				 * subscripts will not affect collation of the SubscriptingRef
+				 * result, so do those first and reset inner_cxt afterwards.
 				 */
 				if (!foreign_expr_walker((Node *) sr->refupperindexpr,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
+				inner_cxt.collation = InvalidOid;
+				inner_cxt.state = FDW_COLLATE_NONE;
 				if (!foreign_expr_walker((Node *) sr->reflowerindexpr,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
+				inner_cxt.collation = InvalidOid;
+				inner_cxt.state = FDW_COLLATE_NONE;
 				if (!foreign_expr_walker((Node *) sr->refexpr,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/*
-				 * Container subscripting should yield same collation as
-				 * input, but for safety use same logic as for function nodes.
+				 * Container subscripting typically yields same collation as
+				 * refexpr's, but in case it doesn't, use same logic as for
+				 * function nodes.
 				 */
 				collation = sr->refcollid;
 				if (collation == InvalidOid)
@@ -477,7 +489,7 @@ foreign_expr_walker(Node *node,
 				 * Recurse to input subexpressions.
 				 */
 				if (!foreign_expr_walker((Node *) fe->args,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/*
@@ -525,7 +537,7 @@ foreign_expr_walker(Node *node,
 				 * Recurse to input subexpressions.
 				 */
 				if (!foreign_expr_walker((Node *) oe->args,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/*
@@ -565,7 +577,7 @@ foreign_expr_walker(Node *node,
 				 * Recurse to input subexpressions.
 				 */
 				if (!foreign_expr_walker((Node *) oe->args,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/*
@@ -591,7 +603,7 @@ foreign_expr_walker(Node *node,
 				 * Recurse to input subexpression.
 				 */
 				if (!foreign_expr_walker((Node *) r->arg,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/*
@@ -618,7 +630,7 @@ foreign_expr_walker(Node *node,
 				 * Recurse to input subexpressions.
 				 */
 				if (!foreign_expr_walker((Node *) b->args,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/* Output is always boolean and so noncollatable. */
@@ -634,12 +646,131 @@ foreign_expr_walker(Node *node,
 				 * Recurse to input subexpressions.
 				 */
 				if (!foreign_expr_walker((Node *) nt->arg,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/* Output is always boolean and so noncollatable. */
 				collation = InvalidOid;
 				state = FDW_COLLATE_NONE;
+			}
+			break;
+		case T_CaseExpr:
+			{
+				CaseExpr   *ce = (CaseExpr *) node;
+				foreign_loc_cxt arg_cxt;
+				foreign_loc_cxt tmp_cxt;
+				ListCell   *lc;
+
+				/*
+				 * Recurse to CASE's arg expression, if any.  Its collation
+				 * has to be saved aside for use while examining CaseTestExprs
+				 * within the WHEN expressions.
+				 */
+				arg_cxt.collation = InvalidOid;
+				arg_cxt.state = FDW_COLLATE_NONE;
+				if (ce->arg)
+				{
+					if (!foreign_expr_walker((Node *) ce->arg,
+											 glob_cxt, &arg_cxt, case_arg_cxt))
+						return false;
+				}
+
+				/* Examine the CaseWhen subexpressions. */
+				foreach(lc, ce->args)
+				{
+					CaseWhen   *cw = lfirst_node(CaseWhen, lc);
+
+					if (ce->arg)
+					{
+						/*
+						 * In a CASE-with-arg, the parser should have produced
+						 * WHEN clauses of the form "CaseTestExpr = RHS",
+						 * possibly with an implicit coercion inserted above
+						 * the CaseTestExpr.  However in an expression that's
+						 * been through the optimizer, the WHEN clause could
+						 * be almost anything (since the equality operator
+						 * could have been expanded into an inline function).
+						 * In such cases forbid pushdown, because
+						 * deparseCaseExpr can't handle it.
+						 */
+						Node	   *whenExpr = (Node *) cw->expr;
+						List	   *opArgs;
+
+						if (!IsA(whenExpr, OpExpr))
+							return false;
+
+						opArgs = ((OpExpr *) whenExpr)->args;
+						if (list_length(opArgs) != 2 ||
+							!IsA(strip_implicit_coercions(linitial(opArgs)),
+								 CaseTestExpr))
+							return false;
+					}
+
+					/*
+					 * Recurse to WHEN expression, passing down the arg info.
+					 * Its collation doesn't affect the result (really, it
+					 * should be boolean and thus not have a collation).
+					 */
+					tmp_cxt.collation = InvalidOid;
+					tmp_cxt.state = FDW_COLLATE_NONE;
+					if (!foreign_expr_walker((Node *) cw->expr,
+											 glob_cxt, &tmp_cxt, &arg_cxt))
+						return false;
+
+					/* Recurse to THEN expression. */
+					if (!foreign_expr_walker((Node *) cw->result,
+											 glob_cxt, &inner_cxt, case_arg_cxt))
+						return false;
+				}
+
+				/* Recurse to ELSE expression. */
+				if (!foreign_expr_walker((Node *) ce->defresult,
+										 glob_cxt, &inner_cxt, case_arg_cxt))
+					return false;
+
+				/*
+				 * Detect whether node is introducing a collation not derived
+				 * from a foreign Var.  (If so, we just mark it unsafe for now
+				 * rather than immediately returning false, since the parent
+				 * node might not care.)  This is the same as for function
+				 * nodes, except that the input collation is derived from only
+				 * the THEN and ELSE subexpressions.
+				 */
+				collation = ce->casecollid;
+				if (collation == InvalidOid)
+					state = FDW_COLLATE_NONE;
+				else if (inner_cxt.state == FDW_COLLATE_SAFE &&
+						 collation == inner_cxt.collation)
+					state = FDW_COLLATE_SAFE;
+				else if (collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
+				else
+					state = FDW_COLLATE_UNSAFE;
+			}
+			break;
+		case T_CaseTestExpr:
+			{
+				CaseTestExpr *c = (CaseTestExpr *) node;
+
+				/* Punt if we seem not to be inside a CASE arg WHEN. */
+				if (!case_arg_cxt)
+					return false;
+
+				/*
+				 * Otherwise, any nondefault collation attached to the
+				 * CaseTestExpr node must be derived from foreign Var(s) in
+				 * the CASE arg.
+				 */
+				collation = c->collation;
+				if (collation == InvalidOid)
+					state = FDW_COLLATE_NONE;
+				else if (case_arg_cxt->state == FDW_COLLATE_SAFE &&
+						 collation == case_arg_cxt->collation)
+					state = FDW_COLLATE_SAFE;
+				else if (collation == DEFAULT_COLLATION_OID)
+					state = FDW_COLLATE_NONE;
+				else
+					state = FDW_COLLATE_UNSAFE;
 			}
 			break;
 		case T_ArrayExpr:
@@ -650,7 +781,7 @@ foreign_expr_walker(Node *node,
 				 * Recurse to input subexpressions.
 				 */
 				if (!foreign_expr_walker((Node *) a->elements,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/*
@@ -680,7 +811,7 @@ foreign_expr_walker(Node *node,
 				foreach(lc, l)
 				{
 					if (!foreign_expr_walker((Node *) lfirst(lc),
-											 glob_cxt, &inner_cxt))
+											 glob_cxt, &inner_cxt, case_arg_cxt))
 						return false;
 				}
 
@@ -729,7 +860,8 @@ foreign_expr_walker(Node *node,
 						n = (Node *) tle->expr;
 					}
 
-					if (!foreign_expr_walker(n, glob_cxt, &inner_cxt))
+					if (!foreign_expr_walker(n,
+											 glob_cxt, &inner_cxt, case_arg_cxt))
 						return false;
 				}
 
@@ -764,7 +896,7 @@ foreign_expr_walker(Node *node,
 
 				/* Check aggregate filter */
 				if (!foreign_expr_walker((Node *) agg->aggfilter,
-										 glob_cxt, &inner_cxt))
+										 glob_cxt, &inner_cxt, case_arg_cxt))
 					return false;
 
 				/*
@@ -1302,7 +1434,7 @@ deparseLockingClause(deparse_expr_cxt *context)
 		 * that DECLARE CURSOR ... FOR UPDATE is supported, which it isn't
 		 * before 8.3.
 		 */
-		if (relid == root->parse->resultRelation &&
+		if (bms_is_member(relid, root->all_result_relids) &&
 			(root->parse->commandType == CMD_UPDATE ||
 			 root->parse->commandType == CMD_DELETE))
 		{
@@ -1543,7 +1675,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 			if (fpinfo->jointype == JOIN_INNER)
 			{
 				*ignore_conds = list_concat(*ignore_conds,
-											list_copy(fpinfo->joinclauses));
+											fpinfo->joinclauses);
 				fpinfo->joinclauses = NIL;
 			}
 
@@ -1577,7 +1709,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 			{
 				Assert(fpinfo->jointype == JOIN_INNER);
 				Assert(fpinfo->joinclauses == NIL);
-				appendStringInfo(buf, "%s", join_sql_o.data);
+				appendBinaryStringInfo(buf, join_sql_o.data, join_sql_o.len);
 				return;
 			}
 		}
@@ -1598,7 +1730,7 @@ deparseFromExprForRel(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
 			{
 				Assert(fpinfo->jointype == JOIN_INNER);
 				Assert(fpinfo->joinclauses == NIL);
-				appendStringInfo(buf, "%s", join_sql_i.data);
+				appendBinaryStringInfo(buf, join_sql_i.data, join_sql_i.len);
 				return;
 			}
 		}
@@ -1732,13 +1864,16 @@ deparseRangeTblRef(StringInfo buf, PlannerInfo *root, RelOptInfo *foreignrel,
  * The statement text is appended to buf, and we also create an integer List
  * of the columns being retrieved by WITH CHECK OPTION or RETURNING (if any),
  * which is returned to *retrieved_attrs.
+ *
+ * This also stores end position of the VALUES clause, so that we can rebuild
+ * an INSERT for a batch of rows later.
  */
 void
 deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 				 Index rtindex, Relation rel,
 				 List *targetAttrs, bool doNothing,
 				 List *withCheckOptionList, List *returningList,
-				 List **retrieved_attrs)
+				 List **retrieved_attrs, int *values_end_len)
 {
 	TupleDesc	tupdesc = RelationGetDescr(rel);
 	AttrNumber	pindex;
@@ -1790,6 +1925,7 @@ deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 	}
 	else
 		appendStringInfoString(buf, " DEFAULT VALUES");
+	*values_end_len = buf->len;
 
 	if (doNothing)
 		appendStringInfoString(buf, " ON CONFLICT DO NOTHING");
@@ -1797,6 +1933,65 @@ deparseInsertSql(StringInfo buf, RangeTblEntry *rte,
 	deparseReturningList(buf, rte, rtindex, rel,
 						 rel->trigdesc && rel->trigdesc->trig_insert_after_row,
 						 withCheckOptionList, returningList, retrieved_attrs);
+}
+
+/*
+ * rebuild remote INSERT statement
+ *
+ * Provided a number of rows in a batch, builds INSERT statement with the
+ * right number of parameters.
+ */
+void
+rebuildInsertSql(StringInfo buf, Relation rel,
+				 char *orig_query, List *target_attrs,
+				 int values_end_len, int num_params,
+				 int num_rows)
+{
+	TupleDesc	tupdesc = RelationGetDescr(rel);
+	int			i;
+	int			pindex;
+	bool		first;
+	ListCell   *lc;
+
+	/* Make sure the values_end_len is sensible */
+	Assert((values_end_len > 0) && (values_end_len <= strlen(orig_query)));
+
+	/* Copy up to the end of the first record from the original query */
+	appendBinaryStringInfo(buf, orig_query, values_end_len);
+
+	/*
+	 * Add records to VALUES clause (we already have parameters for the first
+	 * row, so start at the right offset).
+	 */
+	pindex = num_params + 1;
+	for (i = 0; i < num_rows; i++)
+	{
+		appendStringInfoString(buf, ", (");
+
+		first = true;
+		foreach(lc, target_attrs)
+		{
+			int			attnum = lfirst_int(lc);
+			Form_pg_attribute attr = TupleDescAttr(tupdesc, attnum - 1);
+
+			if (!first)
+				appendStringInfoString(buf, ", ");
+			first = false;
+
+			if (attr->attgenerated)
+				appendStringInfoString(buf, "DEFAULT");
+			else
+			{
+				appendStringInfo(buf, "$%d", pindex);
+				pindex++;
+			}
+		}
+
+		appendStringInfoChar(buf, ')');
+	}
+
+	/* Copy stuff after VALUES clause from the original query */
+	appendStringInfoString(buf, orig_query + values_end_len);
 }
 
 /*
@@ -1858,6 +2053,7 @@ deparseUpdateSql(StringInfo buf, RangeTblEntry *rte,
  * 'foreignrel' is the RelOptInfo for the target relation or the join relation
  *		containing all base relations in the query
  * 'targetlist' is the tlist of the underlying foreign-scan plan node
+ *		(note that this only contains new-value expressions and junk attrs)
  * 'targetAttrs' is the target columns of the UPDATE
  * 'remote_conds' is the qual clauses that must be evaluated remotely
  * '*params_list' is an output list of exprs that will become remote Params
@@ -1879,8 +2075,9 @@ deparseDirectUpdateSql(StringInfo buf, PlannerInfo *root,
 	deparse_expr_cxt context;
 	int			nestlevel;
 	bool		first;
-	ListCell   *lc;
 	RangeTblEntry *rte = planner_rt_fetch(rtindex, root);
+	ListCell   *lc,
+			   *lc2;
 
 	/* Set up context struct for recursion */
 	context.root = root;
@@ -1899,14 +2096,13 @@ deparseDirectUpdateSql(StringInfo buf, PlannerInfo *root,
 	nestlevel = set_transmission_modes();
 
 	first = true;
-	foreach(lc, targetAttrs)
+	forboth(lc, targetlist, lc2, targetAttrs)
 	{
-		int			attnum = lfirst_int(lc);
-		TargetEntry *tle = get_tle_by_resno(targetlist, attnum);
+		TargetEntry *tle = lfirst_node(TargetEntry, lc);
+		int			attnum = lfirst_int(lc2);
 
-		if (!tle)
-			elog(ERROR, "attribute number %d not found in UPDATE targetlist",
-				 attnum);
+		/* update's new-value expressions shouldn't be resjunk */
+		Assert(!tle->resjunk);
 
 		if (!first)
 			appendStringInfoString(buf, ", ");
@@ -1923,7 +2119,7 @@ deparseDirectUpdateSql(StringInfo buf, PlannerInfo *root,
 	{
 		List	   *ignore_conds = NIL;
 
-		appendStringInfo(buf, " FROM ");
+		appendStringInfoString(buf, " FROM ");
 		deparseFromExprForRel(buf, root, foreignrel, true, rtindex,
 							  &ignore_conds, params_list);
 		remote_conds = list_concat(remote_conds, ignore_conds);
@@ -2006,7 +2202,7 @@ deparseDirectDeleteSql(StringInfo buf, PlannerInfo *root,
 	{
 		List	   *ignore_conds = NIL;
 
-		appendStringInfo(buf, " USING ");
+		appendStringInfoString(buf, " USING ");
 		deparseFromExprForRel(buf, root, foreignrel, true, rtindex,
 							  &ignore_conds, params_list);
 		remote_conds = list_concat(remote_conds, ignore_conds);
@@ -2160,6 +2356,38 @@ deparseAnalyzeSql(StringInfo buf, Relation rel, List **retrieved_attrs)
 	 */
 	appendStringInfoString(buf, " FROM ");
 	deparseRelation(buf, rel);
+}
+
+/*
+ * Construct a simple "TRUNCATE rel" statement
+ */
+void
+deparseTruncateSql(StringInfo buf,
+				   List *rels,
+				   DropBehavior behavior,
+				   bool restart_seqs)
+{
+	ListCell   *cell;
+
+	appendStringInfoString(buf, "TRUNCATE ");
+
+	foreach(cell, rels)
+	{
+		Relation	rel = lfirst(cell);
+
+		if (cell != list_head(rels))
+			appendStringInfoString(buf, ", ");
+
+		deparseRelation(buf, rel);
+	}
+
+	appendStringInfo(buf, " %s IDENTITY",
+					 restart_seqs ? "RESTART" : "CONTINUE");
+
+	if (behavior == DROP_RESTRICT)
+		appendStringInfoString(buf, " RESTRICT");
+	else if (behavior == DROP_CASCADE)
+		appendStringInfoString(buf, " CASCADE");
 }
 
 /*
@@ -2412,6 +2640,9 @@ deparseExpr(Expr *node, deparse_expr_cxt *context)
 		case T_NullTest:
 			deparseNullTest((NullTest *) node, context);
 			break;
+		case T_CaseExpr:
+			deparseCaseExpr((CaseExpr *) node, context);
+			break;
 		case T_ArrayExpr:
 			deparseArrayExpr((ArrayExpr *) node, context);
 			break;
@@ -2495,9 +2726,14 @@ deparseVar(Var *node, deparse_expr_cxt *context)
  * Deparse given constant value into context->buf.
  *
  * This function has to be kept in sync with ruleutils.c's get_const_expr.
- * As for that function, showtype can be -1 to never show "::typename" decoration,
- * or +1 to always show it, or 0 to show it only if the constant wouldn't be assumed
- * to be the right type by default.
+ *
+ * As in that function, showtype can be -1 to never show "::typename"
+ * decoration, +1 to always show it, or 0 to show it only if the constant
+ * wouldn't be assumed to be the right type by default.
+ *
+ * In addition, this code allows showtype to be -2 to indicate that we should
+ * not show "::typename" decoration if the constant is printed as an untyped
+ * literal or NULL (while in other cases, behaving as for showtype == 0).
  */
 static void
 deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
@@ -2507,6 +2743,7 @@ deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
 	bool		typIsVarlena;
 	char	   *extval;
 	bool		isfloat = false;
+	bool		isstring = false;
 	bool		needlabel;
 
 	if (node->constisnull)
@@ -2562,13 +2799,14 @@ deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
 			break;
 		default:
 			deparseStringLiteral(buf, extval);
+			isstring = true;
 			break;
 	}
 
 	pfree(extval);
 
-	if (showtype < 0)
-		return;
+	if (showtype == -1)
+		return;					/* never print type label */
 
 	/*
 	 * For showtype == 0, append ::typename unless the constant will be
@@ -2588,7 +2826,13 @@ deparseConst(Const *node, deparse_expr_cxt *context, int showtype)
 			needlabel = !isfloat || (node->consttypmod >= 0);
 			break;
 		default:
-			needlabel = true;
+			if (showtype == -2)
+			{
+				/* label unless we printed it as an untyped string */
+				needlabel = !isstring;
+			}
+			else
+				needlabel = true;
 			break;
 	}
 	if (needlabel || showtype > 0)
@@ -2672,7 +2916,7 @@ deparseSubscriptingRef(SubscriptingRef *node, deparse_expr_cxt *context)
 		{
 			deparseExpr(lfirst(lowlist_item), context);
 			appendStringInfoChar(buf, ':');
-			lowlist_item = lnext(lowlist_item);
+			lowlist_item = lnext(node->reflowerindexpr, lowlist_item);
 		}
 		deparseExpr(lfirst(uplist_item), context);
 		appendStringInfoChar(buf, ']');
@@ -2735,7 +2979,7 @@ deparseFuncExpr(FuncExpr *node, deparse_expr_cxt *context)
 	{
 		if (!first)
 			appendStringInfoString(buf, ", ");
-		if (use_variadic && lnext(arg) == NULL)
+		if (use_variadic && lnext(node->args, arg) == NULL)
 			appendStringInfoString(buf, "VARIADIC ");
 		deparseExpr((Expr *) lfirst(arg), context);
 		first = false;
@@ -2753,8 +2997,9 @@ deparseOpExpr(OpExpr *node, deparse_expr_cxt *context)
 	StringInfo	buf = context->buf;
 	HeapTuple	tuple;
 	Form_pg_operator form;
+	Expr	   *right;
+	bool		canSuppressRightConstCast = false;
 	char		oprkind;
-	ListCell   *arg;
 
 	/* Retrieve information about the operator from system catalog. */
 	tuple = SearchSysCache1(OPEROID, ObjectIdGetDatum(node->opno));
@@ -2764,18 +3009,61 @@ deparseOpExpr(OpExpr *node, deparse_expr_cxt *context)
 	oprkind = form->oprkind;
 
 	/* Sanity check. */
-	Assert((oprkind == 'r' && list_length(node->args) == 1) ||
-		   (oprkind == 'l' && list_length(node->args) == 1) ||
+	Assert((oprkind == 'l' && list_length(node->args) == 1) ||
 		   (oprkind == 'b' && list_length(node->args) == 2));
+
+	right = llast(node->args);
 
 	/* Always parenthesize the expression. */
 	appendStringInfoChar(buf, '(');
 
-	/* Deparse left operand. */
-	if (oprkind == 'r' || oprkind == 'b')
+	/* Deparse left operand, if any. */
+	if (oprkind == 'b')
 	{
-		arg = list_head(node->args);
-		deparseExpr(lfirst(arg), context);
+		Expr	   *left = linitial(node->args);
+		Oid			leftType = exprType((Node *) left);
+		Oid			rightType = exprType((Node *) right);
+		bool		canSuppressLeftConstCast = false;
+
+		/*
+		 * When considering a binary operator, if one operand is a Const that
+		 * can be printed as a bare string literal or NULL (i.e., it will look
+		 * like type UNKNOWN to the remote parser), the Const normally
+		 * receives an explicit cast to the operator's input type.  However,
+		 * in Const-to-Var comparisons where both operands are of the same
+		 * type, we prefer to suppress the explicit cast, leaving the Const's
+		 * type resolution up to the remote parser.  The remote's resolution
+		 * heuristic will assume that an unknown input type being compared to
+		 * a known input type is of that known type as well.
+		 *
+		 * This hack allows some cases to succeed where a remote column is
+		 * declared with a different type in the local (foreign) table.  By
+		 * emitting "foreigncol = 'foo'" not "foreigncol = 'foo'::text" or the
+		 * like, we allow the remote parser to pick an "=" operator that's
+		 * compatible with whatever type the remote column really is, such as
+		 * an enum.
+		 *
+		 * We allow cast suppression to happen only when the other operand is
+		 * a plain foreign Var.  Although the remote's unknown-type heuristic
+		 * would apply to other cases just as well, we would be taking a
+		 * bigger risk that the inferred type is something unexpected.  With
+		 * this restriction, if anything goes wrong it's the user's fault for
+		 * not declaring the local column with the same type as the remote
+		 * column.
+		 */
+		if (leftType == rightType)
+		{
+			if (IsA(left, Const))
+				canSuppressLeftConstCast = isPlainForeignVar(right, context);
+			else if (IsA(right, Const))
+				canSuppressRightConstCast = isPlainForeignVar(left, context);
+		}
+
+		if (canSuppressLeftConstCast)
+			deparseConst((Const *) left, context, -2);
+		else
+			deparseExpr(left, context);
+
 		appendStringInfoChar(buf, ' ');
 	}
 
@@ -2783,16 +3071,51 @@ deparseOpExpr(OpExpr *node, deparse_expr_cxt *context)
 	deparseOperatorName(buf, form);
 
 	/* Deparse right operand. */
-	if (oprkind == 'l' || oprkind == 'b')
-	{
-		arg = list_tail(node->args);
-		appendStringInfoChar(buf, ' ');
-		deparseExpr(lfirst(arg), context);
-	}
+	appendStringInfoChar(buf, ' ');
+
+	if (canSuppressRightConstCast)
+		deparseConst((Const *) right, context, -2);
+	else
+		deparseExpr(right, context);
 
 	appendStringInfoChar(buf, ')');
 
 	ReleaseSysCache(tuple);
+}
+
+/*
+ * Will "node" deparse as a plain foreign Var?
+ */
+static bool
+isPlainForeignVar(Expr *node, deparse_expr_cxt *context)
+{
+	/*
+	 * We allow the foreign Var to have an implicit RelabelType, mainly so
+	 * that this'll work with varchar columns.  Note that deparseRelabelType
+	 * will not print such a cast, so we're not breaking the restriction that
+	 * the expression print as a plain Var.  We won't risk it for an implicit
+	 * cast that requires a function, nor for non-implicit RelabelType; such
+	 * cases seem too likely to involve semantics changes compared to what
+	 * would happen on the remote side.
+	 */
+	if (IsA(node, RelabelType) &&
+		((RelabelType *) node)->relabelformat == COERCE_IMPLICIT_CAST)
+		node = ((RelabelType *) node)->arg;
+
+	if (IsA(node, Var))
+	{
+		/*
+		 * The Var must be one that'll deparse as a foreign column reference
+		 * (cf. deparseVar).
+		 */
+		Var		   *var = (Var *) node;
+		Relids		relids = context->scanrel->relids;
+
+		if (bms_is_member(var->varno, relids) && var->varlevelsup == 0)
+			return true;
+	}
+
+	return false;
 }
 
 /*
@@ -2971,6 +3294,56 @@ deparseNullTest(NullTest *node, deparse_expr_cxt *context)
 }
 
 /*
+ * Deparse CASE expression
+ */
+static void
+deparseCaseExpr(CaseExpr *node, deparse_expr_cxt *context)
+{
+	StringInfo	buf = context->buf;
+	ListCell   *lc;
+
+	appendStringInfoString(buf, "(CASE");
+
+	/* If this is a CASE arg WHEN then emit the arg expression */
+	if (node->arg != NULL)
+	{
+		appendStringInfoChar(buf, ' ');
+		deparseExpr(node->arg, context);
+	}
+
+	/* Add each condition/result of the CASE clause */
+	foreach(lc, node->args)
+	{
+		CaseWhen   *whenclause = (CaseWhen *) lfirst(lc);
+
+		/* WHEN */
+		appendStringInfoString(buf, " WHEN ");
+		if (node->arg == NULL)	/* CASE WHEN */
+			deparseExpr(whenclause->expr, context);
+		else					/* CASE arg WHEN */
+		{
+			/* Ignore the CaseTestExpr and equality operator. */
+			deparseExpr(lsecond(castNode(OpExpr, whenclause->expr)->args),
+						context);
+		}
+
+		/* THEN */
+		appendStringInfoString(buf, " THEN ");
+		deparseExpr(whenclause->result, context);
+	}
+
+	/* add ELSE if present */
+	if (node->defresult != NULL)
+	{
+		appendStringInfoString(buf, " ELSE ");
+		deparseExpr(node->defresult, context);
+	}
+
+	/* append END */
+	appendStringInfoString(buf, " END)");
+}
+
+/*
  * Deparse ARRAY[...] construct.
  */
 static void
@@ -3063,7 +3436,7 @@ deparseAggref(Aggref *node, deparse_expr_cxt *context)
 				first = false;
 
 				/* Add VARIADIC */
-				if (use_variadic && lnext(arg) == NULL)
+				if (use_variadic && lnext(node->args, arg) == NULL)
 					appendStringInfoString(buf, "VARIADIC ");
 
 				deparseExpr((Expr *) n, context);

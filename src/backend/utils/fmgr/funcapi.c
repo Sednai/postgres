@@ -4,7 +4,7 @@
  *	  Utility and convenience functions for fmgr functions that return
  *	  sets and/or composite types, or deal with VARIADIC inputs.
  *
- * Copyright (c) 2002-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2002-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/fmgr/funcapi.c
@@ -19,6 +19,7 @@
 #include "catalog/pg_proc.h"
 #include "catalog/pg_type.h"
 #include "funcapi.h"
+#include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
@@ -27,6 +28,7 @@
 #include "utils/regproc.h"
 #include "utils/rel.h"
 #include "utils/syscache.h"
+#include "utils/tuplestore.h"
 #include "utils/typcache.h"
 
 
@@ -35,6 +37,7 @@ typedef struct polymorphic_actuals
 	Oid			anyelement_type;	/* anyelement mapping, if known */
 	Oid			anyarray_type;	/* anyarray mapping, if known */
 	Oid			anyrange_type;	/* anyrange mapping, if known */
+	Oid			anymultirange_type; /* anymultirange mapping, if known */
 } polymorphic_actuals;
 
 static void shutdown_MultiFuncCall(Datum arg);
@@ -46,10 +49,87 @@ static TypeFuncClass internal_get_result_type(Oid funcid,
 static void resolve_anyelement_from_others(polymorphic_actuals *actuals);
 static void resolve_anyarray_from_others(polymorphic_actuals *actuals);
 static void resolve_anyrange_from_others(polymorphic_actuals *actuals);
+static void resolve_anymultirange_from_others(polymorphic_actuals *actuals);
 static bool resolve_polymorphic_tupdesc(TupleDesc tupdesc,
 										oidvector *declared_args,
 										Node *call_expr);
 static TypeFuncClass get_type_func_class(Oid typid, Oid *base_typeid);
+
+
+/*
+ * Compatibility function for v15.
+ */
+void
+SetSingleFuncCall(FunctionCallInfo fcinfo, bits32 flags)
+{
+	InitMaterializedSRF(fcinfo, flags);
+}
+
+/*
+ * InitMaterializedSRF
+ *
+ * Helper function to build the state of a set-returning function used
+ * in the context of a single call with materialize mode.  This code
+ * includes sanity checks on ReturnSetInfo, creates the Tuplestore and
+ * the TupleDesc used with the function and stores them into the
+ * function's ReturnSetInfo.
+ *
+ * "flags" can be set to MAT_SRF_USE_EXPECTED_DESC, to use the tuple
+ * descriptor coming from expectedDesc, which is the tuple descriptor
+ * expected by the caller.  MAT_SRF_BLESS can be set to complete the
+ * information associated to the tuple descriptor, which is necessary
+ * in some cases where the tuple descriptor comes from a transient
+ * RECORD datatype.
+ */
+void
+InitMaterializedSRF(FunctionCallInfo fcinfo, bits32 flags)
+{
+	bool		random_access;
+	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
+	Tuplestorestate *tupstore;
+	MemoryContext old_context,
+				per_query_ctx;
+	TupleDesc	stored_tupdesc;
+
+	/* check to see if caller supports returning a tuplestore */
+	if (rsinfo == NULL || !IsA(rsinfo, ReturnSetInfo))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("set-valued function called in context that cannot accept a set")));
+	if (!(rsinfo->allowedModes & SFRM_Materialize) ||
+		((flags & MAT_SRF_USE_EXPECTED_DESC) != 0 && rsinfo->expectedDesc == NULL))
+		ereport(ERROR,
+				(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+				 errmsg("materialize mode required, but it is not allowed in this context")));
+
+	/*
+	 * Store the tuplestore and the tuple descriptor in ReturnSetInfo.  This
+	 * must be done in the per-query memory context.
+	 */
+	per_query_ctx = rsinfo->econtext->ecxt_per_query_memory;
+	old_context = MemoryContextSwitchTo(per_query_ctx);
+
+	/* build a tuple descriptor for our result type */
+	if ((flags & MAT_SRF_USE_EXPECTED_DESC) != 0)
+		stored_tupdesc = CreateTupleDescCopy(rsinfo->expectedDesc);
+	else
+	{
+		if (get_call_result_type(fcinfo, NULL, &stored_tupdesc) != TYPEFUNC_COMPOSITE)
+			elog(ERROR, "return type must be a row type");
+	}
+
+	/* If requested, bless the tuple descriptor */
+	if ((flags & MAT_SRF_BLESS) != 0)
+		BlessTupleDesc(stored_tupdesc);
+
+	random_access = (rsinfo->allowedModes & SFRM_Materialize_Random) != 0;
+
+	tupstore = tuplestore_begin_heap(random_access, false, work_mem);
+	rsinfo->returnMode = SFRM_Materialize;
+	rsinfo->setResult = tupstore;
+	rsinfo->setDesc = stored_tupdesc;
+	MemoryContextSwitchTo(old_context);
+}
 
 
 /*
@@ -545,6 +625,34 @@ resolve_anyelement_from_others(polymorphic_actuals *actuals)
 							format_type_be(range_base_type))));
 		actuals->anyelement_type = range_typelem;
 	}
+	else if (OidIsValid(actuals->anymultirange_type))
+	{
+		/* Use the element type based on the multirange type */
+		Oid			multirange_base_type;
+		Oid			multirange_typelem;
+		Oid			range_base_type;
+		Oid			range_typelem;
+
+		multirange_base_type = getBaseType(actuals->anymultirange_type);
+		multirange_typelem = get_multirange_range(multirange_base_type);
+		if (!OidIsValid(multirange_typelem))
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("argument declared %s is not a multirange type but type %s",
+							"anymultirange",
+							format_type_be(multirange_base_type))));
+
+		range_base_type = getBaseType(multirange_typelem);
+		range_typelem = get_range_subtype(range_base_type);
+
+		if (!OidIsValid(range_typelem))
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("argument declared %s does not contain a range type but type %s",
+							"anymultirange",
+							format_type_be(range_base_type))));
+		actuals->anyelement_type = range_typelem;
+	}
 	else
 		elog(ERROR, "could not determine polymorphic type");
 }
@@ -582,10 +690,53 @@ static void
 resolve_anyrange_from_others(polymorphic_actuals *actuals)
 {
 	/*
-	 * We can't deduce a range type from other polymorphic inputs, because
-	 * there may be multiple range types with the same subtype.
+	 * We can't deduce a range type from other polymorphic array or base
+	 * types, because there may be multiple range types with the same subtype,
+	 * but we can deduce it from a polymorphic multirange type.
 	 */
-	elog(ERROR, "could not determine polymorphic type");
+	if (OidIsValid(actuals->anymultirange_type))
+	{
+		/* Use the element type based on the multirange type */
+		Oid			multirange_base_type = getBaseType(actuals->anymultirange_type);
+		Oid			multirange_typelem = get_multirange_range(multirange_base_type);
+
+		if (!OidIsValid(multirange_typelem))
+			ereport(ERROR,
+					(errcode(ERRCODE_DATATYPE_MISMATCH),
+					 errmsg("argument declared %s is not a multirange type but type %s",
+							"anymultirange",
+							format_type_be(multirange_base_type))));
+		actuals->anyrange_type = multirange_typelem;
+	}
+	else
+		elog(ERROR, "could not determine polymorphic type");
+}
+
+/*
+ * Resolve actual type of ANYMULTIRANGE from other polymorphic inputs
+ */
+static void
+resolve_anymultirange_from_others(polymorphic_actuals *actuals)
+{
+	/*
+	 * We can't deduce a multirange type from polymorphic array or base types,
+	 * because there may be multiple range types with the same subtype, but we
+	 * can deduce it from a polymorphic range type.
+	 */
+	if (OidIsValid(actuals->anyrange_type))
+	{
+		Oid			range_base_type = getBaseType(actuals->anyrange_type);
+		Oid			multirange_typeid = get_range_multirange(range_base_type);
+
+		if (!OidIsValid(multirange_typeid))
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_OBJECT),
+					 errmsg("could not find multirange type for data type %s",
+							format_type_be(actuals->anyrange_type))));
+		actuals->anymultirange_type = multirange_typeid;
+	}
+	else
+		elog(ERROR, "could not determine polymorphic type");
 }
 
 /*
@@ -594,7 +745,9 @@ resolve_anyrange_from_others(polymorphic_actuals *actuals)
  * with concrete data types deduced from the input arguments.
  * declared_args is an oidvector of the function's declared input arg types
  * (showing which are polymorphic), and call_expr is the call expression.
- * Returns true if able to deduce all types, false if not.
+ *
+ * Returns true if able to deduce all types, false if necessary information
+ * is not provided (call_expr is NULL or arg types aren't identifiable).
  */
 static bool
 resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
@@ -606,8 +759,15 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
 	bool		have_anyelement_result = false;
 	bool		have_anyarray_result = false;
 	bool		have_anyrange_result = false;
+	bool		have_anymultirange_result = false;
+	bool		have_anycompatible_result = false;
+	bool		have_anycompatible_array_result = false;
+	bool		have_anycompatible_range_result = false;
+	bool		have_anycompatible_multirange_result = false;
 	polymorphic_actuals poly_actuals;
+	polymorphic_actuals anyc_actuals;
 	Oid			anycollation = InvalidOid;
+	Oid			anycompatcollation = InvalidOid;
 	int			i;
 
 	/* See if there are any polymorphic outputs; quick out if not */
@@ -629,6 +789,27 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
 				have_polymorphic_result = true;
 				have_anyrange_result = true;
 				break;
+			case ANYMULTIRANGEOID:
+				have_polymorphic_result = true;
+				have_anymultirange_result = true;
+				break;
+			case ANYCOMPATIBLEOID:
+			case ANYCOMPATIBLENONARRAYOID:
+				have_polymorphic_result = true;
+				have_anycompatible_result = true;
+				break;
+			case ANYCOMPATIBLEARRAYOID:
+				have_polymorphic_result = true;
+				have_anycompatible_array_result = true;
+				break;
+			case ANYCOMPATIBLERANGEOID:
+				have_polymorphic_result = true;
+				have_anycompatible_range_result = true;
+				break;
+			case ANYCOMPATIBLEMULTIRANGEOID:
+				have_polymorphic_result = true;
+				have_anycompatible_multirange_result = true;
+				break;
 			default:
 				break;
 		}
@@ -638,12 +819,16 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
 
 	/*
 	 * Otherwise, extract actual datatype(s) from input arguments.  (We assume
-	 * the parser already validated consistency of the arguments.)
+	 * the parser already validated consistency of the arguments.  Also, for
+	 * the ANYCOMPATIBLE pseudotype family, we expect that all matching
+	 * arguments were coerced to the selected common supertype, so that it
+	 * doesn't matter which one's exposed type we look at.)
 	 */
 	if (!call_expr)
 		return false;			/* no hope */
 
 	memset(&poly_actuals, 0, sizeof(poly_actuals));
+	memset(&anyc_actuals, 0, sizeof(anyc_actuals));
 
 	for (i = 0; i < nargs; i++)
 	{
@@ -678,6 +863,52 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
 						return false;
 				}
 				break;
+			case ANYMULTIRANGEOID:
+				if (!OidIsValid(poly_actuals.anymultirange_type))
+				{
+					poly_actuals.anymultirange_type =
+						get_call_expr_argtype(call_expr, i);
+					if (!OidIsValid(poly_actuals.anymultirange_type))
+						return false;
+				}
+				break;
+			case ANYCOMPATIBLEOID:
+			case ANYCOMPATIBLENONARRAYOID:
+				if (!OidIsValid(anyc_actuals.anyelement_type))
+				{
+					anyc_actuals.anyelement_type =
+						get_call_expr_argtype(call_expr, i);
+					if (!OidIsValid(anyc_actuals.anyelement_type))
+						return false;
+				}
+				break;
+			case ANYCOMPATIBLEARRAYOID:
+				if (!OidIsValid(anyc_actuals.anyarray_type))
+				{
+					anyc_actuals.anyarray_type =
+						get_call_expr_argtype(call_expr, i);
+					if (!OidIsValid(anyc_actuals.anyarray_type))
+						return false;
+				}
+				break;
+			case ANYCOMPATIBLERANGEOID:
+				if (!OidIsValid(anyc_actuals.anyrange_type))
+				{
+					anyc_actuals.anyrange_type =
+						get_call_expr_argtype(call_expr, i);
+					if (!OidIsValid(anyc_actuals.anyrange_type))
+						return false;
+				}
+				break;
+			case ANYCOMPATIBLEMULTIRANGEOID:
+				if (!OidIsValid(anyc_actuals.anymultirange_type))
+				{
+					anyc_actuals.anymultirange_type =
+						get_call_expr_argtype(call_expr, i);
+					if (!OidIsValid(anyc_actuals.anymultirange_type))
+						return false;
+				}
+				break;
 			default:
 				break;
 		}
@@ -693,18 +924,39 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
 	if (have_anyrange_result && !OidIsValid(poly_actuals.anyrange_type))
 		resolve_anyrange_from_others(&poly_actuals);
 
+	if (have_anymultirange_result && !OidIsValid(poly_actuals.anymultirange_type))
+		resolve_anymultirange_from_others(&poly_actuals);
+
+	if (have_anycompatible_result && !OidIsValid(anyc_actuals.anyelement_type))
+		resolve_anyelement_from_others(&anyc_actuals);
+
+	if (have_anycompatible_array_result && !OidIsValid(anyc_actuals.anyarray_type))
+		resolve_anyarray_from_others(&anyc_actuals);
+
+	if (have_anycompatible_range_result && !OidIsValid(anyc_actuals.anyrange_type))
+		resolve_anyrange_from_others(&anyc_actuals);
+
+	if (have_anycompatible_multirange_result && !OidIsValid(anyc_actuals.anymultirange_type))
+		resolve_anymultirange_from_others(&anyc_actuals);
+
 	/*
 	 * Identify the collation to use for polymorphic OUT parameters. (It'll
-	 * necessarily be the same for both anyelement and anyarray.)  Note that
-	 * range types are not collatable, so any possible internal collation of a
-	 * range type is not considered here.
+	 * necessarily be the same for both anyelement and anyarray, likewise for
+	 * anycompatible and anycompatiblearray.)  Note that range types are not
+	 * collatable, so any possible internal collation of a range type is not
+	 * considered here.
 	 */
 	if (OidIsValid(poly_actuals.anyelement_type))
 		anycollation = get_typcollation(poly_actuals.anyelement_type);
 	else if (OidIsValid(poly_actuals.anyarray_type))
 		anycollation = get_typcollation(poly_actuals.anyarray_type);
 
-	if (OidIsValid(anycollation))
+	if (OidIsValid(anyc_actuals.anyelement_type))
+		anycompatcollation = get_typcollation(anyc_actuals.anyelement_type);
+	else if (OidIsValid(anyc_actuals.anyarray_type))
+		anycompatcollation = get_typcollation(anyc_actuals.anyarray_type);
+
+	if (OidIsValid(anycollation) || OidIsValid(anycompatcollation))
 	{
 		/*
 		 * The types are collatable, so consider whether to use a nondefault
@@ -714,7 +966,12 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
 		Oid			inputcollation = exprInputCollation(call_expr);
 
 		if (OidIsValid(inputcollation))
-			anycollation = inputcollation;
+		{
+			if (OidIsValid(anycollation))
+				anycollation = inputcollation;
+			if (OidIsValid(anycompatcollation))
+				anycompatcollation = inputcollation;
+		}
 	}
 
 	/* And finally replace the tuple column types as needed */
@@ -750,6 +1007,47 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
 								   0);
 				/* no collation should be attached to a range type */
 				break;
+			case ANYMULTIRANGEOID:
+				TupleDescInitEntry(tupdesc, i + 1,
+								   NameStr(att->attname),
+								   poly_actuals.anymultirange_type,
+								   -1,
+								   0);
+				/* no collation should be attached to a multirange type */
+				break;
+			case ANYCOMPATIBLEOID:
+			case ANYCOMPATIBLENONARRAYOID:
+				TupleDescInitEntry(tupdesc, i + 1,
+								   NameStr(att->attname),
+								   anyc_actuals.anyelement_type,
+								   -1,
+								   0);
+				TupleDescInitEntryCollation(tupdesc, i + 1, anycompatcollation);
+				break;
+			case ANYCOMPATIBLEARRAYOID:
+				TupleDescInitEntry(tupdesc, i + 1,
+								   NameStr(att->attname),
+								   anyc_actuals.anyarray_type,
+								   -1,
+								   0);
+				TupleDescInitEntryCollation(tupdesc, i + 1, anycompatcollation);
+				break;
+			case ANYCOMPATIBLERANGEOID:
+				TupleDescInitEntry(tupdesc, i + 1,
+								   NameStr(att->attname),
+								   anyc_actuals.anyrange_type,
+								   -1,
+								   0);
+				/* no collation should be attached to a range type */
+				break;
+			case ANYCOMPATIBLEMULTIRANGEOID:
+				TupleDescInitEntry(tupdesc, i + 1,
+								   NameStr(att->attname),
+								   anyc_actuals.anymultirange_type,
+								   -1,
+								   0);
+				/* no collation should be attached to a multirange type */
+				break;
 			default:
 				break;
 		}
@@ -762,7 +1060,9 @@ resolve_polymorphic_tupdesc(TupleDesc tupdesc, oidvector *declared_args,
  * Given the declared argument types and modes for a function, replace any
  * polymorphic types (ANYELEMENT etc) in argtypes[] with concrete data types
  * deduced from the input arguments found in call_expr.
- * Returns true if able to deduce all types, false if not.
+ *
+ * Returns true if able to deduce all types, false if necessary information
+ * is not provided (call_expr is NULL or arg types aren't identifiable).
  *
  * This is the same logic as resolve_polymorphic_tupdesc, but with a different
  * argument representation, and slightly different output responsibilities.
@@ -777,16 +1077,23 @@ resolve_polymorphic_argtypes(int numargs, Oid *argtypes, char *argmodes,
 	bool		have_anyelement_result = false;
 	bool		have_anyarray_result = false;
 	bool		have_anyrange_result = false;
+	bool		have_anymultirange_result = false;
+	bool		have_anycompatible_result = false;
+	bool		have_anycompatible_array_result = false;
+	bool		have_anycompatible_range_result = false;
+	bool		have_anycompatible_multirange_result = false;
 	polymorphic_actuals poly_actuals;
+	polymorphic_actuals anyc_actuals;
 	int			inargno;
 	int			i;
 
 	/*
 	 * First pass: resolve polymorphic inputs, check for outputs.  As in
 	 * resolve_polymorphic_tupdesc, we rely on the parser to have enforced
-	 * type consistency.
+	 * type consistency and coerced ANYCOMPATIBLE args to a common supertype.
 	 */
 	memset(&poly_actuals, 0, sizeof(poly_actuals));
+	memset(&anyc_actuals, 0, sizeof(anyc_actuals));
 	inargno = 0;
 	for (i = 0; i < numargs; i++)
 	{
@@ -850,6 +1157,97 @@ resolve_polymorphic_argtypes(int numargs, Oid *argtypes, char *argmodes,
 					argtypes[i] = poly_actuals.anyrange_type;
 				}
 				break;
+			case ANYMULTIRANGEOID:
+				if (argmode == PROARGMODE_OUT || argmode == PROARGMODE_TABLE)
+				{
+					have_polymorphic_result = true;
+					have_anymultirange_result = true;
+				}
+				else
+				{
+					if (!OidIsValid(poly_actuals.anymultirange_type))
+					{
+						poly_actuals.anymultirange_type =
+							get_call_expr_argtype(call_expr, inargno);
+						if (!OidIsValid(poly_actuals.anymultirange_type))
+							return false;
+					}
+					argtypes[i] = poly_actuals.anymultirange_type;
+				}
+				break;
+			case ANYCOMPATIBLEOID:
+			case ANYCOMPATIBLENONARRAYOID:
+				if (argmode == PROARGMODE_OUT || argmode == PROARGMODE_TABLE)
+				{
+					have_polymorphic_result = true;
+					have_anycompatible_result = true;
+				}
+				else
+				{
+					if (!OidIsValid(anyc_actuals.anyelement_type))
+					{
+						anyc_actuals.anyelement_type =
+							get_call_expr_argtype(call_expr, inargno);
+						if (!OidIsValid(anyc_actuals.anyelement_type))
+							return false;
+					}
+					argtypes[i] = anyc_actuals.anyelement_type;
+				}
+				break;
+			case ANYCOMPATIBLEARRAYOID:
+				if (argmode == PROARGMODE_OUT || argmode == PROARGMODE_TABLE)
+				{
+					have_polymorphic_result = true;
+					have_anycompatible_array_result = true;
+				}
+				else
+				{
+					if (!OidIsValid(anyc_actuals.anyarray_type))
+					{
+						anyc_actuals.anyarray_type =
+							get_call_expr_argtype(call_expr, inargno);
+						if (!OidIsValid(anyc_actuals.anyarray_type))
+							return false;
+					}
+					argtypes[i] = anyc_actuals.anyarray_type;
+				}
+				break;
+			case ANYCOMPATIBLERANGEOID:
+				if (argmode == PROARGMODE_OUT || argmode == PROARGMODE_TABLE)
+				{
+					have_polymorphic_result = true;
+					have_anycompatible_range_result = true;
+				}
+				else
+				{
+					if (!OidIsValid(anyc_actuals.anyrange_type))
+					{
+						anyc_actuals.anyrange_type =
+							get_call_expr_argtype(call_expr, inargno);
+						if (!OidIsValid(anyc_actuals.anyrange_type))
+							return false;
+					}
+					argtypes[i] = anyc_actuals.anyrange_type;
+				}
+				break;
+			case ANYCOMPATIBLEMULTIRANGEOID:
+				if (argmode == PROARGMODE_OUT || argmode == PROARGMODE_TABLE)
+				{
+					have_polymorphic_result = true;
+					have_anycompatible_multirange_result = true;
+				}
+				else
+				{
+					if (!OidIsValid(anyc_actuals.anymultirange_type))
+					{
+						anyc_actuals.anymultirange_type =
+							get_call_expr_argtype(call_expr, inargno);
+						if (!OidIsValid(anyc_actuals.anymultirange_type))
+							return false;
+					}
+					argtypes[i] = anyc_actuals.anymultirange_type;
+				}
+				break;
 			default:
 				break;
 		}
@@ -871,6 +1269,21 @@ resolve_polymorphic_argtypes(int numargs, Oid *argtypes, char *argmodes,
 	if (have_anyrange_result && !OidIsValid(poly_actuals.anyrange_type))
 		resolve_anyrange_from_others(&poly_actuals);
 
+	if (have_anymultirange_result && !OidIsValid(poly_actuals.anymultirange_type))
+		resolve_anymultirange_from_others(&poly_actuals);
+
+	if (have_anycompatible_result && !OidIsValid(anyc_actuals.anyelement_type))
+		resolve_anyelement_from_others(&anyc_actuals);
+
+	if (have_anycompatible_array_result && !OidIsValid(anyc_actuals.anyarray_type))
+		resolve_anyarray_from_others(&anyc_actuals);
+
+	if (have_anycompatible_range_result && !OidIsValid(anyc_actuals.anyrange_type))
+		resolve_anyrange_from_others(&anyc_actuals);
+
+	if (have_anycompatible_multirange_result && !OidIsValid(anyc_actuals.anymultirange_type))
+		resolve_anymultirange_from_others(&anyc_actuals);
+
 	/* And finally replace the output column types as needed */
 	for (i = 0; i < numargs; i++)
 	{
@@ -886,6 +1299,22 @@ resolve_polymorphic_argtypes(int numargs, Oid *argtypes, char *argmodes,
 				break;
 			case ANYRANGEOID:
 				argtypes[i] = poly_actuals.anyrange_type;
+				break;
+			case ANYMULTIRANGEOID:
+				argtypes[i] = poly_actuals.anymultirange_type;
+				break;
+			case ANYCOMPATIBLEOID:
+			case ANYCOMPATIBLENONARRAYOID:
+				argtypes[i] = anyc_actuals.anyelement_type;
+				break;
+			case ANYCOMPATIBLEARRAYOID:
+				argtypes[i] = anyc_actuals.anyarray_type;
+				break;
+			case ANYCOMPATIBLERANGEOID:
+				argtypes[i] = anyc_actuals.anyrange_type;
+				break;
+			case ANYCOMPATIBLEMULTIRANGEOID:
+				argtypes[i] = anyc_actuals.anymultirange_type;
 				break;
 			default:
 				break;
@@ -916,6 +1345,7 @@ get_type_func_class(Oid typid, Oid *base_typeid)
 		case TYPTYPE_BASE:
 		case TYPTYPE_ENUM:
 		case TYPTYPE_RANGE:
+		case TYPTYPE_MULTIRANGE:
 			return TYPEFUNC_SCALAR;
 		case TYPTYPE_DOMAIN:
 			*base_typeid = typid = getBaseType(typid);
@@ -987,7 +1417,7 @@ get_func_arg_info(HeapTuple procTup,
 			numargs < 0 ||
 			ARR_HASNULL(arr) ||
 			ARR_ELEMTYPE(arr) != OIDOID)
-			elog(ERROR, "proallargtypes is not a 1-D Oid array");
+			elog(ERROR, "proallargtypes is not a 1-D Oid array or it contains nulls");
 		Assert(numargs >= procStruct->pronargs);
 		*p_argtypes = (Oid *) palloc(numargs * sizeof(Oid));
 		memcpy(*p_argtypes, ARR_DATA_PTR(arr),
@@ -1012,7 +1442,7 @@ get_func_arg_info(HeapTuple procTup,
 	else
 	{
 		deconstruct_array(DatumGetArrayTypeP(proargnames),
-						  TEXTOID, -1, false, 'i',
+						  TEXTOID, -1, false, TYPALIGN_INT,
 						  &elems, NULL, &nelems);
 		if (nelems != numargs)	/* should not happen */
 			elog(ERROR, "proargnames must have the same number of elements as the function has arguments");
@@ -1034,7 +1464,8 @@ get_func_arg_info(HeapTuple procTup,
 			ARR_DIMS(arr)[0] != numargs ||
 			ARR_HASNULL(arr) ||
 			ARR_ELEMTYPE(arr) != CHAROID)
-			elog(ERROR, "proargmodes is not a 1-D char array");
+			elog(ERROR, "proargmodes is not a 1-D char array of length %d or it contains nulls",
+				 numargs);
 		*p_argmodes = (char *) palloc(numargs * sizeof(char));
 		memcpy(*p_argmodes, ARR_DATA_PTR(arr),
 			   numargs * sizeof(char));
@@ -1076,7 +1507,7 @@ get_func_trftypes(HeapTuple procTup,
 			nelems < 0 ||
 			ARR_HASNULL(arr) ||
 			ARR_ELEMTYPE(arr) != OIDOID)
-			elog(ERROR, "protrftypes is not a 1-D Oid array");
+			elog(ERROR, "protrftypes is not a 1-D Oid array or it contains nulls");
 		*p_trftypes = (Oid *) palloc(nelems * sizeof(Oid));
 		memcpy(*p_trftypes, ARR_DATA_PTR(arr),
 			   nelems * sizeof(Oid));
@@ -1125,8 +1556,8 @@ get_func_input_arg_names(Datum proargnames, Datum proargmodes,
 	if (ARR_NDIM(arr) != 1 ||
 		ARR_HASNULL(arr) ||
 		ARR_ELEMTYPE(arr) != TEXTOID)
-		elog(ERROR, "proargnames is not a 1-D text array");
-	deconstruct_array(arr, TEXTOID, -1, false, 'i',
+		elog(ERROR, "proargnames is not a 1-D text array or it contains nulls");
+	deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT,
 					  &argnames, NULL, &numargs);
 	if (proargmodes != PointerGetDatum(NULL))
 	{
@@ -1135,7 +1566,8 @@ get_func_input_arg_names(Datum proargnames, Datum proargmodes,
 			ARR_DIMS(arr)[0] != numargs ||
 			ARR_HASNULL(arr) ||
 			ARR_ELEMTYPE(arr) != CHAROID)
-			elog(ERROR, "proargmodes is not a 1-D char array");
+			elog(ERROR, "proargmodes is not a 1-D char array of length %d or it contains nulls",
+				 numargs);
 		argmodes = (char *) ARR_DATA_PTR(arr);
 	}
 	else
@@ -1231,15 +1663,16 @@ get_func_result_name(Oid functionId)
 			numargs < 0 ||
 			ARR_HASNULL(arr) ||
 			ARR_ELEMTYPE(arr) != CHAROID)
-			elog(ERROR, "proargmodes is not a 1-D char array");
+			elog(ERROR, "proargmodes is not a 1-D char array or it contains nulls");
 		argmodes = (char *) ARR_DATA_PTR(arr);
 		arr = DatumGetArrayTypeP(proargnames);	/* ensure not toasted */
 		if (ARR_NDIM(arr) != 1 ||
 			ARR_DIMS(arr)[0] != numargs ||
 			ARR_HASNULL(arr) ||
 			ARR_ELEMTYPE(arr) != TEXTOID)
-			elog(ERROR, "proargnames is not a 1-D text array");
-		deconstruct_array(arr, TEXTOID, -1, false, 'i',
+			elog(ERROR, "proargnames is not a 1-D text array of length %d or it contains nulls",
+				 numargs);
+		deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT,
 						  &argnames, NULL, &nargnames);
 		Assert(nargnames == numargs);
 
@@ -1369,14 +1802,15 @@ build_function_result_tupdesc_d(char prokind,
 		numargs < 0 ||
 		ARR_HASNULL(arr) ||
 		ARR_ELEMTYPE(arr) != OIDOID)
-		elog(ERROR, "proallargtypes is not a 1-D Oid array");
+		elog(ERROR, "proallargtypes is not a 1-D Oid array or it contains nulls");
 	argtypes = (Oid *) ARR_DATA_PTR(arr);
 	arr = DatumGetArrayTypeP(proargmodes);	/* ensure not toasted */
 	if (ARR_NDIM(arr) != 1 ||
 		ARR_DIMS(arr)[0] != numargs ||
 		ARR_HASNULL(arr) ||
 		ARR_ELEMTYPE(arr) != CHAROID)
-		elog(ERROR, "proargmodes is not a 1-D char array");
+		elog(ERROR, "proargmodes is not a 1-D char array of length %d or it contains nulls",
+			 numargs);
 	argmodes = (char *) ARR_DATA_PTR(arr);
 	if (proargnames != PointerGetDatum(NULL))
 	{
@@ -1385,8 +1819,9 @@ build_function_result_tupdesc_d(char prokind,
 			ARR_DIMS(arr)[0] != numargs ||
 			ARR_HASNULL(arr) ||
 			ARR_ELEMTYPE(arr) != TEXTOID)
-			elog(ERROR, "proargnames is not a 1-D text array");
-		deconstruct_array(arr, TEXTOID, -1, false, 'i',
+			elog(ERROR, "proargnames is not a 1-D text array of length %d or it contains nulls",
+				 numargs);
+		deconstruct_array(arr, TEXTOID, -1, false, TYPALIGN_INT,
 						  &argnames, NULL, &nargnames);
 		Assert(nargnames == numargs);
 	}

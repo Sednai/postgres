@@ -5,9 +5,9 @@
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: PostgreSQL 12\n"
+"Project-Id-Version: PostgreSQL 14\n"
 "Report-Msgid-Bugs-To: pgsql-bugs@lists.postgresql.org\n"
-"POT-Creation-Date: 2022-02-18 04:35+0000\n"
+"POT-Creation-Date: 2020-04-10 02:39+0000\n"
 "PO-Revision-Date: 2021-11-07 10:36+0100\n"
 "Last-Translator: Dennis Björklund <db@zigo.dhs.org>\n"
 "Language-Team: Swedish <pgsql-translators@postgresql.org>\n"
@@ -21,11 +21,11 @@ msgstr ""
 msgid "empty message text"
 msgstr "tom meddelandetext"
 
-#: connect.c:401 connect.c:430 connect.c:645
+#: connect.c:401 connect.c:430 connect.c:653
 msgid "<DEFAULT>"
 msgstr "<DEFAULT>"
 
-#: descriptor.c:876 misc.c:120
+#: descriptor.c:871 misc.c:119
 msgid "NULL"
 msgstr "NULL"
 
@@ -194,6 +194,6 @@ msgstr "anslutningen till servern tappades"
 msgid "SQL error: %s\n"
 msgstr "SQL-fel: %s\n"
 
-#: execute.c:2198 execute.c:2205
+#: execute.c:2196 execute.c:2203
 msgid "<empty>"
 msgstr "<tom>"

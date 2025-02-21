@@ -49,22 +49,22 @@ analyze onerow;
 -- before diving into more complex join syntax.
 --
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL AS tx;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL tx;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL AS t1 (a, b, c);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL t1 (a, b, c);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL t1 (a, b, c), J2_TBL t2 (d, e);
 
-SELECT '' AS "xxx", t1.a, t2.e
+SELECT t1.a, t2.e
   FROM J1_TBL t1 (a, b, c), J2_TBL t2 (d, e)
   WHERE t1.a = t2.d;
 
@@ -75,26 +75,26 @@ SELECT '' AS "xxx", t1.a, t2.e
 -- which degenerate into a standard unqualified inner join.
 --
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL CROSS JOIN J2_TBL;
 
 -- ambiguous column
-SELECT '' AS "xxx", i, k, t
+SELECT i, k, t
   FROM J1_TBL CROSS JOIN J2_TBL;
 
 -- resolve previous ambiguity by specifying the table name
-SELECT '' AS "xxx", t1.i, k, t
+SELECT t1.i, k, t
   FROM J1_TBL t1 CROSS JOIN J2_TBL t2;
 
-SELECT '' AS "xxx", ii, tt, kk
+SELECT ii, tt, kk
   FROM (J1_TBL CROSS JOIN J2_TBL)
     AS tx (ii, jj, tt, ii2, kk);
 
-SELECT '' AS "xxx", tx.ii, tx.jj, tx.kk
+SELECT tx.ii, tx.jj, tx.kk
   FROM (J1_TBL t1 (a, b, c) CROSS JOIN J2_TBL t2 (d, e))
     AS tx (ii, jj, tt, ii2, kk);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL CROSS JOIN J2_TBL a CROSS JOIN J2_TBL b;
 
 
@@ -111,39 +111,50 @@ SELECT '' AS "xxx", *
 --
 
 -- Inner equi-join on specified column
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL INNER JOIN J2_TBL USING (i);
 
 -- Same as above, slightly different syntax
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL JOIN J2_TBL USING (i);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL t1 (a, b, c) JOIN J2_TBL t2 (a, d) USING (a)
   ORDER BY a, d;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL t1 (a, b, c) JOIN J2_TBL t2 (a, b) USING (b)
   ORDER BY b, t1.a;
 
+-- test join using aliases
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) WHERE J1_TBL.t = 'one';  -- ok
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';  -- ok
+SELECT * FROM (J1_TBL JOIN J2_TBL USING (i)) AS x WHERE J1_TBL.t = 'one';  -- error
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE x.i = 1;  -- ok
+SELECT * FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE x.t = 'one';  -- error
+SELECT * FROM (J1_TBL JOIN J2_TBL USING (i) AS x) AS xx WHERE x.i = 1;  -- error (XXX could use better hint)
+SELECT * FROM J1_TBL a1 JOIN J2_TBL a2 USING (i) AS a1;  -- error
+SELECT x.* FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';
+SELECT ROW(x.*) FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';
+SELECT row_to_json(x.*) FROM J1_TBL JOIN J2_TBL USING (i) AS x WHERE J1_TBL.t = 'one';
 
 --
 -- NATURAL JOIN
 -- Inner equi-join on all columns with the same name
 --
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL NATURAL JOIN J2_TBL;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL t1 (a, b, c) NATURAL JOIN J2_TBL t2 (a, d);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL t1 (a, b, c) NATURAL JOIN J2_TBL t2 (d, a);
 
 -- mismatch number of columns
 -- currently, Postgres will fill in with underlying names
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL t1 (a, b) NATURAL JOIN J2_TBL t2 (a);
 
 
@@ -151,10 +162,10 @@ SELECT '' AS "xxx", *
 -- Inner joins (equi-joins)
 --
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL JOIN J2_TBL ON (J1_TBL.i = J2_TBL.i);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL JOIN J2_TBL ON (J1_TBL.i = J2_TBL.k);
 
 
@@ -162,7 +173,7 @@ SELECT '' AS "xxx", *
 -- Non-equi-joins
 --
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL JOIN J2_TBL ON (J1_TBL.i <= J2_TBL.k);
 
 
@@ -171,32 +182,32 @@ SELECT '' AS "xxx", *
 -- Note that OUTER is a noise word
 --
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL LEFT OUTER JOIN J2_TBL USING (i)
   ORDER BY i, k, t;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL LEFT JOIN J2_TBL USING (i)
   ORDER BY i, k, t;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL RIGHT OUTER JOIN J2_TBL USING (i);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL RIGHT JOIN J2_TBL USING (i);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL FULL OUTER JOIN J2_TBL USING (i)
   ORDER BY i, k, t;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL FULL JOIN J2_TBL USING (i)
   ORDER BY i, k, t;
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL LEFT JOIN J2_TBL USING (i) WHERE (k = 1);
 
-SELECT '' AS "xxx", *
+SELECT *
   FROM J1_TBL LEFT JOIN J2_TBL USING (i) WHERE (i = 1);
 
 --
@@ -380,11 +391,11 @@ rollback;
 --
 explain (costs off)
 select aa, bb, unique1, unique1
-  from tenk1 right join b on aa = unique1
+  from tenk1 right join b_star on aa = unique1
   where bb < bb and bb is null;
 
 select aa, bb, unique1, unique1
-  from tenk1 right join b on aa = unique1
+  from tenk1 right join b_star on aa = unique1
   where bb < bb and bb is null;
 
 --
@@ -515,6 +526,22 @@ select t1.*, t2.*, unnamed_join.* from
   t1 join t2 on (t1.a = t2.a), t3 as unnamed_join
   for update of unnamed_join;
 
+select foo.*, unnamed_join.* from
+  t1 join t2 using (a) as foo, t3 as unnamed_join
+  for update of unnamed_join;
+
+select foo.*, unnamed_join.* from
+  t1 join t2 using (a) as foo, t3 as unnamed_join
+  for update of foo;
+
+select bar.*, unnamed_join.* from
+  (t1 join t2 using (a) as foo) as bar, t3 as unnamed_join
+  for update of foo;
+
+select bar.*, unnamed_join.* from
+  (t1 join t2 using (a) as foo) as bar, t3 as unnamed_join
+  for update of bar;
+
 --
 -- regression test for 8.1 merge right join bug
 --
@@ -545,6 +572,7 @@ reset enable_nestloop;
 
 set work_mem to '64kB';
 set enable_mergejoin to off;
+set enable_memoize to off;
 
 explain (costs off)
 select count(*) from tenk1 a, tenk1 b
@@ -554,6 +582,7 @@ select count(*) from tenk1 a, tenk1 b
 
 reset work_mem;
 reset enable_mergejoin;
+reset enable_memoize;
 
 --
 -- regression test for 8.2 bug with improper re-ordering of left joins
@@ -706,6 +735,7 @@ explain (costs off)
 select a.idv, b.idv from tidv a, tidv b where a.idv = b.idv;
 
 set enable_mergejoin = 0;
+set enable_hashjoin = 0;
 
 explain (costs off)
 select a.idv, b.idv from tidv a, tidv b where a.idv = b.idv;
@@ -947,18 +977,21 @@ select * from int4_tbl a full join int4_tbl b on false;
 -- test for ability to use a cartesian join when necessary
 --
 
+create temp table q1 as select 1 as q1;
+create temp table q2 as select 0 as q2;
+analyze q1;
+analyze q2;
+
 explain (costs off)
 select * from
   tenk1 join int4_tbl on f1 = twothousand,
-  int4(sin(1)) q1,
-  int4(sin(0)) q2
+  q1, q2
 where q1 = thousand or q2 = thousand;
 
 explain (costs off)
 select * from
   tenk1 join int4_tbl on f1 = twothousand,
-  int4(sin(1)) q1,
-  int4(sin(0)) q2
+  q1, q2
 where thousand = (q1 + q2);
 
 --
@@ -1089,6 +1122,82 @@ where f1 in ( select c3.f1 from ctetable c2 full join ctetable c3 on true );
 with ctetable as not materialized ( select 1 as f1 )
 select * from ctetable c1
 where f1 in ( select c3.f1 from ctetable c2 full join ctetable c3 on true );
+
+--
+-- test inlining of immutable functions
+--
+create function f_immutable_int4(i integer) returns integer as
+$$ begin return i; end; $$ language plpgsql immutable;
+
+-- check optimization of function scan with join
+explain (costs off)
+select unique1 from tenk1, (select * from f_immutable_int4(1) x) x
+where x = unique1;
+
+explain (verbose, costs off)
+select unique1, x.*
+from tenk1, (select *, random() from f_immutable_int4(1) x) x
+where x = unique1;
+
+explain (costs off)
+select unique1 from tenk1, f_immutable_int4(1) x where x = unique1;
+
+explain (costs off)
+select unique1 from tenk1, lateral f_immutable_int4(1) x where x = unique1;
+
+explain (costs off)
+select unique1 from tenk1, lateral f_immutable_int4(1) x where x in (select 17);
+
+explain (costs off)
+select unique1, x from tenk1 join f_immutable_int4(1) x on unique1 = x;
+
+explain (costs off)
+select unique1, x from tenk1 left join f_immutable_int4(1) x on unique1 = x;
+
+explain (costs off)
+select unique1, x from tenk1 right join f_immutable_int4(1) x on unique1 = x;
+
+explain (costs off)
+select unique1, x from tenk1 full join f_immutable_int4(1) x on unique1 = x;
+
+-- check that pullup of a const function allows further const-folding
+explain (costs off)
+select unique1 from tenk1, f_immutable_int4(1) x where x = 42;
+
+-- test inlining of immutable functions with PlaceHolderVars
+explain (costs off)
+select nt3.id
+from nt3 as nt3
+  left join
+    (select nt2.*, (nt2.b1 or i4 = 42) AS b3
+     from nt2 as nt2
+       left join
+         f_immutable_int4(0) i4
+         on i4 = nt2.nt1_id
+    ) as ss2
+    on ss2.id = nt3.nt2_id
+where nt3.id = 1 and ss2.b3;
+
+drop function f_immutable_int4(int);
+
+-- test inlining when function returns composite
+
+create function mki8(bigint, bigint) returns int8_tbl as
+$$select row($1,$2)::int8_tbl$$ language sql;
+
+create function mki4(int) returns int4_tbl as
+$$select row($1)::int4_tbl$$ language sql;
+
+explain (verbose, costs off)
+select * from mki8(1,2);
+select * from mki8(1,2);
+
+explain (verbose, costs off)
+select * from mki4(42);
+select * from mki4(42);
+
+drop function mki8(bigint, bigint);
+drop function mki4(int);
 
 --
 -- test extraction of restriction OR clauses from join OR clause
@@ -2030,6 +2139,35 @@ select t1.b, ss.phv from join_ut1 t1 left join lateral
 
 drop table join_pt1;
 drop table join_ut1;
+
+--
+-- test estimation behavior with multi-column foreign key and constant qual
+--
+
+begin;
+
+create table fkest (x integer, x10 integer, x10b integer, x100 integer);
+insert into fkest select x, x/10, x/10, x/100 from generate_series(1,1000) x;
+create unique index on fkest(x, x10, x100);
+analyze fkest;
+
+explain (costs off)
+select * from fkest f1
+  join fkest f2 on (f1.x = f2.x and f1.x10 = f2.x10b and f1.x100 = f2.x100)
+  join fkest f3 on f1.x = f3.x
+  where f1.x100 = 2;
+
+alter table fkest add constraint fk
+  foreign key (x, x10b, x100) references fkest (x, x10, x100);
+
+explain (costs off)
+select * from fkest f1
+  join fkest f2 on (f1.x = f2.x and f1.x10 = f2.x10b and f1.x100 = f2.x100)
+  join fkest f3 on f1.x = f3.x
+  where f1.x100 = 2;
+
+rollback;
+
 --
 -- test that foreign key join estimation performs sanely for outer joins
 --
@@ -2187,6 +2325,24 @@ where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1;
 select * from j1
 inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
 where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1;
+
+-- Exercise array keys mark/restore B-Tree code
+explain (costs off) select * from j1
+inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
+where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 = any (array[1]);
+
+select * from j1
+inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
+where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 = any (array[1]);
+
+-- Exercise array keys "find extreme element" B-Tree code
+explain (costs off) select * from j1
+inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
+where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 >= any (array[1,5]);
+
+select * from j1
+inner join j2 on j1.id1 = j2.id1 and j1.id2 = j2.id2
+where j1.id1 % 1000 = 1 and j2.id1 % 1000 = 1 and j2.id1 >= any (array[1,5]);
 
 reset enable_nestloop;
 reset enable_hashjoin;

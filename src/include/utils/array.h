@@ -51,7 +51,7 @@
  * arrays holding the elements.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/array.h
@@ -70,6 +70,11 @@ struct ExprContext;
 
 
 /*
+ * Maximum number of array subscripts (arbitrary limit)
+ */
+#define MAXDIM 6
+
+/*
  * Maximum number of elements in an array.  We limit this to at most about a
  * quarter billion elements, so that it's not necessary to check for overflow
  * in quite so many places --- for instance when palloc'ing Datum arrays.
@@ -84,7 +89,7 @@ struct ExprContext;
  * CAUTION: if you change the header for ordinary arrays you will also
  * need to change the headers for oidvector and int2vector!
  */
-typedef struct
+typedef struct ArrayType
 {
 	int32		vl_len_;		/* varlena header (do not touch directly!) */
 	int			ndim;			/* # of dimensions */
@@ -341,7 +346,7 @@ typedef struct ArrayIteratorData *ArrayIterator;
 /*
  * GUC parameter
  */
-extern bool Array_nulls;
+extern PGDLLIMPORT bool Array_nulls;
 
 /*
  * prototypes for functions defined in arrayfuncs.c

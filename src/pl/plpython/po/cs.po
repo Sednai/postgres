@@ -460,49 +460,6 @@ msgstr "nelze převést Python Unicode objekt na byty"
 msgid "could not extract bytes from encoded string"
 msgstr "nepodařilo se získat byty z kódovaného řetězce"
 
-#~ msgid "could not create new dictionary while building trigger arguments"
-#~ msgstr "během vytváření argumentů triggeru nelze vytvářet nový slovník"
-
-#~ msgid ""
-#~ "This session has previously used Python major version %d, and it is now "
-#~ "attempting to use Python major version %d."
-#~ msgstr ""
-#~ "Tato session již dříve používala Python s hlavní verzí %d, a nyní se "
-#~ "pokouší použít Python s hlavní verzí %d."
-
-#~ msgid "Start a new session to use a different Python major version."
-#~ msgstr "Spouští se nová session pro použití jiné hlavní verze Pythonu."
-
-#~ msgid "could not create globals"
-#~ msgstr "nepodařilo se vytvořit globals"
-
-#~ msgid "plan.status takes no arguments"
-#~ msgstr "plan.status nepřijímá žádné argumenty"
-
-#~ msgid "could not create the base SPI exceptions"
-#~ msgstr "nepodařilo se vygenerovat základní SPI výjimky"
-
-#~ msgid "plpy.prepare does not support composite types"
-#~ msgstr "plpy.prepare nepodporuje složené typy"
-
-#~ msgid "unrecognized error in PLy_spi_execute_fetch_result"
-#~ msgstr "nerozpoznaná chyba v PLy_spi_execute_fetch_result"
-
-#~ msgid "could not create new dictionary"
-#~ msgstr "nepodařilo se vytvořit nový slovník"
-
-#~ msgid "PL/Python does not support conversion to arrays of row types."
-#~ msgstr "PL/Python nepodporuje konverzi na pole řádkových typů."
-
-#~ msgid "cannot convert multidimensional array to Python list"
-#~ msgstr "vícerozměrné pole nelze převést na Python seznam (list)"
-
-#~ msgid "PL/Python only supports one-dimensional arrays."
-#~ msgstr "PL/Python podporuje pouze jednorozměrná pole."
-
-#~ msgid "could not create new Python list"
-#~ msgstr "nelze vytvořit nový Python seznam"
-
 #~ msgid "could not initialize plpy"
 #~ msgstr "nepodařilo se inicializovat plpy"
 

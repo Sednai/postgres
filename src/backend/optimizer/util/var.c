@@ -9,7 +9,7 @@
  * contains variables.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -88,19 +88,16 @@ static Relids alias_relid_set(Query *query, Relids relids);
  *		Create a set of all the distinct varnos present in a parsetree.
  *		Only varnos that reference level-zero rtable entries are considered.
  *
+ * "root" can be passed as NULL if it is not necessary to process
+ * PlaceHolderVars.
+ *
  * NOTE: this is used on not-yet-planned expressions.  It may therefore find
  * bare SubLinks, and if so it needs to recurse into them to look for uplevel
  * references to the desired rtable level!	But when we find a completed
  * SubPlan, we only need to look at the parameters passed to the subplan.
  */
 Relids
-pull_varnos(Node *node)
-{
-	return pull_varnos_new(NULL, node);
-}
-
-Relids
-pull_varnos_new(PlannerInfo *root, Node *node)
+pull_varnos(PlannerInfo *root, Node *node)
 {
 	pull_varnos_context context;
 
@@ -126,13 +123,7 @@ pull_varnos_new(PlannerInfo *root, Node *node)
  *		Only Vars of the specified level are considered.
  */
 Relids
-pull_varnos_of_level(Node *node, int levelsup)
-{
-	return pull_varnos_of_level_new(NULL, node, levelsup);
-}
-
-Relids
-pull_varnos_of_level_new(PlannerInfo *root, Node *node, int levelsup)
+pull_varnos_of_level(PlannerInfo *root, Node *node, int levelsup)
 {
 	pull_varnos_context context;
 
@@ -180,9 +171,13 @@ pull_varnos_walker(Node *node, pull_varnos_context *context)
 		/*
 		 * If a PlaceHolderVar is not of the target query level, ignore it,
 		 * instead recursing into its expression to see if it contains any
-		 * vars that are of the target level.
+		 * vars that are of the target level.  We'll also do that when the
+		 * caller doesn't pass a "root" pointer.  (We probably shouldn't see
+		 * PlaceHolderVars at all in such cases, but if we do, this is a
+		 * reasonable behavior.)
 		 */
-		if (phv->phlevelsup == context->sublevels_up)
+		if (phv->phlevelsup == context->sublevels_up &&
+			context->root != NULL)
 		{
 			/*
 			 * Ideally, the PHV's contribution to context->varnos is its
@@ -213,7 +208,7 @@ pull_varnos_walker(Node *node, pull_varnos_context *context)
 			 */
 			PlaceHolderInfo *phinfo = NULL;
 
-			if (phv->phlevelsup == 0 && context->root)
+			if (phv->phlevelsup == 0)
 			{
 				ListCell   *lc;
 
@@ -805,6 +800,7 @@ flatten_join_alias_vars_mutator(Node *node,
 			rowexpr->args = fields;
 			rowexpr->row_typeid = var->vartype;
 			rowexpr->row_format = COERCE_IMPLICIT_CAST;
+			/* vartype will always be RECORDOID, so we always need colnames */
 			rowexpr->colnames = colnames;
 			rowexpr->location = var->location;
 

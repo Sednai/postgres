@@ -63,6 +63,10 @@ select * from people;
 
 insert into quadtable (f1, q.c1.r, q.c2.i) values(44,55,66);
 
+update quadtable set q.c1.r = 12 where f1 = 2;
+
+update quadtable set q.c1 = 12;  -- error, type mismatch
+
 select * from quadtable;
 
 -- The object here is to ensure that toasted references inside
@@ -511,13 +515,13 @@ select r, r is null as isnull, r is not null as isnotnull from r;
 -- Check parsing of indirect references to composite values (bug #18077)
 --
 explain (verbose, costs off)
-with cte(c) as (select row(1, 2)),
+with cte(c) as materialized (select row(1, 2)),
      cte2(c) as (select * from cte)
 select * from cte2 as t
 where (select * from (select c as c1) s
        where (select (c1).f1 > 0)) is not null;
 
-with cte(c) as (select row(1, 2)),
+with cte(c) as materialized (select row(1, 2)),
      cte2(c) as (select * from cte)
 select * from cte2 as t
 where (select * from (select c as c1) s
@@ -525,13 +529,14 @@ where (select * from (select c as c1) s
 
 -- Also check deparsing of such cases
 create view composite_v as
-with cte(c) as (select row(1, 2)),
+with cte(c) as materialized (select row(1, 2)),
      cte2(c) as (select * from cte)
 select 1 as one from cte2 as t
 where (select * from (select c as c1) s
        where (select (c1).f1 > 0)) is not null;
 select pg_get_viewdef('composite_v', true);
 drop view composite_v;
+
 --
 -- Check cases where the composite comes from a proven-dummy rel (bug #18576)
 --

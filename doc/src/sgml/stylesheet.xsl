@@ -1,8 +1,7 @@
 <?xml version='1.0'?>
 <xsl:stylesheet xmlns:xsl="http://www.w3.org/1999/XSL/Transform"
                 version='1.0'
-                xmlns="http://www.w3.org/TR/xhtml1/transitional"
-                exclude-result-prefixes="#default">
+                xmlns="http://www.w3.org/1999/xhtml">
 
 <xsl:import href="http://docbook.sourceforge.net/release/xsl/current/xhtml/chunk.xsl"/>
 <xsl:include href="stylesheet-common.xsl" />
@@ -23,7 +22,9 @@
 <xsl:param name="html.stylesheet">
   <xsl:choose>
     <xsl:when test="$website.stylesheet = 0">stylesheet.css</xsl:when>
-    <xsl:otherwise>https://www.postgresql.org/media/css/docs.css</xsl:otherwise>
+    <xsl:otherwise>
+      https://www.postgresql.org/media/css/docs-complete.css
+    </xsl:otherwise>
   </xsl:choose>
 </xsl:param>
 

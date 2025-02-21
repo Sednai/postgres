@@ -3,7 +3,7 @@
  * llvmjit.c
  *	  Core part of the LLVM JIT provider.
  *
- * Copyright (c) 2016-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/llvm/llvmjit.c
@@ -12,17 +12,6 @@
  */
 
 #include "postgres.h"
-
-#include "jit/llvmjit.h"
-#include "jit/llvmjit_emit.h"
-
-#include "miscadmin.h"
-
-#include "utils/memutils.h"
-#include "utils/resowner_private.h"
-#include "portability/instr_time.h"
-#include "storage/ipc.h"
-
 
 #include <llvm-c/Analysis.h>
 #include <llvm-c/BitReader.h>
@@ -50,6 +39,16 @@
 #endif
 #endif
 
+#include "jit/llvmjit.h"
+#include "jit/llvmjit_backport.h"
+#include "jit/llvmjit_emit.h"
+#include "miscadmin.h"
+#include "portability/instr_time.h"
+#include "storage/ipc.h"
+#include "utils/memutils.h"
+#include "utils/resowner_private.h"
+
+#define LLVMJIT_LLVM_CONTEXT_REUSE_MAX 100
 
 #define LLVMJIT_LLVM_CONTEXT_REUSE_MAX 100
 
@@ -100,6 +99,7 @@ LLVMTypeRef StructPlanState;
 
 LLVMValueRef AttributeTemplate;
 LLVMValueRef ExecEvalSubroutineTemplate;
+LLVMValueRef ExecEvalBoolSubroutineTemplate;
 
 LLVMModuleRef llvm_types_module = NULL;
 
@@ -254,6 +254,7 @@ static void
 llvm_release_context(JitContext *context)
 {
 	LLVMJitContext *llvm_jit_context = (LLVMJitContext *) context;
+	ListCell   *lc;
 
 	/*
 	 * Consider as cleaned up even if we skip doing so below, that way we can
@@ -277,12 +278,9 @@ llvm_release_context(JitContext *context)
 		llvm_jit_context->module = NULL;
 	}
 
-	while (llvm_jit_context->handles != NIL)
+	foreach(lc, llvm_jit_context->handles)
 	{
-		LLVMJitHandle *jit_handle;
-
-		jit_handle = (LLVMJitHandle *) linitial(llvm_jit_context->handles);
-		llvm_jit_context->handles = list_delete_first(llvm_jit_context->handles);
+		LLVMJitHandle *jit_handle = (LLVMJitHandle *) lfirst(lc);
 
 #if LLVM_VERSION_MAJOR > 11
 		{
@@ -539,7 +537,6 @@ llvm_copy_attributes_at_index(LLVMValueRef v_from, LLVMValueRef v_to, uint32 ind
 {
 	int			num_attributes;
 	LLVMAttributeRef *attrs;
-	int			attno;
 
 	num_attributes = LLVMGetAttributeCountAtIndexPG(v_from, index);
 
@@ -889,10 +886,10 @@ llvm_compile_module(LLVMJitContext *context)
 	MemoryContextSwitchTo(oldcontext);
 
 	ereport(DEBUG1,
-			(errmsg("time to inline: %.3fs, opt: %.3fs, emit: %.3fs",
-					INSTR_TIME_GET_DOUBLE(context->base.instr.inlining_counter),
-					INSTR_TIME_GET_DOUBLE(context->base.instr.optimization_counter),
-					INSTR_TIME_GET_DOUBLE(context->base.instr.emission_counter)),
+			(errmsg_internal("time to inline: %.3fs, opt: %.3fs, emit: %.3fs",
+							 INSTR_TIME_GET_DOUBLE(context->base.instr.inlining_counter),
+							 INSTR_TIME_GET_DOUBLE(context->base.instr.optimization_counter),
+							 INSTR_TIME_GET_DOUBLE(context->base.instr.emission_counter)),
 			 errhidestmt(true),
 			 errhidecontext(true)));
 }
@@ -1037,8 +1034,8 @@ llvm_shutdown(int code, Datum arg)
 	 * has occurred in the middle of LLVM code. It is not safe to call back
 	 * into LLVM (which is why a FATAL error was thrown).
 	 *
-	 * We do need to shutdown LLVM in other shutdown cases, otherwise
-	 * e.g. profiling data won't be written out.
+	 * We do need to shutdown LLVM in other shutdown cases, otherwise e.g.
+	 * profiling data won't be written out.
 	 */
 	if (llvm_in_fatal_on_oom())
 	{
@@ -1182,6 +1179,7 @@ llvm_create_types(void)
 
 	AttributeTemplate = LLVMGetNamedFunction(llvm_types_module, "AttributeTemplate");
 	ExecEvalSubroutineTemplate = LLVMGetNamedFunction(llvm_types_module, "ExecEvalSubroutineTemplate");
+	ExecEvalBoolSubroutineTemplate = LLVMGetNamedFunction(llvm_types_module, "ExecEvalBoolSubroutineTemplate");
 }
 
 /*
@@ -1265,7 +1263,7 @@ llvm_resolve_symbol(const char *symname, void *ctx)
 
 static LLVMErrorRef
 llvm_resolve_symbols(LLVMOrcDefinitionGeneratorRef GeneratorObj, void *Ctx,
-					 LLVMOrcLookupStateRef *LookupState, LLVMOrcLookupKind Kind,
+					 LLVMOrcLookupStateRef * LookupState, LLVMOrcLookupKind Kind,
 					 LLVMOrcJITDylibRef JD, LLVMOrcJITDylibLookupFlags JDLookupFlags,
 					 LLVMOrcCLookupSet LookupSet, size_t LookupSetSize)
 {
@@ -1321,8 +1319,13 @@ llvm_log_jit_error(void *ctx, LLVMErrorRef error)
 static LLVMOrcObjectLayerRef
 llvm_create_object_layer(void *Ctx, LLVMOrcExecutionSessionRef ES, const char *Triple)
 {
+#ifdef USE_LLVM_BACKPORT_SECTION_MEMORY_MANAGER
 	LLVMOrcObjectLayerRef objlayer =
-	LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManager(ES);
+		LLVMOrcCreateRTDyldObjectLinkingLayerWithSafeSectionMemoryManager(ES);
+#else
+	LLVMOrcObjectLayerRef objlayer =
+		LLVMOrcCreateRTDyldObjectLinkingLayerWithSectionMemoryManager(ES);
+#endif
 
 #if defined(HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER) && HAVE_DECL_LLVMCREATEGDBREGISTRATIONLISTENER
 	if (jit_debugging_support)

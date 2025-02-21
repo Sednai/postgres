@@ -35,7 +35,7 @@
  * and munge the system catalogs of the new database.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -51,13 +51,14 @@
 #include <sys/stat.h>
 
 #include "access/heapam.h"
-#include "access/reloptions.h"
 #include "access/htup_details.h"
+#include "access/reloptions.h"
 #include "access/sysattr.h"
 #include "access/tableam.h"
 #include "access/xact.h"
-#include "access/xlog.h"
 #include "access/xloginsert.h"
+#include "access/xlogutils.h"
+#include "catalog/binary_upgrade.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/indexing.h"
@@ -94,6 +95,7 @@ char	   *default_tablespace = NULL;
 char	   *temp_tablespaces = NULL;
 bool		allow_in_place_tablespaces = false;
 
+Oid			binary_upgrade_next_pg_tablespace_oid = InvalidOid;
 
 static void create_tablespace_directories(const char *location,
 										  const Oid tablespaceoid);
@@ -229,7 +231,7 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 	Datum		newOptions;
 	bool		in_place;
 
-	/* Must be super user */
+	/* Must be superuser */
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
@@ -333,8 +335,20 @@ CreateTableSpace(CreateTableSpaceStmt *stmt)
 
 	MemSet(nulls, false, sizeof(nulls));
 
-	tablespaceoid = GetNewOidWithIndex(rel, TablespaceOidIndexId,
-									   Anum_pg_tablespace_oid);
+	if (IsBinaryUpgrade)
+	{
+		/* Use binary-upgrade override for tablespace oid */
+		if (!OidIsValid(binary_upgrade_next_pg_tablespace_oid))
+			ereport(ERROR,
+					(errcode(ERRCODE_INVALID_PARAMETER_VALUE),
+					 errmsg("pg_tablespace OID value not set when in binary upgrade mode")));
+
+		tablespaceoid = binary_upgrade_next_pg_tablespace_oid;
+		binary_upgrade_next_pg_tablespace_oid = InvalidOid;
+	}
+	else
+		tablespaceoid = GetNewOidWithIndex(rel, TablespaceOidIndexId,
+										   Anum_pg_tablespace_oid);
 	values[Anum_pg_tablespace_oid - 1] = ObjectIdGetDatum(tablespaceoid);
 	values[Anum_pg_tablespace_spcname - 1] =
 		DirectFunctionCall1(namein, CStringGetDatum(stmt->tablespacename));
@@ -456,7 +470,6 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 			ereport(NOTICE,
 					(errmsg("tablespace \"%s\" does not exist, skipping",
 							tablespacename)));
-			/* XXX I assume I need one or both of these next two calls */
 			table_endscan(scandesc);
 			table_close(rel, NoLock);
 		}
@@ -472,8 +485,7 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 					   tablespacename);
 
 	/* Disallow drop of the standard tablespaces, even by superuser */
-	if (tablespaceoid == GLOBALTABLESPACE_OID ||
-		tablespaceoid == DEFAULTTABLESPACE_OID)
+	if (IsPinnedObject(TableSpaceRelationId, tablespaceoid))
 		aclcheck_error(ACLCHECK_NO_PRIV, OBJECT_TABLESPACE,
 					   tablespacename);
 
@@ -527,15 +539,23 @@ DropTableSpace(DropTableSpaceStmt *stmt)
 		 * but we can't tell them apart from important data files that we
 		 * mustn't delete.  So instead, we force a checkpoint which will clean
 		 * out any lingering files, and try again.
-		 *
-		 * XXX On Windows, an unlinked file persists in the directory listing
-		 * until no process retains an open handle for the file.  The DDL
-		 * commands that schedule files for unlink send invalidation messages
-		 * directing other PostgreSQL processes to close the files.  DROP
-		 * TABLESPACE should not give up on the tablespace becoming empty
-		 * until all relevant invalidation processing is complete.
 		 */
 		RequestCheckpoint(CHECKPOINT_IMMEDIATE | CHECKPOINT_FORCE | CHECKPOINT_WAIT);
+
+		/*
+		 * On Windows, an unlinked file persists in the directory listing
+		 * until no process retains an open handle for the file.  The DDL
+		 * commands that schedule files for unlink send invalidation messages
+		 * directing other PostgreSQL processes to close the files, but
+		 * nothing guarantees they'll be processed in time.  So, we'll also
+		 * use a global barrier to ask all backends to close all files, and
+		 * wait until they're finished.
+		 */
+		LWLockRelease(TablespaceCreateLock);
+		WaitForProcSignalBarrier(EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
+		LWLockAcquire(TablespaceCreateLock, LW_EXCLUSIVE);
+
+		/* And now try again. */
 		if (!destroy_tablespace_directories(tablespaceoid, false))
 		{
 			/* Still not empty, the files must be important then */
@@ -889,8 +909,7 @@ destroy_tablespace_directories(Oid tablespaceoid, bool redo)
 	/*
 	 * Try to remove the symlink.  We must however deal with the possibility
 	 * that it's a directory instead of a symlink --- this could happen during
-	 * WAL replay (see TablespaceCreateDbspace), and it is also the case on
-	 * Windows where junction points lstat() as directories.
+	 * WAL replay (see TablespaceCreateDbspace).
 	 *
 	 * Note: in the redo case, we'll return true if this final step fails;
 	 * there's no point in retrying it.  Also, ENOENT should provoke no more
@@ -920,7 +939,6 @@ remove_symlink:
 							linkloc)));
 		}
 	}
-#ifdef S_ISLNK
 	else if (S_ISLNK(st.st_mode))
 	{
 		if (unlink(linkloc) < 0)
@@ -933,7 +951,6 @@ remove_symlink:
 							linkloc)));
 		}
 	}
-#endif
 	else
 	{
 		/* Refuse to remove anything that's not a directory or symlink */
@@ -1011,7 +1028,6 @@ remove_tablespace_symlink(const char *linkloc)
 					 errmsg("could not remove directory \"%s\": %m",
 							linkloc)));
 	}
-#ifdef S_ISLNK
 	else if (S_ISLNK(st.st_mode))
 	{
 		if (unlink(linkloc) < 0 && errno != ENOENT)
@@ -1020,7 +1036,6 @@ remove_tablespace_symlink(const char *linkloc)
 					 errmsg("could not remove symbolic link \"%s\": %m",
 							linkloc)));
 	}
-#endif
 	else
 	{
 		/* Refuse to remove anything that's not a directory or symlink */
@@ -1633,6 +1648,9 @@ tblspc_redo(XLogReaderState *record)
 	else if (info == XLOG_TBLSPC_DROP)
 	{
 		xl_tblspc_drop_rec *xlrec = (xl_tblspc_drop_rec *) XLogRecGetData(record);
+
+		/* Close all smgr fds in all backends. */
+		WaitForProcSignalBarrier(EmitProcSignalBarrier(PROCSIGNAL_BARRIER_SMGRRELEASE));
 
 		/*
 		 * If we issued a WAL record for a drop tablespace it implies that

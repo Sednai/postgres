@@ -163,7 +163,7 @@ algorithms.
 
 * The posting list can be accessed with GinGetPosting(itup)
 
-* If GinITupIsCompressed(itup), the posting list is stored in compressed
+* If GinItupIsCompressed(itup), the posting list is stored in compressed
   format. Otherwise it is just an array of ItemPointers. New tuples are always
   stored in compressed format, uncompressed items can be present if the
   database was migrated from 9.3 or earlier version.
@@ -299,7 +299,7 @@ is stored in the higher bits. That requires 43 bits in total, which
 conveniently fits in at most 6 bytes.
 
 A compressed posting list is passed around and stored on disk in a
-PackedPostingList struct. The first item in the list is stored uncompressed
+GinPostingList struct. The first item in the list is stored uncompressed
 as a regular ItemPointerData, followed by the length of the list in bytes,
 followed by the packed items.
 
@@ -396,7 +396,7 @@ leafs. If first stage detects at least one empty page, then at the second stage
 ginScanToDelete() deletes empty pages.
 
 ginScanToDelete() traverses the whole tree in depth-first manner.  It starts
-from the super-exclusive lock on the tree root.  This lock prevents all the
+from the full cleanup lock on the tree root.  This lock prevents all the
 concurrent insertions into this tree while we're deleting pages.  However,
 there are still might be some in-progress readers, who traversed root before
 we locked it.
@@ -413,7 +413,7 @@ leftmost leaf of the tree.
 Deletion algorithm keeps exclusive locks on left siblings of pages comprising
 currently investigated path.  Thus, if current page is to be removed, all
 required pages to remove both downlink and rightlink are already locked.  That
-evades potential right to left page locking order, which could deadlock with
+avoids potential right to left page locking order, which could deadlock with
 concurrent stepping right.
 
 A search concurrent to page deletion might already have read a pointer to the

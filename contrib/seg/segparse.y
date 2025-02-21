@@ -41,13 +41,15 @@ static char strbuf[25] = {
 %expect 0
 %name-prefix="seg_yy"
 
-%union {
-	struct BND {
-		float val;
-		char  ext;
-		char  sigd;
+%union
+{
+	struct BND
+	{
+		float		val;
+		char		ext;
+		char		sigd;
 	} bnd;
-	char * text;
+	char	   *text;
 }
 %token <text> SEGFLOAT
 %token <text> RANGE
@@ -122,7 +124,7 @@ range: boundary PLUMIN deviation
 boundary: SEGFLOAT
 	{
 		/* temp variable avoids a gcc 3.3.x bug on Sparc64 */
-		float val = seg_atof($1);
+		float		val = seg_atof($1);
 
 		$$.ext = '\0';
 		$$.sigd = sig_digits($1);
@@ -131,7 +133,7 @@ boundary: SEGFLOAT
 	| EXTENSION SEGFLOAT
 	{
 		/* temp variable avoids a gcc 3.3.x bug on Sparc64 */
-		float val = seg_atof($2);
+		float		val = seg_atof($2);
 
 		$$.ext = $1[0];
 		$$.sigd = sig_digits($2);
@@ -142,7 +144,7 @@ boundary: SEGFLOAT
 deviation: SEGFLOAT
 	{
 		/* temp variable avoids a gcc 3.3.x bug on Sparc64 */
-		float val = seg_atof($1);
+		float		val = seg_atof($1);
 
 		$$.ext = '\0';
 		$$.sigd = sig_digits($1);
@@ -156,7 +158,7 @@ deviation: SEGFLOAT
 static float
 seg_atof(const char *value)
 {
-	Datum datum;
+	Datum		datum;
 
 	datum = DirectFunctionCall1(float4in, CStringGetDatum(value));
 	return DatumGetFloat4(datum);

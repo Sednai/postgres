@@ -19,19 +19,18 @@
 #include <math.h>
 
 #include "catalog/pg_type_d.h"
-
-#include "ecpgtype.h"
-#include "ecpglib.h"
 #include "ecpgerrno.h"
+#include "ecpglib.h"
 #include "ecpglib_extern.h"
-#include "sqlca.h"
-#include "sqlda-native.h"
-#include "sqlda-compat.h"
-#include "sql3types.h"
-#include "pgtypes_numeric.h"
+#include "ecpgtype.h"
 #include "pgtypes_date.h"
-#include "pgtypes_timestamp.h"
 #include "pgtypes_interval.h"
+#include "pgtypes_numeric.h"
+#include "pgtypes_timestamp.h"
+#include "sql3types.h"
+#include "sqlca.h"
+#include "sqlda-compat.h"
+#include "sqlda-native.h"
 
 /*
  *	This function returns a newly malloced string that has ' and \
@@ -130,7 +129,7 @@ next_insert(char *text, int pos, bool questionmarks, bool std_strings)
 				for (i = p + 1; isdigit((unsigned char) text[i]); i++)
 					 /* empty loop body */ ;
 				if (!isalpha((unsigned char) text[i]) &&
-					isascii((unsigned char) text[i]) &&text[i] != '_')
+					isascii((unsigned char) text[i]) && text[i] != '_')
 					/* not dollar delimited quote */
 					return p;
 			}
@@ -228,7 +227,7 @@ ecpg_is_type_an_array(int type, const struct statement *stmt, const struct varia
 			return ECPG_ARRAY_ERROR;
 		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), CIRCLEOID, ECPG_ARRAY_NONE, stmt->lineno))
 			return ECPG_ARRAY_ERROR;
-		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), CASHOID, ECPG_ARRAY_NONE, stmt->lineno))
+		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), MONEYOID, ECPG_ARRAY_NONE, stmt->lineno))
 			return ECPG_ARRAY_ERROR;
 		if (!ecpg_type_infocache_push(&(stmt->connection->cache_head), INETOID, ECPG_ARRAY_NONE, stmt->lineno))
 			return ECPG_ARRAY_ERROR;
@@ -541,13 +540,11 @@ ecpg_store_input(const int lineno, const bool force_indicator, const struct vari
 			if (*(long *) var->ind_value < 0L)
 				*tobeinserted_p = NULL;
 			break;
-#ifdef HAVE_LONG_LONG_INT
 		case ECPGt_long_long:
 		case ECPGt_unsigned_long_long:
 			if (*(long long int *) var->ind_value < (long long) 0)
 				*tobeinserted_p = NULL;
 			break;
-#endif							/* HAVE_LONG_LONG_INT */
 		case ECPGt_NO_INDICATOR:
 			if (force_indicator == false)
 			{
@@ -679,7 +676,7 @@ ecpg_store_input(const int lineno, const bool force_indicator, const struct vari
 
 				*tobeinserted_p = mallocedval;
 				break;
-#ifdef HAVE_LONG_LONG_INT
+
 			case ECPGt_long_long:
 				if (!(mallocedval = ecpg_alloc(asize * 30, lineno)))
 					return false;
@@ -717,7 +714,7 @@ ecpg_store_input(const int lineno, const bool force_indicator, const struct vari
 
 				*tobeinserted_p = mallocedval;
 				break;
-#endif							/* HAVE_LONG_LONG_INT */
+
 			case ECPGt_float:
 				if (!(mallocedval = ecpg_alloc(asize * 25, lineno)))
 					return false;
@@ -1392,7 +1389,6 @@ ecpg_build_params(struct statement *stmt)
 				if (sqlda->sqln == desc_counter)
 					desc_counter = 0;
 			}
-
 		}
 		else
 		{
@@ -1907,7 +1903,7 @@ ecpg_process_output(struct statement *stmt, bool clear_result)
 
 			/*
 			 * execution should never reach this code because it is already
-			 * handled in ECPGcheck_PQresult()
+			 * handled in ecpg_check_PQresult()
 			 */
 			ecpg_log("ecpg_process_output on line %d: unknown execution status type\n",
 					 stmt->lineno);
@@ -2067,8 +2063,9 @@ ecpg_do_prologue(int lineno, const int compat, const int force_indicator,
 	/*------
 	 * create a list of variables
 	 *
-	 * The variables are listed with input variables preceding outputvariables
-	 * The end of each group is marked by an end marker. per variable we list:
+	 * The variables are listed with input variables preceding output
+	 * variables.  The end of each group is marked by an end marker.
+	 * Per variable we list:
 	 *
 	 * type - as defined in ecpgtype.h
 	 * value - where to store the data
@@ -2078,9 +2075,9 @@ ecpg_do_prologue(int lineno, const int compat, const int force_indicator,
 	 * offset - offset between ith and (i+1)th entry in an array, normally
 	 * that means sizeof(type)
 	 * ind_type - type of indicator variable
-	 * ind_value - pointer to indicator variable
+	 * ind_pointer - pointer to indicator variable
 	 * ind_varcharsize - empty
-	 * ind_arraysize - arraysize of indicator array
+	 * ind_arrsize - arraysize of indicator array
 	 * ind_offset - indicator offset
 	 *------
 	 */

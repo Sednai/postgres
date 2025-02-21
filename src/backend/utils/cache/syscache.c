@@ -3,7 +3,7 @@
  * syscache.c
  *	  System cache management routines
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,6 @@
 
 #include "access/htup_details.h"
 #include "access/sysattr.h"
-#include "catalog/indexing.h"
 #include "catalog/pg_aggregate.h"
 #include "catalog/pg_am.h"
 #include "catalog/pg_amop.h"
@@ -48,18 +47,20 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
+#include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_partitioned_table.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_publication.h"
+#include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
 #include "catalog/pg_range.h"
+#include "catalog/pg_replication_origin.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_seclabel.h"
 #include "catalog/pg_sequence.h"
 #include "catalog/pg_shdepend.h"
 #include "catalog/pg_shdescription.h"
 #include "catalog/pg_shseclabel.h"
-#include "catalog/pg_replication_origin.h"
 #include "catalog/pg_statistic.h"
 #include "catalog/pg_statistic_ext.h"
 #include "catalog/pg_statistic_ext_data.h"
@@ -79,10 +80,13 @@
 #include "catalog/pgxc_node.h"
 #include "catalog/pgxc_group.h"
 #endif
-#include "utils/rel.h"
+#include "lib/qunique.h"
+#include "miscadmin.h"
+#include "storage/lmgr.h"
 #include "utils/catcache.h"
+#include "utils/inval.h"
+#include "utils/rel.h"
 #include "utils/syscache.h"
-
 
 /*---------------------------------------------------------------------------
 
@@ -102,8 +106,8 @@
 
 	There must be a unique index underlying each syscache (ie, an index
 	whose key is the same as that of the cache).  If there is not one
-	already, add definitions for it to include/catalog/indexing.h: you need
-	to add a DECLARE_UNIQUE_INDEX macro and a #define for the index OID.
+	already, add the definition for it to include/catalog/pg_*.h using
+	DECLARE_UNIQUE_INDEX.
 	(Adding an index requires a catversion.h update, while simply
 	adding/deleting caches only requires a recompile.)
 
@@ -579,6 +583,28 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		8
 	},
+	{ParameterAclRelationId,	/* PARAMETERACLNAME */
+		ParameterAclParnameIndexId,
+		1,
+		{
+			Anum_pg_parameter_acl_parname,
+			0,
+			0,
+			0
+		},
+		4
+	},
+	{ParameterAclRelationId,	/* PARAMETERACLOID */
+		ParameterAclOidIndexId,
+		1,
+		{
+			Anum_pg_parameter_acl_oid,
+			0,
+			0,
+			0
+		},
+		4
+	},
 #ifdef PGXC
 	{PgxcClassRelationId,	/* PGXCCLASSRELID */
 		PgxcClassPgxcRelIdIndexId,
@@ -691,6 +717,28 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		8
 	},
+	{PublicationNamespaceRelationId,	/* PUBLICATIONNAMESPACE */
+		PublicationNamespaceObjectIndexId,
+		1,
+		{
+			Anum_pg_publication_namespace_oid,
+			0,
+			0,
+			0
+		},
+		64
+	},
+	{PublicationNamespaceRelationId,	/* PUBLICATIONNAMESPACEMAP */
+		PublicationNamespacePnnspidPnpubidIndexId,
+		2,
+		{
+			Anum_pg_publication_namespace_pnnspid,
+			Anum_pg_publication_namespace_pnpubid,
+			0,
+			0
+		},
+		64
+	},
 	{PublicationRelationId,		/* PUBLICATIONOID */
 		PublicationObjectIndexId,
 		1,
@@ -724,6 +772,18 @@ static const struct cachedesc cacheinfo[] = {
 		},
 		64
 	},
+	{RangeRelationId,			/* RANGEMULTIRANGE */
+		RangeMultirangeTypidIndexId,
+		1,
+		{
+			Anum_pg_range_rngmultitypid,
+			0,
+			0,
+			0
+		},
+		4
+	},
+
 	{RangeRelationId,			/* RANGETYPE */
 		RangeTypidIndexId,
 		1,
@@ -802,11 +862,11 @@ static const struct cachedesc cacheinfo[] = {
 		32
 	},
 	{StatisticExtDataRelationId,	/* STATEXTDATASTXOID */
-		StatisticExtDataStxoidIndexId,
-		1,
+		StatisticExtDataStxoidInhIndexId,
+		2,
 		{
 			Anum_pg_statistic_ext_data_stxoid,
-			0,
+			Anum_pg_statistic_ext_data_stxdinherit,
 			0,
 			0
 		},
@@ -1083,8 +1143,6 @@ void
 InitCatalogCache(void)
 {
 	int			cacheId;
-	int			i,
-				j;
 
 	StaticAssertStmt(SysCacheSize == (int) lengthof(cacheinfo),
 					 "SysCacheSize does not match syscache.c's array");
@@ -1121,21 +1179,15 @@ InitCatalogCache(void)
 	/* Sort and de-dup OID arrays, so we can use binary search. */
 	pg_qsort(SysCacheRelationOid, SysCacheRelationOidSize,
 			 sizeof(Oid), oid_compare);
-	for (i = 1, j = 0; i < SysCacheRelationOidSize; i++)
-	{
-		if (SysCacheRelationOid[i] != SysCacheRelationOid[j])
-			SysCacheRelationOid[++j] = SysCacheRelationOid[i];
-	}
-	SysCacheRelationOidSize = j + 1;
+	SysCacheRelationOidSize =
+		qunique(SysCacheRelationOid, SysCacheRelationOidSize, sizeof(Oid),
+				oid_compare);
 
 	pg_qsort(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize,
 			 sizeof(Oid), oid_compare);
-	for (i = 1, j = 0; i < SysCacheSupportingRelOidSize; i++)
-	{
-		if (SysCacheSupportingRelOid[i] != SysCacheSupportingRelOid[j])
-			SysCacheSupportingRelOid[++j] = SysCacheSupportingRelOid[i];
-	}
-	SysCacheSupportingRelOidSize = j + 1;
+	SysCacheSupportingRelOidSize =
+		qunique(SysCacheSupportingRelOid, SysCacheSupportingRelOidSize,
+				sizeof(Oid), oid_compare);
 
 	CacheInitialized = true;
 }
@@ -1248,6 +1300,103 @@ ReleaseSysCache(HeapTuple tuple)
 }
 
 /*
+ * SearchSysCacheLocked1
+ *
+ * Combine SearchSysCache1() with acquiring a LOCKTAG_TUPLE at mode
+ * InplaceUpdateTupleLock.  This is a tool for complying with the
+ * README.tuplock section "Locking to write inplace-updated tables".  After
+ * the caller's heap_update(), it should UnlockTuple(InplaceUpdateTupleLock)
+ * and ReleaseSysCache().
+ *
+ * The returned tuple may be the subject of an uncommitted update, so this
+ * doesn't prevent the "tuple concurrently updated" error.
+ */
+HeapTuple
+SearchSysCacheLocked1(int cacheId,
+					  Datum key1)
+{
+	CatCache   *cache = SysCache[cacheId];
+	ItemPointerData tid;
+	LOCKTAG		tag;
+
+	/*----------
+	 * Since inplace updates may happen just before our LockTuple(), we must
+	 * return content acquired after LockTuple() of the TID we return.  If we
+	 * just fetched twice instead of looping, the following sequence would
+	 * defeat our locking:
+	 *
+	 * GRANT:   SearchSysCache1() = TID (1,5)
+	 * GRANT:   LockTuple(pg_class, (1,5))
+	 * [no more inplace update of (1,5) until we release the lock]
+	 * CLUSTER: SearchSysCache1() = TID (1,5)
+	 * CLUSTER: heap_update() = TID (1,8)
+	 * CLUSTER: COMMIT
+	 * GRANT:   SearchSysCache1() = TID (1,8)
+	 * GRANT:   return (1,8) from SearchSysCacheLocked1()
+	 * VACUUM:  SearchSysCache1() = TID (1,8)
+	 * VACUUM:  LockTuple(pg_class, (1,8))  # two TIDs now locked for one rel
+	 * VACUUM:  inplace update
+	 * GRANT:   heap_update() = (1,9)  # lose inplace update
+	 *
+	 * In the happy case, this takes two fetches, one to determine the TID to
+	 * lock and another to get the content and confirm the TID didn't change.
+	 *
+	 * This is valid even if the row gets updated to a new TID, the old TID
+	 * becomes LP_UNUSED, and the row gets updated back to its old TID.  We'd
+	 * still hold the right LOCKTAG_TUPLE and a copy of the row captured after
+	 * the LOCKTAG_TUPLE.
+	 */
+	ItemPointerSetInvalid(&tid);
+	for (;;)
+	{
+		HeapTuple	tuple;
+		LOCKMODE	lockmode = InplaceUpdateTupleLock;
+
+		tuple = SearchSysCache1(cacheId, key1);
+		if (ItemPointerIsValid(&tid))
+		{
+			if (!HeapTupleIsValid(tuple))
+			{
+				LockRelease(&tag, lockmode, false);
+				return tuple;
+			}
+			if (ItemPointerEquals(&tid, &tuple->t_self))
+				return tuple;
+			LockRelease(&tag, lockmode, false);
+		}
+		else if (!HeapTupleIsValid(tuple))
+			return tuple;
+
+		tid = tuple->t_self;
+		ReleaseSysCache(tuple);
+
+		/*
+		 * Do like LockTuple(rel, &tid, lockmode).  While cc_relisshared won't
+		 * change from one iteration to another, it may have been a temporary
+		 * "false" until our first SearchSysCache1().
+		 */
+		SET_LOCKTAG_TUPLE(tag,
+						  cache->cc_relisshared ? InvalidOid : MyDatabaseId,
+						  cache->cc_reloid,
+						  ItemPointerGetBlockNumber(&tid),
+						  ItemPointerGetOffsetNumber(&tid));
+		(void) LockAcquire(&tag, lockmode, false, false);
+
+		/*
+		 * If an inplace update just finished, ensure we process the syscache
+		 * inval.  XXX this is insufficient: the inplace updater may not yet
+		 * have reached AtEOXact_Inval().  See test at inplace-inval.spec.
+		 *
+		 * If a heap_update() call just released its LOCKTAG_TUPLE, we'll
+		 * probably find the old tuple and reach "tuple concurrently updated".
+		 * If that heap_update() aborts, our LOCKTAG_TUPLE blocks inplace
+		 * updates while our caller works.
+		 */
+		AcceptInvalidationMessages();
+	}
+}
+
+/*
  * SearchSysCacheCopy
  *
  * A convenience routine that does SearchSysCache and (if successful)
@@ -1266,6 +1415,28 @@ SearchSysCacheCopy(int cacheId,
 				newtuple;
 
 	tuple = SearchSysCache(cacheId, key1, key2, key3, key4);
+	if (!HeapTupleIsValid(tuple))
+		return tuple;
+	newtuple = heap_copytuple(tuple);
+	ReleaseSysCache(tuple);
+	return newtuple;
+}
+
+/*
+ * SearchSysCacheLockedCopy1
+ *
+ * Meld SearchSysCacheLockedCopy1 with SearchSysCacheCopy().  After the
+ * caller's heap_update(), it should UnlockTuple(InplaceUpdateTupleLock) and
+ * heap_freetuple().
+ */
+HeapTuple
+SearchSysCacheLockedCopy1(int cacheId,
+						  Datum key1)
+{
+	HeapTuple	tuple,
+				newtuple;
+
+	tuple = SearchSysCacheLocked1(cacheId, key1);
 	if (!HeapTupleIsValid(tuple))
 		return tuple;
 	newtuple = heap_copytuple(tuple);

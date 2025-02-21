@@ -8,7 +8,7 @@
  *	  Structs that need to be client-visible are in pqcomm.h.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/libpq/libpq-be.h
@@ -70,8 +70,12 @@ typedef struct
 
 typedef enum CAC_state
 {
-	CAC_OK, CAC_STARTUP, CAC_SHUTDOWN, CAC_RECOVERY, CAC_TOOMANY,
-	CAC_SUPERUSER
+	CAC_OK,
+	CAC_STARTUP,
+	CAC_SHUTDOWN,
+	CAC_RECOVERY,
+	CAC_NOTCONSISTENT,
+	CAC_TOOMANY
 } CAC_state;
 
 
@@ -155,6 +159,19 @@ typedef struct Port
 	HbaLine    *hba;
 
 	/*
+	 * Authenticated identity.  The meaning of this identifier is dependent on
+	 * hba->auth_method; it is the identity (if any) that the user presented
+	 * during the authentication cycle, before they were assigned a database
+	 * role.  (It is effectively the "SYSTEM-USERNAME" of a pg_ident usermap
+	 * -- though the exact string in use may be different, depending on pg_hba
+	 * options.)
+	 *
+	 * authn_id is NULL if the user has not actually been authenticated, for
+	 * example if the "trust" auth method is in use.
+	 */
+	const char *authn_id;
+
+	/*
 	 * TCP keepalive and user timeout settings.
 	 *
 	 * default values are 0 if AF_UNIX or not yet known; current values are 0
@@ -190,11 +207,12 @@ typedef struct Port
 	 */
 	bool		ssl_in_use;
 	char	   *peer_cn;
+	char	   *peer_dn;
 	bool		peer_cert_valid;
 
 	/*
 	 * OpenSSL structures. (Keep these last so that the locations of other
-	 * fields are the same whether or not you build with OpenSSL.)
+	 * fields are the same whether or not you build with SSL enabled.)
 	 */
 #ifdef USE_OPENSSL
 	SSL		   *ssl;
@@ -207,19 +225,20 @@ typedef struct Port
  *	Hardcoded DH parameters, used in ephemeral DH keying.  (See also
  *	README.SSL for more details on EDH.)
  *
- *	If you want to create your own hardcoded DH parameters
- *	for fun and profit, review "Assigned Number for SKIP
- *	Protocols" (http://www.skip-vpn.org/spec/numbers.html)
- *	for suggestions.
+ *	This is the 2048-bit DH parameter from RFC 3526.  The generation of the
+ *	prime is specified in RFC 2412 Appendix E, which also discusses the
+ *	design choice of the generator.  Note that when loaded with OpenSSL
+ *	this causes DH_check() to fail on DH_NOT_SUITABLE_GENERATOR, where
+ *	leaking a bit is preferred.
  */
 #define FILE_DH2048 \
 "-----BEGIN DH PARAMETERS-----\n\
-MIIBCAKCAQEA9kJXtwh/CBdyorrWqULzBej5UxE5T7bxbrlLOCDaAadWoxTpj0BV\n\
-89AHxstDqZSt90xkhkn4DIO9ZekX1KHTUPj1WV/cdlJPPT2N286Z4VeSWc39uK50\n\
-T8X8dryDxUcwYc58yWb/Ffm7/ZFexwGq01uejaClcjrUGvC/RgBYK+X0iP1YTknb\n\
-zSC0neSRBzZrM2w4DUUdD3yIsxx8Wy2O9vPJI8BD8KVbGI2Ou1WMuF040zT9fBdX\n\
-Q6MdGGzeMyEstSr/POGxKUAYEY18hKcKctaGxAMZyAcpesqVDNmWn6vQClCbAkbT\n\
-CD1mpF1Bn5x8vYlLIhkmuquiXsNV6TILOwIBAg==\n\
+MIIBCAKCAQEA///////////JD9qiIWjCNMTGYouA3BzRKQJOCIpnzHQCC76mOxOb\n\
+IlFKCHmONATd75UZs806QxswKwpt8l8UN0/hNW1tUcJF5IW1dmJefsb0TELppjft\n\
+awv/XLb0Brft7jhr+1qJn6WunyQRfEsf5kkoZlHs5Fs9wgB8uKFjvwWY2kg2HFXT\n\
+mmkWP6j9JM9fg2VdI9yjrZYcYvNWIIVSu57VKQdwlpZtZww1Tkq8mATxdGwIyhgh\n\
+fDKQXkYuNs474553LBgOhgObJ4Oi7Aeij7XFXfBvTFLJ3ivL9pVYFxg5lUl86pVq\n\
+5RXSJhiY+gUQFXKOWoqsqmj//////////wIBAg==\n\
 -----END DH PARAMETERS-----\n"
 
 /*
@@ -265,7 +284,6 @@ extern ssize_t be_tls_write(Port *port, void *ptr, size_t len, int *waitfor);
  * Return information about the SSL connection.
  */
 extern int	be_tls_get_cipher_bits(Port *port);
-extern bool be_tls_get_compression(Port *port);
 extern const char *be_tls_get_version(Port *port);
 extern const char *be_tls_get_cipher(Port *port);
 extern void be_tls_get_peer_subject_name(Port *port, char *ptr, size_t len);
@@ -287,6 +305,12 @@ extern void be_tls_get_peer_serial(Port *port, char *ptr, size_t len);
 extern char *be_tls_get_certificate_hash(Port *port, size_t *len);
 #endif
 
+/* init hook for SSL, the default sets the password callback if appropriate */
+#ifdef USE_OPENSSL
+typedef void (*openssl_tls_init_hook_typ) (SSL_CTX *context, bool isServerStart);
+extern PGDLLIMPORT openssl_tls_init_hook_typ openssl_tls_init_hook;
+#endif
+
 #endif							/* USE_SSL */
 
 #ifdef ENABLE_GSS
@@ -302,7 +326,7 @@ extern ssize_t be_gssapi_read(Port *port, void *ptr, size_t len);
 extern ssize_t be_gssapi_write(Port *port, void *ptr, size_t len);
 #endif							/* ENABLE_GSS */
 
-extern ProtocolVersion FrontendProtocol;
+extern PGDLLIMPORT ProtocolVersion FrontendProtocol;
 
 /* TCP keepalives configuration. These are no-ops on an AF_UNIX socket. */
 

@@ -131,8 +131,7 @@ CREATE INDEX test1_id_index ON test1 (id);
    In production environments this is often unacceptable.
    It is possible to allow writes to occur in parallel with index
    creation, but there are several caveats to be aware of &mdash;
-   for more information see <xref linkend="sql-createindex-concurrently"
-   endterm="sql-createindex-concurrently-title"/>.
+   for more information see <xref linkend="sql-createindex-concurrently"/>.
   </para>
 
   <para>
@@ -155,32 +154,39 @@ CREATE INDEX test1_id_index ON test1 (id);
    linkend="bloom">bloom</link>.
    Each index type uses a different
    algorithm that is best suited to different types of indexable clauses.
-   By default, the <command>CREATE INDEX</command> command creates
+   By default, the <link linkend="sql-createindex"><command>CREATE
+   INDEX</command></link> command creates
    B-tree indexes, which fit the most common situations.
+   The other index types are selected by writing the keyword
+   <literal>USING</literal> followed by the index type name.
+   For example, to create a Hash index:
+<programlisting>
+CREATE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> USING HASH (<replaceable>column</replaceable>);
+</programlisting>
   </para>
 
-  <para>
+  <sect2 id="indexes-types-btree">
+   <title>B-Tree</title>
+
    <indexterm>
     <primary>index</primary>
-    <secondary>B-tree</secondary>
+    <secondary>B-Tree</secondary>
    </indexterm>
    <indexterm>
-    <primary>B-tree</primary>
+    <primary>B-Tree</primary>
     <see>index</see>
    </indexterm>
+
+  <para>
    B-trees can handle equality and range queries on data that can be sorted
    into some ordering.
    In particular, the <productname>PostgreSQL</productname> query planner
    will consider using a B-tree index whenever an indexed column is
    involved in a comparison using one of these operators:
 
-   <simplelist>
-    <member><literal>&lt;</literal></member>
-    <member><literal>&lt;=</literal></member>
-    <member><literal>=</literal></member>
-    <member><literal>&gt;=</literal></member>
-    <member><literal>&gt;</literal></member>
-   </simplelist>
+<synopsis>
+&lt; &nbsp; &lt;= &nbsp; = &nbsp; &gt;= &nbsp; &gt;
+</synopsis>
 
    Constructs equivalent to combinations of these operators, such as
    <literal>BETWEEN</literal> and <literal>IN</literal>, can also be implemented with
@@ -209,8 +215,11 @@ CREATE INDEX test1_id_index ON test1 (id);
    This is not always faster than a simple scan and sort, but it is
    often helpful.
   </para>
+  </sect2>
 
-  <para>
+  <sect2 id="indexes-types-hash">
+   <title>Hash</title>
+
    <indexterm>
     <primary>index</primary>
     <secondary>hash</secondary>
@@ -219,17 +228,24 @@ CREATE INDEX test1_id_index ON test1 (id);
     <primary>hash</primary>
     <see>index</see>
    </indexterm>
-   Hash indexes can only handle simple equality comparisons.
-   The query planner will consider using a hash index whenever an
-   indexed column is involved in a comparison using the
-   <literal>=</literal> operator.
-   The following command is used to create a hash index:
-<synopsis>
-CREATE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> USING HASH (<replaceable>column</replaceable>);
-</synopsis>
-  </para>
 
   <para>
+   Hash indexes store a 32-bit hash code derived from the
+   value of the indexed column. Hence,
+   such indexes can only handle simple equality comparisons.
+   The query planner will consider using a hash index whenever an
+   indexed column is involved in a comparison using the
+   equal operator:
+
+<synopsis>
+=
+</synopsis>
+  </para>
+  </sect2>
+
+  <sect2 id="indexes-type-gist">
+   <title>GiST</title>
+
    <indexterm>
     <primary>index</primary>
     <secondary>GiST</secondary>
@@ -238,6 +254,8 @@ CREATE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable>
     <primary>GiST</primary>
     <see>index</see>
    </indexterm>
+
+  <para>
    GiST indexes are not a single kind of index, but rather an infrastructure
    within which many different indexing strategies can be implemented.
    Accordingly, the particular operators with which a GiST index can be
@@ -247,20 +265,9 @@ CREATE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable>
    for several two-dimensional geometric data types, which support indexed
    queries using these operators:
 
-   <simplelist>
-    <member><literal>&lt;&lt;</literal></member>
-    <member><literal>&amp;&lt;</literal></member>
-    <member><literal>&amp;&gt;</literal></member>
-    <member><literal>&gt;&gt;</literal></member>
-    <member><literal>&lt;&lt;|</literal></member>
-    <member><literal>&amp;&lt;|</literal></member>
-    <member><literal>|&amp;&gt;</literal></member>
-    <member><literal>|&gt;&gt;</literal></member>
-    <member><literal>@&gt;</literal></member>
-    <member><literal>&lt;@</literal></member>
-    <member><literal>~=</literal></member>
-    <member><literal>&amp;&amp;</literal></member>
-   </simplelist>
+<synopsis>
+&lt;&lt; &nbsp; &amp;&lt; &nbsp; &amp;&gt; &nbsp; &gt;&gt; &nbsp; &lt;&lt;| &nbsp; &amp;&lt;| &nbsp; |&amp;&gt; &nbsp; |&gt;&gt; &nbsp; @&gt; &nbsp; &lt;@ &nbsp; ~= &nbsp; &amp;&amp;
+</synopsis>
 
    (See <xref linkend="functions-geometry"/> for the meaning of
    these operators.)
@@ -283,8 +290,11 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
    In <xref linkend="gist-builtin-opclasses-table"/>, operators that can be
    used in this way are listed in the column <quote>Ordering Operators</quote>.
   </para>
+  </sect2>
 
-  <para>
+  <sect2 id="indexes-type-spgist">
+   <title>SP-GiST</title>
+
    <indexterm>
     <primary>index</primary>
     <secondary>SP-GiST</secondary>
@@ -293,6 +303,8 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
     <primary>SP-GiST</primary>
     <see>index</see>
    </indexterm>
+
+  <para>
    SP-GiST indexes, like GiST indexes, offer an infrastructure that supports
    various kinds of searches.  SP-GiST permits implementation of a wide range
    of different non-balanced disk-based data structures, such as quadtrees,
@@ -301,14 +313,9 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
    for two-dimensional points, which support indexed
    queries using these operators:
 
-   <simplelist>
-    <member><literal>&lt;&lt;</literal></member>
-    <member><literal>&gt;&gt;</literal></member>
-    <member><literal>~=</literal></member>
-    <member><literal>&lt;@</literal></member>
-    <member><literal>&lt;^</literal></member>
-    <member><literal>&gt;^</literal></member>
-   </simplelist>
+<synopsis>
+&lt;&lt; &nbsp; &gt;&gt; &nbsp; ~= &nbsp; &lt;@ &nbsp; &lt;&lt;| &nbsp; |&gt;&gt;
+</synopsis>
 
    (See <xref linkend="functions-geometry"/> for the meaning of
    these operators.)
@@ -320,11 +327,14 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
   <para>
    Like GiST, SP-GiST supports <quote>nearest-neighbor</quote> searches.
    For SP-GiST operator classes that support distance ordering, the
-   corresponding operator is specified in the <quote>Ordering Operators</quote>
+   corresponding operator is listed in the <quote>Ordering Operators</quote>
    column in <xref linkend="spgist-builtin-opclasses-table"/>.
   </para>
+  </sect2>
 
-  <para>
+  <sect2 id="indexes-types-gin">
+   <title>GIN</title>
+
    <indexterm>
     <primary>index</primary>
     <secondary>GIN</secondary>
@@ -333,6 +343,8 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
     <primary>GIN</primary>
     <see>index</see>
    </indexterm>
+
+  <para>
    GIN indexes are <quote>inverted indexes</quote> which are appropriate for
    data values that contain multiple component values, such as arrays.  An
    inverted index contains a separate entry for each component value, and
@@ -349,12 +361,9 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
    <productname>PostgreSQL</productname> includes a GIN operator class
    for arrays, which supports indexed queries using these operators:
 
-   <simplelist>
-    <member><literal>&lt;@</literal></member>
-    <member><literal>@&gt;</literal></member>
-    <member><literal>=</literal></member>
-    <member><literal>&amp;&amp;</literal></member>
-   </simplelist>
+<synopsis>
+&lt;@ &nbsp; @&gt; &nbsp; = &nbsp; &amp;&amp;
+</synopsis>
 
    (See <xref linkend="functions-array"/> for the meaning of
    these operators.)
@@ -364,8 +373,11 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
    classes are available in the <literal>contrib</literal> collection or as separate
    projects.  For more information see <xref linkend="gin"/>.
   </para>
+  </sect2>
 
-  <para>
+  <sect2 id="indexes-types-brin">
+   <title>BRIN</title>
+
    <indexterm>
     <primary>index</primary>
     <secondary>BRIN</secondary>
@@ -374,8 +386,12 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
     <primary>BRIN</primary>
     <see>index</see>
    </indexterm>
+
+  <para>
    BRIN indexes (a shorthand for Block Range INdexes) store summaries about
    the values stored in consecutive physical block ranges of a table.
+   Thus, they are most effective for columns whose values are well-correlated
+   with the physical order of the table rows.
    Like GiST, SP-GiST and GIN,
    BRIN can support many different indexing strategies,
    and the particular operators with which a BRIN index can be used
@@ -385,18 +401,15 @@ SELECT * FROM places ORDER BY location <-> point '(101,456)' LIMIT 10;
    values in the column for each block range.  This supports indexed queries
    using these operators:
 
-   <simplelist>
-    <member><literal>&lt;</literal></member>
-    <member><literal>&lt;=</literal></member>
-    <member><literal>=</literal></member>
-    <member><literal>&gt;=</literal></member>
-    <member><literal>&gt;</literal></member>
-   </simplelist>
+<synopsis>
+&lt; &nbsp; &lt;= &nbsp; = &nbsp; &gt;= &nbsp; &gt;
+</synopsis>
 
    The BRIN operator classes included in the standard distribution are
    documented in <xref linkend="brin-builtin-opclasses-table"/>.
    For more information see <xref linkend="brin"/>.
   </para>
+  </sect2>
  </sect1>
 
 
@@ -432,9 +445,11 @@ CREATE INDEX test2_mm_idx ON test2 (major, minor);
   </para>
 
   <para>
-   Currently, only the B-tree, GiST, GIN, and BRIN
-   index types support multicolumn
-   indexes.  Up to 32 columns can be specified.  (This limit can be
+   Currently, only the B-tree, GiST, GIN, and BRIN index types support
+   multiple-key-column indexes.  Whether there can be multiple key
+   columns is independent of whether <literal>INCLUDE</literal> columns
+   can be added to the index.  Indexes can have up to 32 columns,
+   including <literal>INCLUDE</literal> columns.  (This limit can be
    altered when building <productname>PostgreSQL</productname>; see the
    file <filename>pg_config_manual.h</filename>.)
   </para>
@@ -682,16 +697,18 @@ CREATE INDEX test3_desc_index ON test3 (id DESC NULLS LAST);
    Indexes can also be used to enforce uniqueness of a column's value,
    or the uniqueness of the combined values of more than one column.
 <synopsis>
-CREATE UNIQUE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> (<replaceable>column</replaceable> <optional>, ...</optional>);
+CREATE UNIQUE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> (<replaceable>column</replaceable> <optional>, ...</optional>) <optional> NULLS <optional> NOT </optional> DISTINCT </optional>;
 </synopsis>
    Currently, only B-tree indexes can be declared unique.
   </para>
 
   <para>
    When an index is declared unique, multiple table rows with equal
-   indexed values are not allowed.  Null values are not considered
-   equal.  A multicolumn unique index will only reject cases where all
-   indexed columns are equal in multiple rows.
+   indexed values are not allowed.  By default, null values in a unique column
+   are not considered equal, allowing multiple nulls in the column.  The
+   <literal>NULLS NOT DISTINCT</literal> option modifies this and causes the
+   index to treat nulls as equal.  A multicolumn unique index will only reject
+   cases where all indexed columns are equal in multiple rows.
   </para>
 
   <para>
@@ -1231,8 +1248,8 @@ CREATE UNIQUE INDEX tab_x_y ON tab(x) INCLUDE (y);
    likely to not need to access the heap.  If the heap tuple must be visited
    anyway, it costs nothing more to get the column's value from there.
    Other restrictions are that expressions are not currently supported as
-   included columns, and that only B-tree and GiST indexes currently support
-   included columns.
+   included columns, and that only B-tree, GiST and SP-GiST indexes currently
+   support included columns.
   </para>
 
   <para>
@@ -1336,7 +1353,7 @@ SELECT target FROM tests WHERE subject = 'some-subject' AND success;
    An index definition can specify an <firstterm>operator
    class</firstterm> for each column of an index.
 <synopsis>
-CREATE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> (<replaceable>column</replaceable> <replaceable>opclass</replaceable> <optional><replaceable>sort options</replaceable></optional> <optional>, ...</optional>);
+CREATE INDEX <replaceable>name</replaceable> ON <replaceable>table</replaceable> (<replaceable>column</replaceable> <replaceable>opclass</replaceable> [ ( <replaceable>opclass_options</replaceable> ) ] <optional><replaceable>sort options</replaceable></optional> <optional>, ...</optional>);
 </synopsis>
    The operator class identifies the operators to be used by the index
    for that column.  For example, a B-tree index on the type <type>int4</type>
@@ -1447,6 +1464,15 @@ SELECT am.amname AS index_method,
     ORDER BY index_method, opfamily_name, opfamily_operator;
 </programlisting>
   </para>
+
+  <tip>
+   <para>
+    <xref linkend="app-psql"/> has
+    commands <command>\dAc</command>, <command>\dAf</command>,
+    and <command>\dAo</command>, which provide slightly more sophisticated
+    versions of these queries.
+   </para>
+  </tip>
  </sect1>
 
 

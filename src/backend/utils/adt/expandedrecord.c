@@ -7,7 +7,7 @@
  * store values of named composite types, domains over named composite types,
  * and record types (registered or anonymous).
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,8 +18,9 @@
  */
 #include "postgres.h"
 
+#include "access/detoast.h"
+#include "access/heaptoast.h"
 #include "access/htup_details.h"
-#include "access/tuptoaster.h"
 #include "catalog/heap.h"
 #include "catalog/pg_type.h"
 #include "utils/builtins.h"
@@ -170,7 +171,7 @@ make_expanded_record_from_typeid(Oid type_id, int32 typmod,
 
 		/* If we called lookup_rowtype_tupdesc, release the pin it took */
 		if (type_id == RECORDOID)
-			DecrTupleDescRefCount(tupdesc);
+			ReleaseTupleDesc(tupdesc);
 	}
 	else
 	{
@@ -853,7 +854,7 @@ expanded_record_fetch_tupdesc(ExpandedRecordHeader *erh)
 		tupdesc->tdrefcount++;
 
 		/* Release the pin lookup_rowtype_tupdesc acquired */
-		DecrTupleDescRefCount(tupdesc);
+		ReleaseTupleDesc(tupdesc);
 	}
 	else
 	{
@@ -1158,7 +1159,7 @@ expanded_record_set_field_internal(ExpandedRecordHeader *erh, int fnumber,
 			{
 				/* Detoasting should be done in short-lived context. */
 				oldcxt = MemoryContextSwitchTo(get_short_term_cxt(erh));
-				newValue = PointerGetDatum(heap_tuple_fetch_attr((struct varlena *) DatumGetPointer(newValue)));
+				newValue = PointerGetDatum(detoast_external_attr((struct varlena *) DatumGetPointer(newValue)));
 				MemoryContextSwitchTo(oldcxt);
 			}
 			else
@@ -1304,7 +1305,7 @@ expanded_record_set_fields(ExpandedRecordHeader *erh,
 					if (expand_external)
 					{
 						/* Detoast as requested while copying the value */
-						newValue = PointerGetDatum(heap_tuple_fetch_attr((struct varlena *) DatumGetPointer(newValue)));
+						newValue = PointerGetDatum(detoast_external_attr((struct varlena *) DatumGetPointer(newValue)));
 					}
 					else
 					{

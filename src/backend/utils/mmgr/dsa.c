@@ -39,7 +39,7 @@
  * empty and be returned to the free page manager, and whole segments can
  * become empty and be returned to the operating system.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -1232,6 +1232,7 @@ create_internal(void *place, size_t size,
 	 * space.
 	 */
 	control = (dsa_area_control *) place;
+	memset(place, 0, sizeof(*control));
 	control->segment_header.magic =
 		DSA_SEGMENT_HEADER_MAGIC ^ control_handle ^ 0;
 	control->segment_header.next = DSA_SEGMENT_INDEX_NONE;
@@ -1242,14 +1243,10 @@ create_internal(void *place, size_t size,
 	control->handle = control_handle;
 	control->max_total_segment_size = (size_t) -1;
 	control->total_segment_size = size;
-	memset(&control->segment_handles[0], 0,
-		   sizeof(dsm_handle) * DSA_MAX_SEGMENTS);
 	control->segment_handles[0] = control_handle;
 	for (i = 0; i < DSA_NUM_SEGMENT_BINS; ++i)
 		control->segment_bins[i] = DSA_SEGMENT_INDEX_NONE;
-	control->high_segment_index = 0;
 	control->refcnt = 1;
-	control->freed_segment_counter = 0;
 	control->lwlock_tranche_id = tranche_id;
 
 	/*
@@ -2228,8 +2225,8 @@ check_for_freed_segments(dsa_area *area)
 
 	/*
 	 * Any other process that has freed a segment has incremented
-	 * free_segment_counter while holding an LWLock, and that must precede any
-	 * backend creating a new segment in the same slot while holding an
+	 * freed_segment_counter while holding an LWLock, and that must precede
+	 * any backend creating a new segment in the same slot while holding an
 	 * LWLock, and that must precede the creation of any dsa_pointer pointing
 	 * into the new segment which might reach us here, and the caller must
 	 * have sent the dsa_pointer to this process using appropriate memory

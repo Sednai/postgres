@@ -4,7 +4,7 @@
  *	  Low level infrastructure related to expression evaluation
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/executor/execExpr.h
@@ -20,6 +20,7 @@
 /* forward references to avoid circularity */
 struct ExprEvalStep;
 struct SubscriptingRefState;
+struct ScalarArrayOpExprHashTable;
 
 /* Bits in ExprState->flags (see also execnodes.h for public flag bits): */
 /* expression's interpreter has been initialized */
@@ -31,6 +32,11 @@ struct SubscriptingRefState;
 typedef void (*ExecEvalSubroutine) (ExprState *state,
 									struct ExprEvalStep *op,
 									ExprContext *econtext);
+
+/* API for out-of-line evaluation subroutines returning bool */
+typedef bool (*ExecEvalBoolSubroutine) (ExprState *state,
+										struct ExprEvalStep *op,
+										ExprContext *econtext);
 
 /* ExprEvalSteps that cache a composite type's tupdesc need one of these */
 /* (it fits in-line in some step types, otherwise allocate out-of-line) */
@@ -199,8 +205,8 @@ typedef enum ExprEvalOp
 	 */
 	EEOP_FIELDSTORE_FORM,
 
-	/* Process a container subscript; short-circuit expression to NULL if NULL */
-	EEOP_SBSREF_SUBSCRIPT,
+	/* Process container subscripts; possibly short-circuit result to NULL */
+	EEOP_SBSREF_SUBSCRIPTS,
 
 	/*
 	 * Compute old container element/slice when a SubscriptingRef assignment
@@ -227,22 +233,25 @@ typedef enum ExprEvalOp
 	/* evaluate assorted special-purpose expression types */
 	EEOP_CONVERT_ROWTYPE,
 	EEOP_SCALARARRAYOP,
+	EEOP_HASHED_SCALARARRAYOP,
 	EEOP_XMLEXPR,
 	EEOP_AGGREF,
 	EEOP_GROUPING_FUNC,
 	EEOP_WINDOW_FUNC,
 	EEOP_SUBPLAN,
-	EEOP_ALTERNATIVE_SUBPLAN,
 
 	/* aggregation related nodes */
 	EEOP_AGG_STRICT_DESERIALIZE,
 	EEOP_AGG_DESERIALIZE,
 	EEOP_AGG_STRICT_INPUT_CHECK_ARGS,
 	EEOP_AGG_STRICT_INPUT_CHECK_NULLS,
-	EEOP_AGG_INIT_TRANS,
-	EEOP_AGG_STRICT_TRANS_CHECK,
+	EEOP_AGG_PLAIN_PERGROUP_NULLCHECK,
+	EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYVAL,
+	EEOP_AGG_PLAIN_TRANS_STRICT_BYVAL,
 	EEOP_AGG_PLAIN_TRANS_BYVAL,
-	EEOP_AGG_PLAIN_TRANS,
+	EEOP_AGG_PLAIN_TRANS_INIT_STRICT_BYREF,
+	EEOP_AGG_PLAIN_TRANS_STRICT_BYREF,
+	EEOP_AGG_PLAIN_TRANS_BYREF,
 	EEOP_AGG_ORDERED_TRANS_DATUM,
 	EEOP_AGG_ORDERED_TRANS_TUPLE,
 
@@ -336,6 +345,7 @@ typedef struct ExprEvalStep
 			/* faster to access without additional indirection: */
 			PGFunction	fn_addr;	/* actual call address */
 			int			nargs;	/* number of arguments */
+			bool		make_ro;	/* make arg0 R/O (used only for NULLIF) */
 		}			func;
 
 		/* for EEOP_BOOL_*_STEP */
@@ -506,19 +516,19 @@ typedef struct ExprEvalStep
 			int			ncolumns;
 		}			fieldstore;
 
-		/* for EEOP_SBSREF_SUBSCRIPT */
+		/* for EEOP_SBSREF_SUBSCRIPTS */
 		struct
 		{
+			ExecEvalBoolSubroutine subscriptfunc;	/* evaluation subroutine */
 			/* too big to have inline */
 			struct SubscriptingRefState *state;
-			int			off;	/* 0-based index of this subscript */
-			bool		isupper;	/* is it upper or lower subscript? */
 			int			jumpdone;	/* jump here on null */
 		}			sbsref_subscript;
 
 		/* for EEOP_SBSREF_OLD / ASSIGN / FETCH */
 		struct
 		{
+			ExecEvalSubroutine subscriptfunc;	/* evaluation subroutine */
 			/* too big to have inline */
 			struct SubscriptingRefState *state;
 		}			sbsref;
@@ -561,6 +571,17 @@ typedef struct ExprEvalStep
 			PGFunction	fn_addr;	/* actual call address */
 		}			scalararrayop;
 
+		/* for EEOP_HASHED_SCALARARRAYOP */
+		struct
+		{
+			bool		has_nulls;
+			bool		inclause;	/* true for IN and false for NOT IN */
+			struct ScalarArrayOpExprHashTable *elements_tab;
+			FmgrInfo   *finfo;	/* function's lookup data */
+			FunctionCallInfo fcinfo_data;	/* arguments etc */
+			ScalarArrayOpExpr *saop;
+		}			hashedscalararrayop;
+
 		/* for EEOP_XMLEXPR */
 		struct
 		{
@@ -576,21 +597,19 @@ typedef struct ExprEvalStep
 		/* for EEOP_AGGREF */
 		struct
 		{
-			/* out-of-line state, modified by nodeAgg.c */
-			AggrefExprState *astate;
+			int			aggno;
 		}			aggref;
 
 		/* for EEOP_GROUPING_FUNC */
 		struct
 		{
-			AggState   *parent; /* parent Agg */
 			List	   *clauses;	/* integer list of column numbers */
 		}			grouping_func;
 
 		/* for EEOP_WINDOW_FUNC */
 		struct
 		{
-			/* out-of-line state, modified by nodeWindowFunc.c */
+			/* out-of-line state, modified by nodeWindowAgg.c */
 			WindowFuncExprState *wfstate;
 		}			window_func;
 
@@ -601,17 +620,9 @@ typedef struct ExprEvalStep
 			SubPlanState *sstate;
 		}			subplan;
 
-		/* for EEOP_ALTERNATIVE_SUBPLAN */
-		struct
-		{
-			/* out-of-line state, created by nodeSubplan.c */
-			AlternativeSubPlanState *asstate;
-		}			alternative_subplan;
-
 		/* for EEOP_AGG_*DESERIALIZE */
 		struct
 		{
-			AggState   *aggstate;
 			FunctionCallInfo fcinfo_data;
 			int			jumpnull;
 		}			agg_deserialize;
@@ -636,32 +647,17 @@ typedef struct ExprEvalStep
 			int			jumpnull;
 		}			agg_strict_input_check;
 
-		/* for EEOP_AGG_INIT_TRANS */
+		/* for EEOP_AGG_PLAIN_PERGROUP_NULLCHECK */
 		struct
 		{
-			AggState   *aggstate;
-			AggStatePerTrans pertrans;
-			ExprContext *aggcontext;
-			int			setno;
-			int			transno;
 			int			setoff;
 			int			jumpnull;
-		}			agg_init_trans;
+		}			agg_plain_pergroup_nullcheck;
 
-		/* for EEOP_AGG_STRICT_TRANS_CHECK */
+		/* for EEOP_AGG_PLAIN_TRANS_[INIT_][STRICT_]{BYVAL,BYREF} */
+		/* for EEOP_AGG_ORDERED_TRANS_{DATUM,TUPLE} */
 		struct
 		{
-			AggState   *aggstate;
-			int			setno;
-			int			transno;
-			int			setoff;
-			int			jumpnull;
-		}			agg_strict_trans_check;
-
-		/* for EEOP_AGG_{PLAIN,ORDERED}_TRANS* */
-		struct
-		{
-			AggState   *aggstate;
 			AggStatePerTrans pertrans;
 			ExprContext *aggcontext;
 			int			setno;
@@ -677,35 +673,40 @@ typedef struct SubscriptingRefState
 {
 	bool		isassignment;	/* is it assignment, or just fetch? */
 
-	Oid			refelemtype;	/* OID of the container element type */
-	int16		refattrlength;	/* typlen of container type */
-	int16		refelemlength;	/* typlen of the container element type */
-	bool		refelembyval;	/* is the element type pass-by-value? */
-	char		refelemalign;	/* typalign of the element type */
+	/* workspace for type-specific subscripting code */
+	void	   *workspace;
 
-	/* numupper and upperprovided[] are filled at compile time */
-	/* at runtime, extracted subscript datums get stored in upperindex[] */
+	/* numupper and upperprovided[] are filled at expression compile time */
+	/* at runtime, subscripts are computed in upperindex[]/upperindexnull[] */
 	int			numupper;
-	bool		upperprovided[MAXDIM];
-	int			upperindex[MAXDIM];
+	bool	   *upperprovided;	/* indicates if this position is supplied */
+	Datum	   *upperindex;
+	bool	   *upperindexnull;
 
 	/* similarly for lower indexes, if any */
 	int			numlower;
-	bool		lowerprovided[MAXDIM];
-	int			lowerindex[MAXDIM];
-
-	/* subscript expressions get evaluated into here */
-	Datum		subscriptvalue;
-	bool		subscriptnull;
+	bool	   *lowerprovided;
+	Datum	   *lowerindex;
+	bool	   *lowerindexnull;
 
 	/* for assignment, new value to assign is evaluated into here */
 	Datum		replacevalue;
 	bool		replacenull;
 
-	/* if we have a nested assignment, SBSREF_OLD puts old value here */
+	/* if we have a nested assignment, sbs_fetch_old puts old value here */
 	Datum		prevvalue;
 	bool		prevnull;
 } SubscriptingRefState;
+
+/* Execution step methods used for SubscriptingRef */
+typedef struct SubscriptExecSteps
+{
+	/* See nodes/subscripting.h for more detail about these */
+	ExecEvalBoolSubroutine sbs_check_subscripts;	/* process subscripts */
+	ExecEvalSubroutine sbs_fetch;	/* fetch an element */
+	ExecEvalSubroutine sbs_assign;	/* assign to an element */
+	ExecEvalSubroutine sbs_fetch_old;	/* fetch old value for assignment */
+} SubscriptExecSteps;
 
 
 /* functions in execExpr.c */
@@ -749,27 +750,24 @@ extern void ExecEvalFieldStoreDeForm(ExprState *state, ExprEvalStep *op,
 									 ExprContext *econtext);
 extern void ExecEvalFieldStoreForm(ExprState *state, ExprEvalStep *op,
 								   ExprContext *econtext);
-extern bool ExecEvalSubscriptingRef(ExprState *state, ExprEvalStep *op);
-extern void ExecEvalSubscriptingRefFetch(ExprState *state, ExprEvalStep *op);
-extern void ExecEvalSubscriptingRefOld(ExprState *state, ExprEvalStep *op);
-extern void ExecEvalSubscriptingRefAssign(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalConvertRowtype(ExprState *state, ExprEvalStep *op,
 								   ExprContext *econtext);
 extern void ExecEvalScalarArrayOp(ExprState *state, ExprEvalStep *op);
+extern void ExecEvalHashedScalarArrayOp(ExprState *state, ExprEvalStep *op,
+										ExprContext *econtext);
 extern void ExecEvalConstraintNotNull(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalConstraintCheck(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalXmlExpr(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalGroupingFunc(ExprState *state, ExprEvalStep *op);
 extern void ExecEvalSubPlan(ExprState *state, ExprEvalStep *op,
 							ExprContext *econtext);
-extern void ExecEvalAlternativeSubPlan(ExprState *state, ExprEvalStep *op,
-									   ExprContext *econtext);
 extern void ExecEvalWholeRowVar(ExprState *state, ExprEvalStep *op,
 								ExprContext *econtext);
 extern void ExecEvalSysVar(ExprState *state, ExprEvalStep *op,
 						   ExprContext *econtext, TupleTableSlot *slot);
 
-extern void ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup pergroup);
+extern void ExecAggInitGroup(AggState *aggstate, AggStatePerTrans pertrans, AggStatePerGroup pergroup,
+							 ExprContext *aggcontext);
 extern Datum ExecAggTransReparent(AggState *aggstate, AggStatePerTrans pertrans,
 								  Datum newValue, bool newValueIsNull,
 								  Datum oldValue, bool oldValueIsNull);

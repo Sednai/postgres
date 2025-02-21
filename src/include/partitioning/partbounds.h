@@ -2,7 +2,7 @@
  *
  * partbounds.h
  *
- * Copyright (c) 2007-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2007-2022, PostgreSQL Global Development Group
  *
  * src/include/partitioning/partbounds.h
  *
@@ -12,10 +12,10 @@
 #define PARTBOUNDS_H
 
 #include "fmgr.h"
-#include "nodes/parsenodes.h"
-#include "nodes/pg_list.h"
+#include "parser/parse_node.h"
 #include "partitioning/partdefs.h"
-#include "utils/relcache.h"
+
+struct RelOptInfo;				/* avoid including pathnodes.h here */
 
 
 /*
@@ -61,6 +61,20 @@
  * The indexes array is indexed according to the hash key's remainder modulo
  * the greatest modulus, and it contains either the partition index accepting
  * that remainder, or -1 if there is no partition for that remainder.
+ *
+ * For LIST partitioned tables, we track the partition indexes of partitions
+ * which are possibly "interleaved" partitions.  A partition is considered
+ * interleaved if it allows multiple values and there exists at least one
+ * other partition which could contain a value that lies between those values.
+ * For example, if a partition exists FOR VALUES IN(3,5) and another partition
+ * exists FOR VALUES IN (4), then the IN(3,5) partition is an interleaved
+ * partition.  The same is possible with DEFAULT partitions since they can
+ * contain any value that does not belong in another partition.  This field
+ * only serves as proof that a particular partition is not interleaved, not
+ * proof that it is interleaved.  When we're uncertain, we marked the
+ * partition as interleaved.  The interleaved_parts field is only ever set for
+ * RELOPT_BASEREL and RELOPT_OTHER_MEMBER_REL, it is always left NULL for join
+ * relations.
  */
 typedef struct PartitionBoundInfoData
 {
@@ -70,6 +84,10 @@ typedef struct PartitionBoundInfoData
 	PartitionRangeDatumKind **kind; /* The kind of each range bound datum;
 									 * NULL for hash and list partitioned
 									 * tables */
+	Bitmapset  *interleaved_parts;	/* Partition indexes of partitions which
+									 * may be interleaved. See above. This is
+									 * only set for LIST partitioned tables */
+	int			nindexes;		/* Length of the indexes[] array */
 	int		   *indexes;		/* Partition indexes */
 	int			null_index;		/* Index of the null-accepting partition; -1
 								 * if there isn't one */
@@ -85,7 +103,7 @@ extern int	get_hash_partition_greatest_modulus(PartitionBoundInfo b);
 extern uint64 compute_partition_hash_value(int partnatts, FmgrInfo *partsupfunc,
 										   Oid *partcollation,
 										   Datum *values, bool *isnull);
-extern List *get_qual_from_partbound(Relation rel, Relation parent,
+extern List *get_qual_from_partbound(Relation parent,
 									 PartitionBoundSpec *spec);
 extern PartitionBoundInfo partition_bounds_create(PartitionBoundSpec **boundspecs,
 												  int nparts, PartitionKey key, int **mapping);
@@ -94,9 +112,19 @@ extern bool partition_bounds_equal(int partnatts, int16 *parttyplen,
 								   PartitionBoundInfo b2);
 extern PartitionBoundInfo partition_bounds_copy(PartitionBoundInfo src,
 												PartitionKey key);
-extern bool partitions_are_ordered(PartitionBoundInfo boundinfo, int nparts);
+extern PartitionBoundInfo partition_bounds_merge(int partnatts,
+												 FmgrInfo *partsupfunc,
+												 Oid *partcollation,
+												 struct RelOptInfo *outer_rel,
+												 struct RelOptInfo *inner_rel,
+												 JoinType jointype,
+												 List **outer_parts,
+												 List **inner_parts);
+extern bool partitions_are_ordered(PartitionBoundInfo boundinfo,
+								   Bitmapset *live_parts);
 extern void check_new_partition_bound(char *relname, Relation parent,
-									  PartitionBoundSpec *spec);
+									  PartitionBoundSpec *spec,
+									  ParseState *pstate);
 extern void check_default_partition_contents(Relation parent,
 											 Relation defaultRel,
 											 PartitionBoundSpec *new_spec);

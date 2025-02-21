@@ -16,7 +16,7 @@
  * bitcode.
  *
  *
- * Copyright (c) 2016-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/llvm/llvmjit_types.c
@@ -50,6 +50,7 @@ size_t		TypeSizeT;
 bool		TypeStorageBool;
 
 ExecEvalSubroutine TypeExecEvalSubroutine;
+ExecEvalBoolSubroutine TypeExecEvalBoolSubroutine;
 
 NullableDatum StructNullableDatum;
 AggState	StructAggState;
@@ -101,6 +102,20 @@ ExecEvalSubroutineTemplate(ExprState *state,
 						   ExecEvalSubroutine);
 }
 
+extern bool ExecEvalBoolSubroutineTemplate(ExprState *state,
+										   struct ExprEvalStep *op,
+										   ExprContext *econtext);
+bool
+ExecEvalBoolSubroutineTemplate(ExprState *state,
+							   struct ExprEvalStep *op,
+							   ExprContext *econtext)
+{
+	AssertVariableIsOfType(&ExecEvalBoolSubroutineTemplate,
+						   ExecEvalBoolSubroutine);
+
+	return false;
+}
+
 /*
  * Clang represents stdbool.h style booleans that are returned by functions
  * differently (as i1) than stored ones (as i8). Therefore we do not just need
@@ -122,14 +137,40 @@ FunctionReturningBool(void)
  */
 void	   *referenced_functions[] =
 {
+	ExecAggInitGroup,
+	ExecAggTransReparent,
+	ExecEvalAggOrderedTransDatum,
+	ExecEvalAggOrderedTransTuple,
+	ExecEvalArrayCoerce,
+	ExecEvalArrayExpr,
+	ExecEvalConstraintCheck,
+	ExecEvalConstraintNotNull,
+	ExecEvalConvertRowtype,
+	ExecEvalCurrentOfExpr,
+	ExecEvalFieldSelect,
+	ExecEvalFieldStoreDeForm,
+	ExecEvalFieldStoreForm,
+	ExecEvalFuncExprFusage,
+	ExecEvalFuncExprStrictFusage,
+	ExecEvalGroupingFunc,
+	ExecEvalMinMax,
+	ExecEvalNextValueExpr,
+	ExecEvalParamExec,
+	ExecEvalParamExtern,
+	ExecEvalRow,
+	ExecEvalRowNotNull,
+	ExecEvalRowNull,
+	ExecEvalSQLValueFunction,
+	ExecEvalScalarArrayOp,
+	ExecEvalHashedScalarArrayOp,
+	ExecEvalSubPlan,
+	ExecEvalSysVar,
+	ExecEvalWholeRowVar,
+	ExecEvalXmlExpr,
+	MakeExpandedObjectReadOnlyInternal,
+	slot_getmissingattrs,
+	slot_getsomeattrs_int,
 	strlen,
 	varsize_any,
-	slot_getsomeattrs_int,
-	slot_getmissingattrs,
-	MakeExpandedObjectReadOnlyInternal,
-	ExecEvalSubscriptingRef,
-	ExecEvalSysVar,
-	ExecAggTransReparent,
-	ExecAggInitGroup,
-	ExecInterpExprStillValid
+	ExecInterpExprStillValid,
 };

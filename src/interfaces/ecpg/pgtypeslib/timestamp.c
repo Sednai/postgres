@@ -11,11 +11,10 @@
 #error -ffast-math is known to break this code
 #endif
 
-#include "pgtypeslib_extern.h"
 #include "dt.h"
-#include "pgtypes_timestamp.h"
 #include "pgtypes_date.h"
-
+#include "pgtypes_timestamp.h"
+#include "pgtypeslib_extern.h"
 
 static int64
 time2t(const int hour, const int min, const int sec, const fsec_t fsec)
@@ -100,7 +99,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 	int64		dDate,
 				date0;
 	int64		time;
-#if defined(HAVE_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
+#if defined(HAVE_STRUCT_TM_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
 	time_t		utime;
 	struct tm  *tx;
 #endif
@@ -134,7 +133,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 		 */
 		if (IS_VALID_UTIME(tm->tm_year, tm->tm_mon, tm->tm_mday))
 		{
-#if defined(HAVE_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
+#if defined(HAVE_STRUCT_TM_TM_ZONE) || defined(HAVE_INT_TIMEZONE)
 
 			utime = dt / USECS_PER_SEC +
 				((date0 - date2j(1970, 1, 1)) * INT64CONST(86400));
@@ -147,7 +146,7 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 			tm->tm_min = tx->tm_min;
 			tm->tm_isdst = tx->tm_isdst;
 
-#if defined(HAVE_TM_ZONE)
+#if defined(HAVE_STRUCT_TM_TM_ZONE)
 			tm->tm_gmtoff = tx->tm_gmtoff;
 			tm->tm_zone = tx->tm_zone;
 
@@ -159,7 +158,8 @@ timestamp2tm(timestamp dt, int *tzp, struct tm *tm, fsec_t *fsec, const char **t
 			if (tzn != NULL)
 				*tzn = TZNAME_GLOBAL[(tm->tm_isdst > 0)];
 #endif
-#else							/* not (HAVE_TM_ZONE || HAVE_INT_TIMEZONE) */
+#else							/* not (HAVE_STRUCT_TM_TM_ZONE ||
+								 * HAVE_INT_TIMEZONE) */
 			*tzp = 0;
 			/* Mark this as *no* time zone available */
 			tm->tm_isdst = -1;
@@ -275,8 +275,8 @@ PGTYPEStimestamp_to_asc(timestamp tstamp)
 			   *tm = &tt;
 	char		buf[MAXDATELEN + 1];
 	fsec_t		fsec;
-	int			DateStyle = 1;	/* this defaults to ISO_DATES, shall we make
-								 * it an option? */
+	int			DateStyle = 1;	/* this defaults to USE_ISO_DATES, shall we
+								 * make it an option? */
 
 	if (TIMESTAMP_NOT_FINITE(tstamp))
 		EncodeSpecialTimestamp(tstamp, buf);
@@ -298,7 +298,6 @@ PGTYPEStimestamp_current(timestamp * ts)
 	GetCurrentDateTime(&tm);
 	if (errno == 0)
 		tm2timestamp(&tm, 0, NULL, ts);
-	return;
 }
 
 static int
@@ -864,8 +863,6 @@ PGTYPEStimestamp_add_interval(timestamp * tin, interval * span, timestamp * tout
 {
 	if (TIMESTAMP_NOT_FINITE(*tin))
 		*tout = *tin;
-
-
 	else
 	{
 		if (span->month != 0)
@@ -873,7 +870,6 @@ PGTYPEStimestamp_add_interval(timestamp * tin, interval * span, timestamp * tout
 			struct tm	tt,
 					   *tm = &tt;
 			fsec_t		fsec;
-
 
 			if (timestamp2tm(*tin, NULL, tm, &fsec, NULL) != 0)
 				return -1;
@@ -899,12 +895,11 @@ PGTYPEStimestamp_add_interval(timestamp * tin, interval * span, timestamp * tout
 				return -1;
 		}
 
-
 		*tin += span->time;
 		*tout = *tin;
 	}
-	return 0;
 
+	return 0;
 }
 
 
@@ -925,7 +920,6 @@ PGTYPEStimestamp_sub_interval(timestamp * tin, interval * span, timestamp * tout
 
 	tspan.month = -span->month;
 	tspan.time = -span->time;
-
 
 	return PGTYPEStimestamp_add_interval(tin, &tspan, tout);
 }

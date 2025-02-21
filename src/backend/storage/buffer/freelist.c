@@ -4,7 +4,7 @@
  *	  routines for managing the buffer pool's replacement strategy.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -177,7 +177,7 @@ ClockSweepTick(void)
  * should not call this.
  */
 bool
-have_free_buffer()
+have_free_buffer(void)
 {
 	if (StrategyControl->firstFreeBuffer >= 0)
 		return true;
@@ -308,7 +308,6 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state)
 				return buf;
 			}
 			UnlockBufHdr(buf, local_buf_state);
-
 		}
 	}
 
@@ -381,10 +380,10 @@ StrategyFreeBuffer(BufferDesc *buf)
 }
 
 /*
- * StrategySyncStart -- tell BufferSync where to start syncing
+ * StrategySyncStart -- tell BgBufferSync where to start syncing
  *
  * The result is the buffer index of the best buffer to sync first.
- * BufferSync() will proceed circularly around the buffer array from there.
+ * BgBufferSync() will proceed circularly around the buffer array from there.
  *
  * In addition, we return the completed-pass count (which is effectively
  * the higher-order bits of nextVictimBuffer) and the count of recent buffer

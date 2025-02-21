@@ -28,8 +28,6 @@ CREATE OPERATOR CLASS box_ops DEFAULT
 	OPERATOR 10	<<|,
 	OPERATOR 11	|>>,
 	OPERATOR 12	|&>,
-	OPERATOR 13	~,
-	OPERATOR 14	@,
 	FUNCTION 1	gist_box_consistent(internal, box, smallint, oid, internal),
 	FUNCTION 2	gist_box_union(internal, internal),
 	-- don't need compress, decompress, or fetch functions
@@ -53,7 +51,7 @@ SET enable_bitmapscan = OFF;
 --     WHERE home_base @ '(200,200),(2000,1000)'::box
 --     ORDER BY (home_base[0])[0];
 SELECT * FROM fast_emp4000
-    WHERE home_base @ '(200,200),(2000,1000)'::box
+    WHERE home_base <@ '(200,200),(2000,1000)'::box
     ORDER BY (home_base[0])[0];
 
 -- EXPLAIN (COSTS OFF)
@@ -163,6 +161,51 @@ WHERE pg_depend.refclassid = 'pg_am'::regclass
     AND pg_am.amname = 'heap2'
 ORDER BY classid, objid, objsubid;
 
+-- ALTER TABLE SET ACCESS METHOD
+CREATE TABLE heaptable USING heap AS
+  SELECT a, repeat(a::text, 100) FROM generate_series(1,9) AS a;
+SELECT amname FROM pg_class c, pg_am am
+  WHERE c.relam = am.oid AND c.oid = 'heaptable'::regclass;
+-- Switching to heap2 adds new dependency entry to the AM.
+ALTER TABLE heaptable SET ACCESS METHOD heap2;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid, refobjid, refobjsubid) as objref,
+       deptype
+  FROM pg_depend
+  WHERE classid = 'pg_class'::regclass AND
+        objid = 'heaptable'::regclass
+  ORDER BY 1, 2;
+-- Switching to heap should not have a dependency entry to the AM.
+ALTER TABLE heaptable SET ACCESS METHOD heap;
+SELECT pg_describe_object(classid, objid, objsubid) as obj,
+       pg_describe_object(refclassid, refobjid, refobjsubid) as objref,
+       deptype
+  FROM pg_depend
+  WHERE classid = 'pg_class'::regclass AND
+        objid = 'heaptable'::regclass
+  ORDER BY 1, 2;
+ALTER TABLE heaptable SET ACCESS METHOD heap2;
+SELECT amname FROM pg_class c, pg_am am
+  WHERE c.relam = am.oid AND c.oid = 'heaptable'::regclass;
+SELECT COUNT(a), COUNT(1) FILTER(WHERE a=1) FROM heaptable;
+-- ALTER MATERIALIZED VIEW SET ACCESS METHOD
+CREATE MATERIALIZED VIEW heapmv USING heap AS SELECT * FROM heaptable;
+SELECT amname FROM pg_class c, pg_am am
+  WHERE c.relam = am.oid AND c.oid = 'heapmv'::regclass;
+ALTER MATERIALIZED VIEW heapmv SET ACCESS METHOD heap2;
+SELECT amname FROM pg_class c, pg_am am
+  WHERE c.relam = am.oid AND c.oid = 'heapmv'::regclass;
+SELECT COUNT(a), COUNT(1) FILTER(WHERE a=1) FROM heapmv;
+-- No support for multiple subcommands
+ALTER TABLE heaptable SET ACCESS METHOD heap, SET ACCESS METHOD heap2;
+ALTER MATERIALIZED VIEW heapmv SET ACCESS METHOD heap, SET ACCESS METHOD heap2;
+DROP MATERIALIZED VIEW heapmv;
+DROP TABLE heaptable;
+-- No support for partitioned tables.
+CREATE TABLE am_partitioned(x INT, y INT)
+  PARTITION BY hash (x);
+ALTER TABLE am_partitioned SET ACCESS METHOD heap2;
+DROP TABLE am_partitioned;
 
 -- Second, create objects in the new AM by changing the default AM
 BEGIN;

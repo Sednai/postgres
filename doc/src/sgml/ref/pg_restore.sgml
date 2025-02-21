@@ -9,7 +9,7 @@ PostgreSQL documentation
  </indexterm>
 
  <refmeta>
-  <refentrytitle>pg_restore</refentrytitle>
+  <refentrytitle><application>pg_restore</application></refentrytitle>
   <manvolnum>1</manvolnum>
   <refmiscinfo>Application</refmiscinfo>
  </refmeta>
@@ -488,7 +488,12 @@ PostgreSQL documentation
       <term><option>--verbose</option></term>
       <listitem>
        <para>
-        Specifies verbose mode.
+        Specifies verbose mode.  This will cause
+        <application>pg_restore</application> to output detailed object
+        comments and start/stop times to the output file, and progress
+        messages to standard error.
+        Repeating the option causes additional debug-level messages
+        to appear on standard error.
        </para>
       </listitem>
      </varlistentry>
@@ -644,6 +649,17 @@ PostgreSQL documentation
        <para>
         Do not output commands to restore subscriptions, even if the archive
         contains them.
+       </para>
+      </listitem>
+     </varlistentry>
+
+     <varlistentry>
+      <term><option>--no-table-access-method</option></term>
+      <listitem>
+       <para>
+        Do not output commands to select table access methods.
+        With this option, all objects will be created with whichever
+        access method is the default during restore.
        </para>
       </listitem>
      </varlistentry>

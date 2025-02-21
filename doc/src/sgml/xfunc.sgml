@@ -63,7 +63,8 @@
 
   <para>
    Throughout this chapter, it can be useful to look at the reference
-   page of the <xref linkend="sql-createfunction"/> command to
+   page of the <link linkend="sql-createfunction"><command>CREATE
+   FUNCTION</command></link> command to
    understand the examples better.  Some examples from this chapter
    can be found in <filename>funcs.sql</filename> and
    <filename>funcs.c</filename> in the <filename>src/tutorial</filename>
@@ -87,8 +88,10 @@
     <itemizedlist>
      <listitem>
       <para>
-       Procedures are defined with the <xref linkend="sql-createprocedure"/>
-       command, not <command>CREATE FUNCTION</command>.
+       Procedures are defined with
+       the <link linkend="sql-createprocedure"><command>CREATE
+       PROCEDURE</command></link> command, not <command>CREATE
+       FUNCTION</command>.
       </para>
      </listitem>
      <listitem>
@@ -103,7 +106,7 @@
       <para>
        While a function is called as part of a query or DML command, a
        procedure is called in isolation using
-       the <xref linkend="sql-call"/> command.
+       the <link linkend="sql-call"><command>CALL</command></link> command.
       </para>
      </listitem>
      <listitem>
@@ -133,8 +136,8 @@
    <para>
     Collectively, functions and procedures are also known
     as <firstterm>routines</firstterm><indexterm><primary>routine</primary></indexterm>.
-    There are commands such as <xref linkend="sql-alterroutine"/>
-    and <xref linkend="sql-droproutine"/> that can operate on functions and
+    There are commands such as <link linkend="sql-alterroutine"><command>ALTER ROUTINE</command></link>
+    and <link linkend="sql-droproutine"><command>DROP ROUTINE</command></link> that can operate on functions and
     procedures without having to know which kind it is.  Note, however, that
     there is no <literal>CREATE ROUTINE</literal> command.
    </para>
@@ -183,7 +186,8 @@
      language can be packaged together and defined as a function.
      Besides <command>SELECT</command> queries, the commands can include data
      modification queries (<command>INSERT</command>,
-     <command>UPDATE</command>, and <command>DELETE</command>), as well as
+     <command>UPDATE</command>, <command>DELETE</command>, and
+     <command>MERGE</command>), as well as
      other SQL commands. (You cannot use transaction control commands, e.g.,
      <command>COMMIT</command>, <command>SAVEPOINT</command>, and some utility
      commands, e.g.,  <literal>VACUUM</literal>, in <acronym>SQL</acronym> functions.)
@@ -191,7 +195,7 @@
      must be a <command>SELECT</command> or have a <literal>RETURNING</literal>
      clause that returns whatever is
      specified as the function's return type.  Alternatively, if you
-     want to define a SQL function that performs actions but has no
+     want to define an SQL function that performs actions but has no
      useful value to return, you can define it as returning <type>void</type>.
      For example, this function removes rows with negative salaries from
      the <literal>emp</literal> table:
@@ -211,10 +215,28 @@ SELECT clean_emp();
 </screen>
     </para>
 
+    <para>
+     You can also write this as a procedure, thus avoiding the issue of the
+     return type.  For example:
+<screen>
+CREATE PROCEDURE clean_emp() AS '
+    DELETE FROM emp
+        WHERE salary &lt; 0;
+' LANGUAGE SQL;
+
+CALL clean_emp();
+</screen>
+     In simple cases like this, the difference between a function returning
+     <type>void</type> and a procedure is mostly stylistic.  However,
+     procedures offer additional functionality such as transaction control
+     that is not available in functions.  Also, procedures are SQL standard
+     whereas returning <type>void</type> is a PostgreSQL extension.
+    </para>
+
     <note>
      <para>
-      The entire body of a SQL function is parsed before any of it is
-      executed.  While a SQL function can contain commands that alter
+      The entire body of an SQL function is parsed before any of it is
+      executed.  While an SQL function can contain commands that alter
       the system catalogs (e.g., <command>CREATE TABLE</command>), the effects
       of such commands will not be visible during parse analysis of
       later commands in the function.  Thus, for example,
@@ -222,7 +244,7 @@ SELECT clean_emp();
       will not work as desired if packaged up into a single SQL function,
       since <structname>foo</structname> won't exist yet when the <command>INSERT</command>
       command is parsed.  It's recommended to use <application>PL/pgSQL</application>
-      instead of a SQL function in this type of situation.
+      instead of an SQL function in this type of situation.
      </para>
    </note>
 
@@ -246,7 +268,7 @@ SELECT clean_emp();
    </indexterm>
 
     <para>
-     Arguments of a SQL function can be referenced in the function
+     Arguments of an SQL function can be referenced in the function
      body using either names or numbers.  Examples of both methods appear
      below.
     </para>
@@ -423,11 +445,15 @@ $$ LANGUAGE SQL;
     </para>
 
     <para>
-     A <acronym>SQL</acronym> function must return exactly its declared
-     result type.  This may require inserting an explicit cast.
+     If the final <literal>SELECT</literal> or <literal>RETURNING</literal>
+     clause in an <acronym>SQL</acronym> function does not return exactly
+     the function's declared result
+     type, <productname>PostgreSQL</productname> will automatically cast
+     the value to the required type, if that is possible with an implicit
+     or assignment cast.  Otherwise, you must write an explicit cast.
      For example, suppose we wanted the
      previous <function>add_em</function> function to return
-     type <type>float8</type> instead.  This won't work:
+     type <type>float8</type> instead.  It's sufficient to write
 
 <programlisting>
 CREATE FUNCTION add_em(integer, integer) RETURNS float8 AS $$
@@ -435,16 +461,10 @@ CREATE FUNCTION add_em(integer, integer) RETURNS float8 AS $$
 $$ LANGUAGE SQL;
 </programlisting>
 
-     even though in other contexts <productname>PostgreSQL</productname>
-     would be willing to insert an implicit cast to
-     convert <type>integer</type> to <type>float8</type>.
-     We need to write it as
-
-<programlisting>
-CREATE FUNCTION add_em(integer, integer) RETURNS float8 AS $$
-    SELECT ($1 + $2)::float8;
-$$ LANGUAGE SQL;
-</programlisting>
+     since the <type>integer</type> sum can be implicitly cast
+     to <type>float8</type>.
+     (See <xref linkend="typeconv"/> or <xref linkend="sql-createcast"/>
+     for more about casts.)
     </para>
    </sect2>
 
@@ -538,23 +558,24 @@ $$ LANGUAGE SQL;
       <listitem>
        <para>
         The select list order in the query must be exactly the same as
-        that in which the columns appear in the table associated
-        with the composite type.  (Naming the columns, as we did above,
+        that in which the columns appear in the composite type.
+        (Naming the columns, as we did above,
         is irrelevant to the system.)
        </para>
       </listitem>
       <listitem>
        <para>
-        We must ensure each expression's type matches the corresponding
-        column of the composite type, inserting a cast if necessary.
+        We must ensure each expression's type can be cast to that of
+        the corresponding column of the composite type.
         Otherwise we'll get errors like this:
 <screen>
 <computeroutput>
-ERROR:  function declared to return emp returns varchar instead of text at column 1
+ERROR:  return type mismatch in function declared to return emp
+DETAIL:  Final statement returns text instead of point at column 4.
 </computeroutput>
 </screen>
-        As with the base-type case, the function will not insert any casts
-        automatically.
+        As with the base-type case, the system will not insert explicit
+        casts automatically, only implicit or assignment casts.
        </para>
       </listitem>
      </itemizedlist>
@@ -577,8 +598,7 @@ $$ LANGUAGE SQL;
      Another example is that if we are trying to write a function that
      returns a domain over composite, rather than a plain composite type,
      it is always necessary to write it as returning a single column,
-     since there is no other way to produce a value that is exactly of
-     the domain type.
+     since there is no way to cause a coercion of the whole row result.
     </para>
 
     <para>
@@ -746,7 +766,48 @@ DROP FUNCTION sum_n_product (int, int);
      parameter serves as both an input parameter (part of the calling
      argument list) and an output parameter (part of the result record type).
      <literal>VARIADIC</literal> parameters are input parameters, but are treated
-     specially as described next.
+     specially as described below.
+    </para>
+   </sect2>
+
+   <sect2 id="xfunc-output-parameters-proc">
+    <title><acronym>SQL</acronym> Procedures with Output Parameters</title>
+
+    <indexterm>
+     <primary>procedures</primary>
+     <secondary>output parameter</secondary>
+    </indexterm>
+
+    <para>
+     Output parameters are also supported in procedures, but they work a bit
+     differently from functions.  In <command>CALL</command> commands,
+     output parameters must be included in the argument list.
+     For example, the bank account debiting routine from earlier could be
+     written like this:
+<programlisting>
+CREATE PROCEDURE tp1 (accountno integer, debit numeric, OUT new_balance numeric) AS $$
+    UPDATE bank
+        SET balance = balance - debit
+        WHERE accountno = tp1.accountno
+    RETURNING balance;
+$$ LANGUAGE SQL;
+</programlisting>
+     To call this procedure, an argument matching the <literal>OUT</literal>
+     parameter must be included.  It's customary to write
+     <literal>NULL</literal>:
+<programlisting>
+CALL tp1(17, 100.0, NULL);
+</programlisting>
+     If you write something else, it must be an expression that is implicitly
+     coercible to the declared type of the parameter, just as for input
+     parameters.  Note however that such an expression will not be evaluated.
+    </para>
+
+    <para>
+     When calling a procedure from <application>PL/pgSQL</application>,
+     instead of writing <literal>NULL</literal> you must write a variable
+     that will receive the procedure's output.  See <xref
+     linkend="plpgsql-statements-calling-procedure"/> for details.
     </para>
    </sect2>
 
@@ -776,7 +837,7 @@ CREATE FUNCTION mleast(VARIADIC arr numeric[]) RETURNS numeric AS $$
 $$ LANGUAGE SQL;
 
 SELECT mleast(10, -1, 5, 4.4);
- mleast 
+ mleast
 --------
      -1
 (1 row)
@@ -882,19 +943,19 @@ AS $$
 $$;
 
 SELECT foo(10, 20, 30);
- foo 
+ foo
 -----
   60
 (1 row)
 
 SELECT foo(10, 20);
- foo 
+ foo
 -----
   33
 (1 row)
 
 SELECT foo(10);
- foo 
+ foo
 -----
   15
 (1 row)
@@ -1196,7 +1257,7 @@ SELECT x, CASE WHEN x &gt; 0 THEN generate_series(1, 5) ELSE 0 END FROM tab;
       described above; instead, a set-returning function could have at most
       one set-returning argument, and each nest of set-returning functions
       was run independently.  Also, conditional execution (set-returning
-      functions inside <literal>CASE</literal> etc) was previously allowed,
+      functions inside <literal>CASE</literal> etc.) was previously allowed,
       complicating things even more.
       Use of the <literal>LATERAL</literal> syntax is recommended when writing
       queries that need to work in older <productname>PostgreSQL</productname> versions,
@@ -1263,16 +1324,13 @@ $$ LANGUAGE SQL;
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="xfunc-sql-polymorphic-functions">
     <title>Polymorphic <acronym>SQL</acronym> Functions</title>
 
     <para>
      <acronym>SQL</acronym> functions can be declared to accept and
-     return the polymorphic types <type>anyelement</type>,
-     <type>anyarray</type>, <type>anynonarray</type>,
-     <type>anyenum</type>, and <type>anyrange</type>.  See <xref
-     linkend="extend-types-polymorphic"/> for a more detailed
-     explanation of polymorphic functions. Here is a polymorphic
+     return the polymorphic types described in <xref
+     linkend="extend-types-polymorphic"/>.  Here is a polymorphic
      function <function>make_array</function> that builds up an array
      from two arbitrary data type elements:
 <screen>
@@ -1297,9 +1355,43 @@ SELECT make_array(1, 2) AS intarray, make_array('a'::text, 'b') AS textarray;
      type.
      Without the typecast, you will get errors like this:
 <screen>
-<computeroutput>
-ERROR:  could not determine polymorphic type because input has type "unknown"
-</computeroutput>
+ERROR:  could not determine polymorphic type because input has type unknown
+</screen>
+    </para>
+
+    <para>
+     With <function>make_array</function> declared as above, you must
+     provide two arguments that are of exactly the same data type; the
+     system will not attempt to resolve any type differences.  Thus for
+     example this does not work:
+<screen>
+SELECT make_array(1, 2.5) AS numericarray;
+ERROR:  function make_array(integer, numeric) does not exist
+</screen>
+     An alternative approach is to use the <quote>common</quote> family of
+     polymorphic types, which allows the system to try to identify a
+     suitable common type:
+<screen>
+CREATE FUNCTION make_array2(anycompatible, anycompatible)
+RETURNS anycompatiblearray AS $$
+    SELECT ARRAY[$1, $2];
+$$ LANGUAGE SQL;
+
+SELECT make_array2(1, 2.5) AS numericarray;
+ numericarray
+--------------
+ {1,2.5}
+(1 row)
+</screen>
+     Because the rules for common type resolution default to choosing
+     type <type>text</type> when all inputs are of unknown types, this
+     also works:
+<screen>
+SELECT make_array2('a', 'b') AS textarray;
+ textarray
+-----------
+ {a,b}
+(1 row)
 </screen>
     </para>
 
@@ -1321,7 +1413,7 @@ CREATE FUNCTION invalid_func() RETURNS anyelement AS $$
     SELECT 1;
 $$ LANGUAGE SQL;
 ERROR:  cannot determine result data type
-DETAIL:  A function returning a polymorphic type must have at least one polymorphic argument.
+DETAIL:  A result of type anyelement requires at least one input of type anyelement, anyarray, anynonarray, anyenum, or anyrange.
 </screen>
     </para>
 
@@ -1349,13 +1441,13 @@ CREATE FUNCTION anyleast (VARIADIC anyarray) RETURNS anyelement AS $$
 $$ LANGUAGE SQL;
 
 SELECT anyleast(10, -1, 5, 4);
- anyleast 
+ anyleast
 ----------
        -1
 (1 row)
 
 SELECT anyleast('abc'::text, 'def');
- anyleast 
+ anyleast
 ----------
  abc
 (1 row)
@@ -1365,7 +1457,7 @@ CREATE FUNCTION concat_values(text, VARIADIC anyarray) RETURNS text AS $$
 $$ LANGUAGE SQL;
 
 SELECT concat_values('|', 1, 4, 2);
- concat_values 
+ concat_values
 ---------------
  1|4|2
 (1 row)
@@ -1382,7 +1474,7 @@ SELECT concat_values('|', 1, 4, 2);
     </indexterm>
 
     <para>
-     When a SQL function has one or more parameters of collatable data types,
+     When an SQL function has one or more parameters of collatable data types,
      a collation is identified for each function call depending on the
      collations assigned to the actual arguments, as described in <xref
      linkend="collation"/>.  If a collation is successfully identified
@@ -1417,7 +1509,7 @@ $$ LANGUAGE SQL;
 
     <para>
      If no common collation can be identified among the actual arguments,
-     then a SQL function treats its parameters as having their data types'
+     then an SQL function treats its parameters as having their data types'
      default collation (which is usually the database's default collation,
      but could be different for parameters of domain types).
     </para>
@@ -1534,7 +1626,7 @@ CREATE FUNCTION test(int, int) RETURNS int
     Every function has a <firstterm>volatility</firstterm> classification, with
     the possibilities being <literal>VOLATILE</literal>, <literal>STABLE</literal>, or
     <literal>IMMUTABLE</literal>.  <literal>VOLATILE</literal> is the default if the
-    <xref linkend="sql-createfunction"/>
+    <link linkend="sql-createfunction"><command>CREATE FUNCTION</command></link>
     command does not specify a category.  The volatility category is a
     promise to the optimizer about the behavior of the function:
 
@@ -1888,27 +1980,15 @@ PG_MODULE_MAGIC;
     <primary>_PG_init</primary>
    </indexterm>
    <indexterm zone="xfunc-c-dynload">
-    <primary>_PG_fini</primary>
-   </indexterm>
-   <indexterm zone="xfunc-c-dynload">
     <primary>library initialization function</primary>
-   </indexterm>
-   <indexterm zone="xfunc-c-dynload">
-    <primary>library finalization function</primary>
    </indexterm>
 
    <para>
-    Optionally, a dynamically loaded file can contain initialization and
-    finalization functions.  If the file includes a function named
+    Optionally, a dynamically loaded file can contain an initialization
+    function.  If the file includes a function named
     <function>_PG_init</function>, that function will be called immediately after
     loading the file.  The function receives no parameters and should
-    return void.  If the file includes a function named
-    <function>_PG_fini</function>, that function will be called immediately before
-    unloading the file.  Likewise, the function receives no parameters and
-    should return void.  Note that <function>_PG_fini</function> will only be called
-    during an unload of the file, not during process termination.
-    (Presently, unloads are disabled and will never occur, but this may
-    change in the future.)
+    return void.  There is presently no way to unload a dynamically loaded file.
    </para>
 
   </sect2>
@@ -2092,6 +2172,9 @@ memcpy(destination->data, buffer, 40);
      <table tocentry="1" id="xfunc-c-type-table">
       <title>Equivalent C Types for Built-in SQL Types</title>
       <tgroup cols="3">
+       <colspec colname="col1" colwidth="1*"/>
+       <colspec colname="col2" colwidth="1*"/>
+       <colspec colname="col3" colwidth="2*"/>
        <thead>
         <row>
          <entry>
@@ -2870,7 +2953,7 @@ HeapTupleGetDatum(HeapTuple tuple)
      save enough state across calls to remember what it was doing and
      return the correct next item on each call.
      In the other method, called <firstterm>Materialize</firstterm> mode,
-     a SRF fills and returns a tuplestore object containing its
+     an SRF fills and returns a tuplestore object containing its
      entire result; then only one call occurs for the whole result, and
      no inter-call state is needed.
     </para>
@@ -3111,7 +3194,7 @@ retcomposite(PG_FUNCTION_ARGS)
         oldcontext = MemoryContextSwitchTo(funcctx->multi_call_memory_ctx);
 
         /* total number of tuples to be returned */
-        funcctx->max_calls = PG_GETARG_UINT32(0);
+        funcctx->max_calls = PG_GETARG_INT32(0);
 
         /* Build a tuple descriptor for our result type */
         if (get_call_result_type(fcinfo, NULL, &tupdesc) != TYPEFUNC_COMPOSITE)
@@ -3206,11 +3289,9 @@ CREATE OR REPLACE FUNCTION retcomposite(IN integer, IN integer,
 
     <para>
      C-language functions can be declared to accept and
-     return the polymorphic types
-     <type>anyelement</type>, <type>anyarray</type>, <type>anynonarray</type>,
-     <type>anyenum</type>, and <type>anyrange</type>.
-     See <xref linkend="extend-types-polymorphic"/> for a more detailed explanation
-     of polymorphic functions. When function arguments or return types
+     return the polymorphic types described in <xref
+     linkend="extend-types-polymorphic"/>.
+     When a function's arguments or return types
      are defined as polymorphic types, the function author cannot know
      in advance what data type it will be called with, or
      need to return. There are two routines provided in <filename>fmgr.h</filename>
@@ -3295,7 +3376,7 @@ CREATE FUNCTION make_array(anyelement) RETURNS anyarray
      There is a variant of polymorphism that is only available to C-language
      functions: they can be declared to take parameters of type
      <literal>"any"</literal>.  (Note that this type name must be double-quoted,
-     since it's also a SQL reserved word.)  This works like
+     since it's also an SQL reserved word.)  This works like
      <type>anyelement</type> except that it does not constrain different
      <literal>"any"</literal> arguments to be the same type, nor do they help
      determine the function's result type.  A C-language function can also
@@ -3314,7 +3395,7 @@ CREATE FUNCTION make_array(anyelement) RETURNS anyarray
     </para>
    </sect2>
 
-   <sect2>
+   <sect2 id="xfunc-shared-addin">
     <title>Shared Memory and LWLocks</title>
 
     <para>
@@ -3322,21 +3403,29 @@ CREATE FUNCTION make_array(anyelement) RETURNS anyarray
      startup.  The add-in's shared library must be preloaded by specifying
      it in
      <xref linkend="guc-shared-preload-libraries"/><indexterm><primary>shared_preload_libraries</primary></indexterm>.
+     The shared library should register a <literal>shmem_request_hook</literal>
+     in its <function>_PG_init</function> function.  This
+     <literal>shmem_request_hook</literal> can reserve LWLocks or shared memory.
      Shared memory is reserved by calling:
 <programlisting>
 void RequestAddinShmemSpace(int size)
 </programlisting>
-     from your <function>_PG_init</function> function.
+     from your <literal>shmem_request_hook</literal>.
     </para>
     <para>
      LWLocks are reserved by calling:
 <programlisting>
 void RequestNamedLWLockTranche(const char *tranche_name, int num_lwlocks)
 </programlisting>
-     from <function>_PG_init</function>.  This will ensure that an array of
+     from your <literal>shmem_request_hook</literal>.  This will ensure that an array of
      <literal>num_lwlocks</literal> LWLocks is available under the name
      <literal>tranche_name</literal>.  Use <function>GetNamedLWLockTranche</function>
      to get a pointer to this array.
+    </para>
+    <para>
+     An example of a <literal>shmem_request_hook</literal> can be found in
+     <filename>contrib/pg_stat_statements/pg_stat_statements.c</filename> in the
+     <productname>PostgreSQL</productname> source tree.
     </para>
     <para>
      To avoid possible race-conditions, each backend should use the LWLock
@@ -3446,7 +3535,7 @@ if (!ptr)
 
    <para>
     Some basic facts can be supplied by declarative annotations provided in
-    the <xref linkend="sql-createfunction"/> command.  Most important of
+    the <link linkend="sql-createfunction"><command>CREATE FUNCTION</command></link> command.  Most important of
     these is the function's <link linkend="xfunc-volatility">volatility
     category</link> (<literal>IMMUTABLE</literal>, <literal>STABLE</literal>,
     or <literal>VOLATILE</literal>); one should always be careful to
@@ -3464,7 +3553,7 @@ if (!ptr)
 
    <para>
     It is also possible to attach a <firstterm>planner support
-    function</firstterm> to a SQL-callable function (called
+    function</firstterm> to an SQL-callable function (called
     its <firstterm>target function</firstterm>), and thereby provide
     knowledge about the target function that is too complex to be
     represented declaratively.  Planner support functions have to be

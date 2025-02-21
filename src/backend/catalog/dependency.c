@@ -4,7 +4,7 @@
  *	  Routines to support inter-object dependencies.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
  *
@@ -20,6 +20,7 @@
 #include "access/htup_details.h"
 #include "access/table.h"
 #include "access/xact.h"
+#include "catalog/catalog.h"
 #include "catalog/dependency.h"
 #include "catalog/heap.h"
 #include "catalog/index.h"
@@ -47,9 +48,11 @@
 #include "catalog/pg_opclass.h"
 #include "catalog/pg_operator.h"
 #include "catalog/pg_opfamily.h"
+#include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_policy.h"
 #include "catalog/pg_proc.h"
 #include "catalog/pg_publication.h"
+#include "catalog/pg_publication_namespace.h"
 #include "catalog/pg_publication_rel.h"
 #include "catalog/pg_rewrite.h"
 #include "catalog/pg_statistic_ext.h"
@@ -80,18 +83,18 @@
 #include "commands/event_trigger.h"
 #include "commands/extension.h"
 #include "commands/policy.h"
-#include "commands/proclang.h"
 #include "commands/publicationcmds.h"
-#include "commands/schemacmds.h"
 #include "commands/seclabel.h"
 #include "commands/sequence.h"
 #include "commands/trigger.h"
 #include "commands/typecmds.h"
+#include "funcapi.h"
 #include "miscadmin.h"
 #include "nodes/nodeFuncs.h"
 #include "parser/parsetree.h"
 #include "rewrite/rewriteRemove.h"
 #include "storage/lmgr.h"
+#include "utils/acl.h"
 #include "utils/fmgroids.h"
 #include "utils/guc.h"
 #include "utils/lsyscache.h"
@@ -197,7 +200,9 @@ static const Oid object_classes[] = {
 	DefaultAclRelationId,		/* OCLASS_DEFACL */
 	ExtensionRelationId,		/* OCLASS_EXTENSION */
 	EventTriggerRelationId,		/* OCLASS_EVENT_TRIGGER */
+	ParameterAclRelationId,		/* OCLASS_PARAMETER_ACL */
 	PolicyRelationId,			/* OCLASS_POLICY */
+	PublicationNamespaceRelationId, /* OCLASS_PUBLICATION_NAMESPACE */
 	PublicationRelationId,		/* OCLASS_PUBLICATION */
 	PublicationRelRelationId,	/* OCLASS_PUBLICATION_REL */
 	SubscriptionRelationId,		/* OCLASS_SUBSCRIPTION */
@@ -221,6 +226,8 @@ static void deleteOneObject(const ObjectAddress *object,
 static void doDeletion(const ObjectAddress *object, int flags);
 static bool find_expr_references_walker(Node *node,
 										find_expr_references_context *context);
+static void process_function_rte_ref(RangeTblEntry *rte, AttrNumber attnum,
+									 find_expr_references_context *context);
 static void eliminate_duplicate_dependencies(ObjectAddresses *addrs);
 static int	object_address_comparator(const void *a, const void *b);
 static void add_object_address(ObjectClass oclass, Oid objectId, int32 subId,
@@ -641,6 +648,16 @@ findDependentObjects(const ObjectAddress *object,
 		return;
 
 	/*
+	 * If the target object is pinned, we can just error out immediately; it
+	 * won't have any objects recorded as depending on it.
+	 */
+	if (IsPinnedObject(object->classId, object->objectId))
+		ereport(ERROR,
+				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
+				 errmsg("cannot drop %s because it is required by the database system",
+						getObjectDescription(object, false))));
+
+	/*
 	 * The target object might be internally dependent on some other object
 	 * (its "owner"), and/or be a member of an extension (also considered its
 	 * owner).  If so, and if we aren't recursing from the owning object, we
@@ -863,8 +880,8 @@ findDependentObjects(const ObjectAddress *object,
 				if (!object_address_present_add_flags(object, objflags,
 													  targetObjects))
 					elog(ERROR, "deletion of owning object %s failed to delete %s",
-						 getObjectDescription(&otherObject),
-						 getObjectDescription(object));
+						 getObjectDescription(&otherObject, false),
+						 getObjectDescription(object, false));
 
 				/* And we're done here. */
 				return;
@@ -903,18 +920,9 @@ findDependentObjects(const ObjectAddress *object,
 				objflags |= DEPFLAG_IS_PART;
 				break;
 
-			case DEPENDENCY_PIN:
-
-				/*
-				 * Should not happen; PIN dependencies should have zeroes in
-				 * the depender fields...
-				 */
-				elog(ERROR, "incorrect use of PIN dependency with %s",
-					 getObjectDescription(object));
-				break;
 			default:
 				elog(ERROR, "unrecognized dependency type '%c' for %s",
-					 foundDep->deptype, getObjectDescription(object));
+					 foundDep->deptype, getObjectDescription(object, false));
 				break;
 		}
 	}
@@ -932,14 +940,14 @@ findDependentObjects(const ObjectAddress *object,
 		char	   *otherObjDesc;
 
 		if (OidIsValid(partitionObject.classId))
-			otherObjDesc = getObjectDescription(&partitionObject);
+			otherObjDesc = getObjectDescription(&partitionObject, false);
 		else
-			otherObjDesc = getObjectDescription(&owningObject);
+			otherObjDesc = getObjectDescription(&owningObject, false);
 
 		ereport(ERROR,
 				(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
 				 errmsg("cannot drop %s because %s requires it",
-						getObjectDescription(object), otherObjDesc),
+						getObjectDescription(object, false), otherObjDesc),
 				 errhint("You can drop %s instead.", otherObjDesc)));
 	}
 
@@ -1040,21 +1048,9 @@ findDependentObjects(const ObjectAddress *object,
 			case DEPENDENCY_EXTENSION:
 				subflags = DEPFLAG_EXTENSION;
 				break;
-			case DEPENDENCY_PIN:
-
-				/*
-				 * For a PIN dependency we just ereport immediately; there
-				 * won't be any others to report.
-				 */
-				ereport(ERROR,
-						(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
-						 errmsg("cannot drop %s because it is required by the database system",
-								getObjectDescription(object))));
-				subflags = 0;	/* keep compiler quiet */
-				break;
 			default:
 				elog(ERROR, "unrecognized dependency type '%c' for %s",
-					 foundDep->deptype, getObjectDescription(object));
+					 foundDep->deptype, getObjectDescription(object, false));
 				subflags = 0;	/* keep compiler quiet */
 				break;
 		}
@@ -1172,12 +1168,13 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 			!(extra->flags & DEPFLAG_PARTITION))
 		{
 			const ObjectAddress *object = &targetObjects->refs[i];
-			char	   *otherObjDesc = getObjectDescription(&extra->dependee);
+			char	   *otherObjDesc = getObjectDescription(&extra->dependee,
+															false);
 
 			ereport(ERROR,
 					(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
 					 errmsg("cannot drop %s because %s requires it",
-							getObjectDescription(object), otherObjDesc),
+							getObjectDescription(object, false), otherObjDesc),
 					 errhint("You can drop %s instead.", otherObjDesc)));
 		}
 	}
@@ -1186,15 +1183,9 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 	 * If no error is to be thrown, and the msglevel is too low to be shown to
 	 * either client or server log, there's no need to do any of the rest of
 	 * the work.
-	 *
-	 * Note: this code doesn't know all there is to be known about elog
-	 * levels, but it works for NOTICE and DEBUG2, which are the only values
-	 * msglevel can currently have.  We also assume we are running in a normal
-	 * operating environment.
 	 */
 	if (behavior == DROP_CASCADE &&
-		msglevel < client_min_messages &&
-		(msglevel < log_min_messages || log_min_messages == LOG))
+		!message_level_is_interesting(msglevel))
 		return;
 
 	/*
@@ -1225,7 +1216,7 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 		if (extra->flags & DEPFLAG_SUBOBJECT)
 			continue;
 
-		objDesc = getObjectDescription(obj);
+		objDesc = getObjectDescription(obj, false);
 
 		/* An object being dropped concurrently doesn't need to be reported */
 		if (objDesc == NULL)
@@ -1248,12 +1239,13 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 			 * log_min_messages are different.
 			 */
 			ereport(DEBUG2,
-					(errmsg("drop auto-cascades to %s",
-							objDesc)));
+					(errmsg_internal("drop auto-cascades to %s",
+									 objDesc)));
 		}
 		else if (behavior == DROP_RESTRICT)
 		{
-			char	   *otherDesc = getObjectDescription(&extra->dependee);
+			char	   *otherDesc = getObjectDescription(&extra->dependee,
+														 false);
 
 			if (otherDesc)
 			{
@@ -1316,7 +1308,7 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 			ereport(ERROR,
 					(errcode(ERRCODE_DEPENDENT_OBJECTS_STILL_EXIST),
 					 errmsg("cannot drop %s because other objects depend on it",
-							getObjectDescription(origObject)),
+							getObjectDescription(origObject, false)),
 					 errdetail_internal("%s", clientdetail.data),
 					 errdetail_log("%s", logdetail.data),
 					 errhint("Use DROP ... CASCADE to drop the dependent objects too.")));
@@ -1331,7 +1323,6 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 	else if (numReportedClient > 1)
 	{
 		ereport(msglevel,
-		/* translator: %d always has a value larger than 1 */
 				(errmsg_plural("drop cascades to %d other object",
 							   "drop cascades to %d other objects",
 							   numReportedClient + numNotReportedClient,
@@ -1348,6 +1339,62 @@ reportDependentObjects(const ObjectAddresses *targetObjects,
 
 	pfree(clientdetail.data);
 	pfree(logdetail.data);
+}
+
+/*
+ * Drop an object by OID.  Works for most catalogs, if no special processing
+ * is needed.
+ */
+static void
+DropObjectById(const ObjectAddress *object)
+{
+	int			cacheId;
+	Relation	rel;
+	HeapTuple	tup;
+
+	cacheId = get_object_catcache_oid(object->classId);
+
+	rel = table_open(object->classId, RowExclusiveLock);
+
+	/*
+	 * Use the system cache for the oid column, if one exists.
+	 */
+	if (cacheId >= 0)
+	{
+		tup = SearchSysCache1(cacheId, ObjectIdGetDatum(object->objectId));
+		if (!HeapTupleIsValid(tup))
+			elog(ERROR, "cache lookup failed for %s %u",
+				 get_object_class_descr(object->classId), object->objectId);
+
+		CatalogTupleDelete(rel, &tup->t_self);
+
+		ReleaseSysCache(tup);
+	}
+	else
+	{
+		ScanKeyData skey[1];
+		SysScanDesc scan;
+
+		ScanKeyInit(&skey[0],
+					get_object_attnum_oid(object->classId),
+					BTEqualStrategyNumber, F_OIDEQ,
+					ObjectIdGetDatum(object->objectId));
+
+		scan = systable_beginscan(rel, get_object_oid_index(object->classId), true,
+								  NULL, 1, skey);
+
+		/* we expect exactly one match */
+		tup = systable_getnext(scan);
+		if (!HeapTupleIsValid(tup))
+			elog(ERROR, "could not find tuple for %s %u",
+				 get_object_class_descr(object->classId), object->objectId);
+
+		CatalogTupleDelete(rel, &tup->t_self);
+
+		systable_endscan(scan);
+	}
+
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -1571,28 +1618,12 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemoveTypeById(object->objectId);
 			break;
 
-		case OCLASS_CAST:
-			DropCastById(object->objectId);
-			break;
-
-		case OCLASS_COLLATION:
-			RemoveCollationById(object->objectId);
-			break;
-
 		case OCLASS_CONSTRAINT:
 			RemoveConstraintById(object->objectId);
 			break;
 
-		case OCLASS_CONVERSION:
-			RemoveConversionById(object->objectId);
-			break;
-
 		case OCLASS_DEFAULT:
 			RemoveAttrDefaultById(object->objectId);
-			break;
-
-		case OCLASS_LANGUAGE:
-			DropProceduralLanguageById(object->objectId);
 			break;
 
 		case OCLASS_LARGEOBJECT:
@@ -1603,26 +1634,6 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemoveOperatorById(object->objectId);
 			break;
 
-		case OCLASS_OPCLASS:
-			RemoveOpClassById(object->objectId);
-			break;
-
-		case OCLASS_OPFAMILY:
-			RemoveOpFamilyById(object->objectId);
-			break;
-
-		case OCLASS_AM:
-			RemoveAccessMethodById(object->objectId);
-			break;
-
-		case OCLASS_AMOP:
-			RemoveAmOpEntryById(object->objectId);
-			break;
-
-		case OCLASS_AMPROC:
-			RemoveAmProcEntryById(object->objectId);
-			break;
-
 		case OCLASS_REWRITE:
 			RemoveRewriteRuleById(object->objectId);
 			break;
@@ -1631,24 +1642,8 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemoveTriggerById(object->objectId);
 			break;
 
-		case OCLASS_SCHEMA:
-			RemoveSchemaById(object->objectId);
-			break;
-
 		case OCLASS_STATISTIC_EXT:
 			RemoveStatisticsById(object->objectId);
-			break;
-
-		case OCLASS_TSPARSER:
-			RemoveTSParserById(object->objectId);
-			break;
-
-		case OCLASS_TSDICT:
-			RemoveTSDictionaryById(object->objectId);
-			break;
-
-		case OCLASS_TSTEMPLATE:
-			RemoveTSTemplateById(object->objectId);
 			break;
 
 		case OCLASS_TSCONFIG:
@@ -1675,6 +1670,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_DEFACL:
 			RemoveDefaultACLById(object->objectId);
 			break;
+
 #ifdef PGXC
 		case OCLASS_PGXC_CLASS:
 			RemovePgxcClass(object->objectId);
@@ -1690,24 +1686,42 @@ doDeletion(const ObjectAddress *object, int flags)
 			RemoveExtensionById(object->objectId);
 			break;
 
-		case OCLASS_EVENT_TRIGGER:
-			RemoveEventTriggerById(object->objectId);
-			break;
-
 		case OCLASS_POLICY:
 			RemovePolicyById(object->objectId);
 			break;
 
-		case OCLASS_PUBLICATION:
-			RemovePublicationById(object->objectId);
+		case OCLASS_PUBLICATION_NAMESPACE:
+			RemovePublicationSchemaById(object->objectId);
 			break;
 
 		case OCLASS_PUBLICATION_REL:
 			RemovePublicationRelById(object->objectId);
 			break;
 
+		case OCLASS_PUBLICATION:
+			RemovePublicationById(object->objectId);
+			break;
+
+		case OCLASS_CAST:
+		case OCLASS_COLLATION:
+		case OCLASS_CONVERSION:
+		case OCLASS_LANGUAGE:
+		case OCLASS_OPCLASS:
+		case OCLASS_OPFAMILY:
+		case OCLASS_AM:
+		case OCLASS_AMOP:
+		case OCLASS_AMPROC:
+		case OCLASS_SCHEMA:
+		case OCLASS_TSPARSER:
+		case OCLASS_TSDICT:
+		case OCLASS_TSTEMPLATE:
+		case OCLASS_FDW:
+		case OCLASS_FOREIGN_SERVER:
+		case OCLASS_USER_MAPPING:
+		case OCLASS_DEFACL:
+		case OCLASS_EVENT_TRIGGER:
 		case OCLASS_TRANSFORM:
-			DropTransformById(object->objectId);
+			DropObjectById(object);
 			break;
 
 			/*
@@ -1717,6 +1731,7 @@ doDeletion(const ObjectAddress *object, int flags)
 		case OCLASS_DATABASE:
 		case OCLASS_TBLSPACE:
 		case OCLASS_SUBSCRIPTION:
+		case OCLASS_PARAMETER_ACL:
 			elog(ERROR, "global objects cannot be deleted by doDeletion");
 			break;
 
@@ -1927,12 +1942,6 @@ recordDependencyOnSingleRelExpr(const ObjectAddress *depender,
 /*
  * Recursively search an expression tree for object references.
  *
- * Note: we avoid creating references to columns of tables that participate
- * in an SQL JOIN construct, but are not actually used anywhere in the query.
- * To do so, we do not scan the joinaliasvars list of a join RTE while
- * scanning the query rangetable, but instead scan each individual entry
- * of the alias list when we find a reference to it.
- *
  * Note: in many cases we do not need to create dependencies on the datatypes
  * involved in an expression, because we'll have an indirect dependency via
  * some other object.  For instance Var nodes depend on a column which depends
@@ -1982,24 +1991,21 @@ find_expr_references_walker(Node *node,
 			add_object_address(OCLASS_CLASS, rte->relid, var->varattno,
 							   context->addrs);
 		}
-		else if (rte->rtekind == RTE_JOIN)
+		else if (rte->rtekind == RTE_FUNCTION)
 		{
-			/* Scan join output column to add references to join inputs */
-			List	   *save_rtables;
-
-			/* We must make the context appropriate for join's level */
-			save_rtables = context->rtables;
-			context->rtables = list_copy_tail(context->rtables,
-											  var->varlevelsup);
-			if (var->varattno <= 0 ||
-				var->varattno > list_length(rte->joinaliasvars))
-				elog(ERROR, "invalid varattno %d", var->varattno);
-			find_expr_references_walker((Node *) list_nth(rte->joinaliasvars,
-														  var->varattno - 1),
-										context);
-			list_free(context->rtables);
-			context->rtables = save_rtables;
+			/* Might need to add a dependency on a composite type's column */
+			/* (done out of line, because it's a bit bulky) */
+			process_function_rte_ref(rte, var->varattno, context);
 		}
+
+		/*
+		 * Vars referencing other RTE types require no additional work.  In
+		 * particular, a join alias Var can be ignored, because it must
+		 * reference a merged USING column.  The relevant join input columns
+		 * will also be referenced in the join qual, and any type coercion
+		 * functions involved in the alias expression will be dealt with when
+		 * we scan the RTE itself.
+		 */
 		return false;
 	}
 	else if (IsA(node, Const))
@@ -2060,6 +2066,13 @@ find_expr_references_walker(Node *node,
 					if (SearchSysCacheExists1(TYPEOID,
 											  ObjectIdGetDatum(objoid)))
 						add_object_address(OCLASS_TYPE, objoid, 0,
+										   context->addrs);
+					break;
+				case REGCOLLATIONOID:
+					objoid = DatumGetObjectId(con->constvalue);
+					if (SearchSysCacheExists1(COLLOID,
+											  ObjectIdGetDatum(objoid)))
+						add_object_address(OCLASS_COLLATION, objoid, 0,
 										   context->addrs);
 					break;
 				case REGCONFIGOID:
@@ -2166,6 +2179,22 @@ find_expr_references_walker(Node *node,
 
 		add_object_address(OCLASS_PROC, wfunc->winfnoid, 0,
 						   context->addrs);
+		/* fall through to examine arguments */
+	}
+	else if (IsA(node, SubscriptingRef))
+	{
+		SubscriptingRef *sbsref = (SubscriptingRef *) node;
+
+		/*
+		 * The refexpr should provide adequate dependency on refcontainertype,
+		 * and that type in turn depends on refelemtype.  However, a custom
+		 * subscripting handler might set refrestype to something different
+		 * from either of those, in which case we'd better record it.
+		 */
+		if (sbsref->refrestype != sbsref->refcontainertype &&
+			sbsref->refrestype != sbsref->refelemtype)
+			add_object_address(OCLASS_TYPE, sbsref->refrestype, 0,
+							   context->addrs);
 		/* fall through to examine arguments */
 	}
 	else if (IsA(node, SubPlan))
@@ -2347,6 +2376,21 @@ find_expr_references_walker(Node *node,
 							   context->addrs);
 		/* fall through to examine substructure */
 	}
+	else if (IsA(node, CTECycleClause))
+	{
+		CTECycleClause *cc = (CTECycleClause *) node;
+
+		if (OidIsValid(cc->cycle_mark_type))
+			add_object_address(OCLASS_TYPE, cc->cycle_mark_type, 0,
+							   context->addrs);
+		if (OidIsValid(cc->cycle_mark_collation))
+			add_object_address(OCLASS_COLLATION, cc->cycle_mark_collation, 0,
+							   context->addrs);
+		if (OidIsValid(cc->cycle_mark_neop))
+			add_object_address(OCLASS_OPERATOR, cc->cycle_mark_neop, 0,
+							   context->addrs);
+		/* fall through to examine substructure */
+	}
 	else if (IsA(node, Query))
 	{
 		/* Recurse into RTE subquery or not-yet-planned sublink subquery */
@@ -2356,11 +2400,13 @@ find_expr_references_walker(Node *node,
 
 		/*
 		 * Add whole-relation refs for each plain relation mentioned in the
-		 * subquery's rtable.
+		 * subquery's rtable, and ensure we add refs for any type-coercion
+		 * functions used in join alias lists.
 		 *
 		 * Note: query_tree_walker takes care of recursing into RTE_FUNCTION
-		 * RTEs, subqueries, etc, so no need to do that here.  But keep it
-		 * from looking at join alias lists.
+		 * RTEs, subqueries, etc, so no need to do that here.  But we must
+		 * tell it not to visit join alias lists, or we'll add refs for join
+		 * input columns whether or not they are actually used in our query.
 		 *
 		 * Note: we don't need to worry about collations mentioned in
 		 * RTE_VALUES or RTE_CTE RTEs, because those must just duplicate
@@ -2377,6 +2423,31 @@ find_expr_references_walker(Node *node,
 				case RTE_RELATION:
 					add_object_address(OCLASS_CLASS, rte->relid, 0,
 									   context->addrs);
+					break;
+				case RTE_JOIN:
+
+					/*
+					 * Examine joinaliasvars entries only for merged JOIN
+					 * USING columns.  Only those entries could contain
+					 * type-coercion functions.  Also, their join input
+					 * columns must be referenced in the join quals, so this
+					 * won't accidentally add refs to otherwise-unused join
+					 * input columns.  (We want to ref the type coercion
+					 * functions even if the merged column isn't explicitly
+					 * used anywhere, to protect possible expansion of the
+					 * join RTE as a whole-row var, and because it seems like
+					 * a bad idea to allow dropping a function that's present
+					 * in our query tree, whether or not it could get called.)
+					 */
+					context->rtables = lcons(query->rtable, context->rtables);
+					for (int i = 0; i < rte->joinmergedcols; i++)
+					{
+						Node	   *aliasvar = list_nth(rte->joinaliasvars, i);
+
+						if (!IsA(aliasvar, Var))
+							find_expr_references_walker(aliasvar, context);
+					}
+					context->rtables = list_delete_first(context->rtables);
 					break;
 				default:
 					break;
@@ -2498,6 +2569,69 @@ find_expr_references_walker(Node *node,
 
 	return expression_tree_walker(node, find_expr_references_walker,
 								  (void *) context);
+}
+
+/*
+ * find_expr_references_walker subroutine: handle a Var reference
+ * to an RTE_FUNCTION RTE
+ */
+static void
+process_function_rte_ref(RangeTblEntry *rte, AttrNumber attnum,
+						 find_expr_references_context *context)
+{
+	int			atts_done = 0;
+	ListCell   *lc;
+
+	/*
+	 * Identify which RangeTblFunction produces this attnum, and see if it
+	 * returns a composite type.  If so, we'd better make a dependency on the
+	 * referenced column of the composite type (or actually, of its associated
+	 * relation).
+	 */
+	foreach(lc, rte->functions)
+	{
+		RangeTblFunction *rtfunc = (RangeTblFunction *) lfirst(lc);
+
+		if (attnum > atts_done &&
+			attnum <= atts_done + rtfunc->funccolcount)
+		{
+			TupleDesc	tupdesc;
+
+			/* If it has a coldeflist, it certainly returns RECORD */
+			if (rtfunc->funccolnames != NIL)
+				tupdesc = NULL; /* no need to work hard */
+			else
+				tupdesc = get_expr_result_tupdesc(rtfunc->funcexpr, true);
+			if (tupdesc && tupdesc->tdtypeid != RECORDOID)
+			{
+				/*
+				 * Named composite type, so individual columns could get
+				 * dropped.  Make a dependency on this specific column.
+				 */
+				Oid			reltype = get_typ_typrelid(tupdesc->tdtypeid);
+
+				Assert(attnum - atts_done <= tupdesc->natts);
+				if (OidIsValid(reltype))	/* can this fail? */
+					add_object_address(OCLASS_CLASS, reltype,
+									   attnum - atts_done,
+									   context->addrs);
+				return;
+			}
+			/* Nothing to do; function's result type is handled elsewhere */
+			return;
+		}
+		atts_done += rtfunc->funccolcount;
+	}
+
+	/* If we get here, must be looking for the ordinality column */
+	if (rte->funcordinality && attnum == atts_done + 1)
+		return;
+
+	/* this probably can't happen ... */
+	ereport(ERROR,
+			(errcode(ERRCODE_UNDEFINED_COLUMN),
+			 errmsg("column %d of relation \"%s\" does not exist",
+					attnum, rte->eref->aliasname)));
 }
 
 /*
@@ -3028,8 +3162,14 @@ getObjectClass(const ObjectAddress *object)
 		case EventTriggerRelationId:
 			return OCLASS_EVENT_TRIGGER;
 
+		case ParameterAclRelationId:
+			return OCLASS_PARAMETER_ACL;
+
 		case PolicyRelationId:
 			return OCLASS_POLICY;
+
+		case PublicationNamespaceRelationId:
+			return OCLASS_PUBLICATION_NAMESPACE;
 
 		case PublicationRelationId:
 			return OCLASS_PUBLICATION;

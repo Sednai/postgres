@@ -3,7 +3,7 @@
  * visibilitymap.c
  *	  bitmap for tracking visibility of heap tuples
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -17,7 +17,8 @@
  *		visibilitymap_set	 - set a bit in a previously pinned page
  *		visibilitymap_get_status - get status of bits
  *		visibilitymap_count  - count number of bits set in visibility map
- *		visibilitymap_truncate	- truncate the visibility map
+ *		visibilitymap_prepare_truncate -
+ *			prepare for truncation of the visibility map
  *
  * NOTES
  *
@@ -87,7 +88,8 @@
 
 #include "access/heapam_xlog.h"
 #include "access/visibilitymap.h"
-#include "access/xlog.h"
+#include "access/xloginsert.h"
+#include "access/xlogutils.h"
 #include "miscadmin.h"
 #include "port/pg_bitutils.h"
 #include "storage/bufmgr.h"
@@ -124,7 +126,7 @@
 
 /* prototypes for internal routines */
 static Buffer vm_readbuf(Relation rel, BlockNumber blkno, bool extend);
-static void vm_extend(Relation rel, BlockNumber nvmblocks);
+static void vm_extend(Relation rel, BlockNumber vm_nblocks);
 
 
 /*
@@ -430,16 +432,18 @@ visibilitymap_count(Relation rel, BlockNumber *all_visible, BlockNumber *all_fro
 }
 
 /*
- *	visibilitymap_truncate - truncate the visibility map
- *
- * The caller must hold AccessExclusiveLock on the relation, to ensure that
- * other backends receive the smgr invalidation event that this function sends
- * before they access the VM again.
+ *	visibilitymap_prepare_truncate -
+ *			prepare for truncation of the visibility map
  *
  * nheapblocks is the new size of the heap.
+ *
+ * Return the number of blocks of new visibility map.
+ * If it's InvalidBlockNumber, there is nothing to truncate;
+ * otherwise the caller is responsible for calling smgrtruncate()
+ * to truncate the visibility map pages.
  */
-void
-visibilitymap_truncate(Relation rel, BlockNumber nheapblocks)
+BlockNumber
+visibilitymap_prepare_truncate(Relation rel, BlockNumber nheapblocks)
 {
 	BlockNumber newnblocks;
 
@@ -457,7 +461,7 @@ visibilitymap_truncate(Relation rel, BlockNumber nheapblocks)
 	 * nothing to truncate.
 	 */
 	if (!smgrexists(RelationGetSmgr(rel), VISIBILITYMAP_FORKNUM))
-		return;
+		return InvalidBlockNumber;
 
 	/*
 	 * Unless the new size is exactly at a visibility map page boundary, the
@@ -478,7 +482,7 @@ visibilitymap_truncate(Relation rel, BlockNumber nheapblocks)
 		if (!BufferIsValid(mapBuffer))
 		{
 			/* nothing to do, the file was already smaller */
-			return;
+			return InvalidBlockNumber;
 		}
 
 		page = BufferGetPage(mapBuffer);
@@ -526,20 +530,10 @@ visibilitymap_truncate(Relation rel, BlockNumber nheapblocks)
 	if (smgrnblocks(RelationGetSmgr(rel), VISIBILITYMAP_FORKNUM) <= newnblocks)
 	{
 		/* nothing to do, the file was already smaller than requested size */
-		return;
+		return InvalidBlockNumber;
 	}
 
-	/* Truncate the unused VM pages, and send smgr inval message */
-	smgrtruncate(RelationGetSmgr(rel), VISIBILITYMAP_FORKNUM, newnblocks);
-
-	/*
-	 * We might as well update the local smgr_vm_nblocks setting. smgrtruncate
-	 * sent an smgr cache inval message, which will cause other backends to
-	 * invalidate their copy of smgr_vm_nblocks, and this one too at the next
-	 * command boundary.  But this ensures it isn't outright wrong until then.
-	 */
-	if (rel->rd_smgr)
-		rel->rd_smgr->smgr_vm_nblocks = newnblocks;
+	return newnblocks;
 }
 
 /*
@@ -565,17 +559,16 @@ vm_readbuf(Relation rel, BlockNumber blkno, bool extend)
 	 * If we haven't cached the size of the visibility map fork yet, check it
 	 * first.
 	 */
-	if (reln->smgr_vm_nblocks == InvalidBlockNumber)
+	if (reln->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] == InvalidBlockNumber)
 	{
 		if (smgrexists(reln, VISIBILITYMAP_FORKNUM))
-			reln->smgr_vm_nblocks = smgrnblocks(reln,
-												VISIBILITYMAP_FORKNUM);
+			smgrnblocks(reln, VISIBILITYMAP_FORKNUM);
 		else
-			reln->smgr_vm_nblocks = 0;
+			reln->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] = 0;
 	}
 
 	/* Handle requests beyond EOF */
-	if (blkno >= reln->smgr_vm_nblocks)
+	if (blkno >= reln->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM])
 	{
 		if (extend)
 			vm_extend(rel, blkno + 1);
@@ -650,11 +643,13 @@ vm_extend(Relation rel, BlockNumber vm_nblocks)
 	 * Create the file first if it doesn't exist.  If smgr_vm_nblocks is
 	 * positive then it must exist, no need for an smgrexists call.
 	 */
-	if ((reln->smgr_vm_nblocks == 0 ||
-		 reln->smgr_vm_nblocks == InvalidBlockNumber) &&
+	if ((reln->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] == 0 ||
+		 reln->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] == InvalidBlockNumber) &&
 		!smgrexists(reln, VISIBILITYMAP_FORKNUM))
 		smgrcreate(reln, VISIBILITYMAP_FORKNUM, false);
 
+	/* Invalidate cache so that smgrnblocks() asks the kernel. */
+	reln->smgr_cached_nblocks[VISIBILITYMAP_FORKNUM] = InvalidBlockNumber;
 	vm_nblocks_now = smgrnblocks(reln, VISIBILITYMAP_FORKNUM);
 
 	/* Now extend the file */
@@ -662,8 +657,7 @@ vm_extend(Relation rel, BlockNumber vm_nblocks)
 	{
 		PageSetChecksumInplace((Page) pg.data, vm_nblocks_now);
 
-		smgrextend(reln, VISIBILITYMAP_FORKNUM, vm_nblocks_now,
-				   pg.data, false);
+		smgrextend(reln, VISIBILITYMAP_FORKNUM, vm_nblocks_now, pg.data, false);
 		vm_nblocks_now++;
 	}
 
@@ -675,9 +669,6 @@ vm_extend(Relation rel, BlockNumber vm_nblocks)
 	 * infrequently.
 	 */
 	CacheInvalidateSmgr(reln->smgr_rnode);
-
-	/* Update local cache with the up-to-date size */
-	reln->smgr_vm_nblocks = vm_nblocks_now;
 
 	UnlockRelationForExtension(rel, ExclusiveLock);
 }

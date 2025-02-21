@@ -1,6 +1,6 @@
 /*
  * rewrite/rowsecurity.c
- *	  Routines to support policies for row level security (aka RLS).
+ *	  Routines to support policies for row-level security (aka RLS).
  *
  * Policies in PostgreSQL provide a mechanism to limit what records are
  * returned to a user and what records a user is permitted to add to a table.
@@ -29,7 +29,7 @@
  * in the current environment, but that may change if the row_security GUC or
  * the current role changes.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  */
 #include "postgres.h"
@@ -51,21 +51,21 @@
 #include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "rewrite/rowsecurity.h"
+#include "tcop/utility.h"
 #include "utils/acl.h"
 #include "utils/lsyscache.h"
 #include "utils/rel.h"
 #include "utils/rls.h"
 #include "utils/syscache.h"
-#include "tcop/utility.h"
 
 static void get_policies_for_relation(Relation relation,
 									  CmdType cmd, Oid user_id,
 									  List **permissive_policies,
 									  List **restrictive_policies);
 
-static List *sort_policies_by_name(List *policies);
+static void sort_policies_by_name(List *policies);
 
-static int	row_security_policy_cmp(const void *a, const void *b);
+static int	row_security_policy_cmp(const ListCell *a, const ListCell *b);
 
 static void add_security_quals(int rt_index,
 							   List *permissive_policies,
@@ -100,7 +100,7 @@ row_security_policy_hook_type row_security_policy_hook_restrictive = NULL;
  * Get any row security quals and WithCheckOption checks that should be
  * applied to the specified RTE.
  *
- * In addition, hasRowSecurity is set to true if row level security is enabled
+ * In addition, hasRowSecurity is set to true if row-level security is enabled
  * (even if this RTE doesn't have any row security quals), and hasSubLinks is
  * set to true if any of the quals returned contain sublinks.
  */
@@ -232,15 +232,17 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 						   hasSubLinks);
 
 	/*
-	 * Similar to above, during an UPDATE or DELETE, if SELECT rights are also
-	 * required (eg: when a RETURNING clause exists, or the user has provided
-	 * a WHERE clause which involves columns from the relation), we collect up
-	 * CMD_SELECT policies and add them via add_security_quals first.
+	 * Similar to above, during an UPDATE, DELETE, or MERGE, if SELECT rights
+	 * are also required (eg: when a RETURNING clause exists, or the user has
+	 * provided a WHERE clause which involves columns from the relation), we
+	 * collect up CMD_SELECT policies and add them via add_security_quals
+	 * first.
 	 *
 	 * This way, we filter out any records which are not visible through an
 	 * ALL or SELECT USING policy.
 	 */
-	if ((commandType == CMD_UPDATE || commandType == CMD_DELETE) &&
+	if ((commandType == CMD_UPDATE || commandType == CMD_DELETE ||
+		 commandType == CMD_MERGE) &&
 		rte->requiredPerms & ACL_SELECT)
 	{
 		List	   *select_permissive_policies;
@@ -380,6 +382,127 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 		}
 	}
 
+	/*
+	 * FOR MERGE, we fetch policies for UPDATE, DELETE and INSERT (and ALL)
+	 * and set them up so that we can enforce the appropriate policy depending
+	 * on the final action we take.
+	 *
+	 * We already fetched the SELECT policies above, to check existing rows,
+	 * but we must also check that new rows created by UPDATE actions are
+	 * visible, if SELECT rights are required for this relation. We don't do
+	 * this for INSERT actions, since an INSERT command would only do this
+	 * check if it had a RETURNING list, and MERGE does not support RETURNING.
+	 *
+	 * We don't push the UPDATE/DELETE USING quals to the RTE because we don't
+	 * really want to apply them while scanning the relation since we don't
+	 * know whether we will be doing an UPDATE or a DELETE at the end. We
+	 * apply the respective policy once we decide the final action on the
+	 * target tuple.
+	 *
+	 * XXX We are setting up USING quals as WITH CHECK. If RLS prohibits
+	 * UPDATE/DELETE on the target row, we shall throw an error instead of
+	 * silently ignoring the row. This is different than how normal
+	 * UPDATE/DELETE works and more in line with INSERT ON CONFLICT DO UPDATE
+	 * handling.
+	 */
+	if (commandType == CMD_MERGE)
+	{
+		List	   *merge_update_permissive_policies;
+		List	   *merge_update_restrictive_policies;
+		List	   *merge_delete_permissive_policies;
+		List	   *merge_delete_restrictive_policies;
+		List	   *merge_insert_permissive_policies;
+		List	   *merge_insert_restrictive_policies;
+
+		/*
+		 * Fetch the UPDATE policies and set them up to execute on the
+		 * existing target row before doing UPDATE.
+		 */
+		get_policies_for_relation(rel, CMD_UPDATE, user_id,
+								  &merge_update_permissive_policies,
+								  &merge_update_restrictive_policies);
+
+		/*
+		 * WCO_RLS_MERGE_UPDATE_CHECK is used to check UPDATE USING quals on
+		 * the existing target row.
+		 */
+		add_with_check_options(rel, rt_index,
+							   WCO_RLS_MERGE_UPDATE_CHECK,
+							   merge_update_permissive_policies,
+							   merge_update_restrictive_policies,
+							   withCheckOptions,
+							   hasSubLinks,
+							   true);
+
+		/* Enforce the WITH CHECK clauses of the UPDATE policies */
+		add_with_check_options(rel, rt_index,
+							   WCO_RLS_UPDATE_CHECK,
+							   merge_update_permissive_policies,
+							   merge_update_restrictive_policies,
+							   withCheckOptions,
+							   hasSubLinks,
+							   false);
+
+		/*
+		 * Add ALL/SELECT policies as WCO_RLS_UPDATE_CHECK WCOs, to ensure
+		 * that the updated row is visible when executing an UPDATE action, if
+		 * SELECT rights are required for this relation.
+		 */
+		if (rte->requiredPerms & ACL_SELECT)
+		{
+			List	   *merge_select_permissive_policies;
+			List	   *merge_select_restrictive_policies;
+
+			get_policies_for_relation(rel, CMD_SELECT, user_id,
+									  &merge_select_permissive_policies,
+									  &merge_select_restrictive_policies);
+			add_with_check_options(rel, rt_index,
+								   WCO_RLS_UPDATE_CHECK,
+								   merge_select_permissive_policies,
+								   merge_select_restrictive_policies,
+								   withCheckOptions,
+								   hasSubLinks,
+								   true);
+		}
+
+		/*
+		 * Fetch the DELETE policies and set them up to execute on the
+		 * existing target row before doing DELETE.
+		 */
+		get_policies_for_relation(rel, CMD_DELETE, user_id,
+								  &merge_delete_permissive_policies,
+								  &merge_delete_restrictive_policies);
+
+		/*
+		 * WCO_RLS_MERGE_DELETE_CHECK is used to check DELETE USING quals on
+		 * the existing target row.
+		 */
+		add_with_check_options(rel, rt_index,
+							   WCO_RLS_MERGE_DELETE_CHECK,
+							   merge_delete_permissive_policies,
+							   merge_delete_restrictive_policies,
+							   withCheckOptions,
+							   hasSubLinks,
+							   true);
+
+		/*
+		 * No special handling is required for INSERT policies. They will be
+		 * checked and enforced during ExecInsert(). But we must add them to
+		 * withCheckOptions.
+		 */
+		get_policies_for_relation(rel, CMD_INSERT, user_id,
+								  &merge_insert_permissive_policies,
+								  &merge_insert_restrictive_policies);
+
+		add_with_check_options(rel, rt_index,
+							   WCO_RLS_INSERT_CHECK,
+							   merge_insert_permissive_policies,
+							   merge_insert_restrictive_policies,
+							   withCheckOptions,
+							   hasSubLinks,
+							   false);
+	}
+
 	table_close(rel, NoLock);
 
 	/*
@@ -401,8 +524,6 @@ get_row_security_policies(Query *root, RangeTblEntry *rte, int rt_index,
 	 * when necessary (eg: role changes)
 	 */
 	*hasRowSecurity = true;
-
-	return;
 }
 
 /*
@@ -453,6 +574,14 @@ get_policies_for_relation(Relation relation, CmdType cmd, Oid user_id,
 					if (policy->polcmd == ACL_DELETE_CHR)
 						cmd_matches = true;
 					break;
+				case CMD_MERGE:
+
+					/*
+					 * We do not support a separate policy for MERGE command.
+					 * Instead it derives from the policies defined for other
+					 * commands.
+					 */
+					break;
 				default:
 					elog(ERROR, "unrecognized policy command type %d",
 						 (int) cmd);
@@ -477,7 +606,7 @@ get_policies_for_relation(Relation relation, CmdType cmd, Oid user_id,
 	 * We sort restrictive policies by name so that any WCOs they generate are
 	 * checked in a well-defined order.
 	 */
-	*restrictive_policies = sort_policies_by_name(*restrictive_policies);
+	sort_policies_by_name(*restrictive_policies);
 
 	/*
 	 * Then add any permissive or restrictive policies defined by extensions.
@@ -495,7 +624,7 @@ get_policies_for_relation(Relation relation, CmdType cmd, Oid user_id,
 		 * always check all built-in restrictive policies, in name order,
 		 * before checking restrictive policies added by hooks, in name order.
 		 */
-		hook_policies = sort_policies_by_name(hook_policies);
+		sort_policies_by_name(hook_policies);
 
 		foreach(item, hook_policies)
 		{
@@ -529,43 +658,20 @@ get_policies_for_relation(Relation relation, CmdType cmd, Oid user_id,
  * This is not necessary for permissive policies, since they are all combined
  * together using OR into a single WithCheckOption check.
  */
-static List *
+static void
 sort_policies_by_name(List *policies)
 {
-	int			npol = list_length(policies);
-	RowSecurityPolicy *pols;
-	ListCell   *item;
-	int			ii = 0;
-
-	if (npol <= 1)
-		return policies;
-
-	pols = (RowSecurityPolicy *) palloc(sizeof(RowSecurityPolicy) * npol);
-
-	foreach(item, policies)
-	{
-		RowSecurityPolicy *policy = (RowSecurityPolicy *) lfirst(item);
-
-		pols[ii++] = *policy;
-	}
-
-	qsort(pols, npol, sizeof(RowSecurityPolicy), row_security_policy_cmp);
-
-	policies = NIL;
-	for (ii = 0; ii < npol; ii++)
-		policies = lappend(policies, &pols[ii]);
-
-	return policies;
+	list_sort(policies, row_security_policy_cmp);
 }
 
 /*
- * qsort comparator to sort RowSecurityPolicy entries by name
+ * list_sort comparator to sort RowSecurityPolicy entries by name
  */
 static int
-row_security_policy_cmp(const void *a, const void *b)
+row_security_policy_cmp(const ListCell *a, const ListCell *b)
 {
-	const RowSecurityPolicy *pa = (const RowSecurityPolicy *) a;
-	const RowSecurityPolicy *pb = (const RowSecurityPolicy *) b;
+	const RowSecurityPolicy *pa = (const RowSecurityPolicy *) lfirst(a);
+	const RowSecurityPolicy *pb = (const RowSecurityPolicy *) lfirst(b);
 
 	/* Guard against NULL policy names from extensions */
 	if (pa->policy_name == NULL)

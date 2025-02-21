@@ -3,7 +3,7 @@
  * varchar.c
  *	  Functions for the built-in types char(n) and varchar(n).
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -14,20 +14,19 @@
  */
 #include "postgres.h"
 
-#include "access/tuptoaster.h"
+#include "access/detoast.h"
 #include "catalog/pg_collation.h"
 #include "catalog/pg_type.h"
+#include "common/hashfn.h"
 #include "libpq/pqformat.h"
+#include "mb/pg_wchar.h"
 #include "nodes/nodeFuncs.h"
 #include "nodes/supportnodes.h"
 #include "utils/array.h"
 #include "utils/builtins.h"
-#include "utils/hashutils.h"
 #include "utils/lsyscache.h"
 #include "utils/pg_locale.h"
 #include "utils/varlena.h"
-#include "mb/pg_wchar.h"
-
 
 /* common code for bpchartypmodin and varchartypmodin */
 static int32
@@ -573,7 +572,7 @@ varchar_support(PG_FUNCTION_ARGS)
 
 		typmod = (Node *) lsecond(expr->args);
 
-		if (IsA(typmod, Const) &&!((Const *) typmod)->constisnull)
+		if (IsA(typmod, Const) && !((Const *) typmod)->constisnull)
 		{
 			Node	   *source = (Node *) linitial(expr->args);
 			int32		old_typmod = exprTypmod(source);
@@ -744,15 +743,20 @@ bpchareq(PG_FUNCTION_ARGS)
 				len2;
 	bool		result;
 	Oid			collid = PG_GET_COLLATION();
+	bool		locale_is_c = false;
+	pg_locale_t mylocale = 0;
 
 	check_collation_set(collid);
 
 	len1 = bcTruelen(arg1);
 	len2 = bcTruelen(arg2);
 
-	if (lc_collate_is_c(collid) ||
-		collid == DEFAULT_COLLATION_OID ||
-		pg_newlocale_from_collation(collid)->deterministic)
+	if (lc_collate_is_c(collid))
+		locale_is_c = true;
+	else
+		mylocale = pg_newlocale_from_collation(collid);
+
+	if (locale_is_c || !mylocale || mylocale->deterministic)
 	{
 		/*
 		 * Since we only care about equality or not-equality, we can avoid all
@@ -784,15 +788,22 @@ bpcharne(PG_FUNCTION_ARGS)
 				len2;
 	bool		result;
 	Oid			collid = PG_GET_COLLATION();
+	bool		locale_is_c = false;
+	pg_locale_t mylocale = 0;
+
+	check_collation_set(collid);
 
 	check_collation_set(collid);
 
 	len1 = bcTruelen(arg1);
 	len2 = bcTruelen(arg2);
 
-	if (lc_collate_is_c(collid) ||
-		collid == DEFAULT_COLLATION_OID ||
-		pg_newlocale_from_collation(collid)->deterministic)
+	if (lc_collate_is_c(collid))
+		locale_is_c = true;
+	else
+		mylocale = pg_newlocale_from_collation(collid);
+
+	if (locale_is_c || !mylocale || mylocale->deterministic)
 	{
 		/*
 		 * Since we only care about equality or not-equality, we can avoid all
@@ -997,7 +1008,7 @@ hashbpchar(PG_FUNCTION_ARGS)
 	keydata = VARDATA_ANY(key);
 	keylen = bcTruelen(key);
 
-	if (!lc_collate_is_c(collid) && collid != DEFAULT_COLLATION_OID)
+	if (!lc_collate_is_c(collid))
 		mylocale = pg_newlocale_from_collation(collid);
 
 	if (!mylocale || mylocale->deterministic)
@@ -1058,7 +1069,7 @@ hashbpcharextended(PG_FUNCTION_ARGS)
 	keydata = VARDATA_ANY(key);
 	keylen = bcTruelen(key);
 
-	if (!lc_collate_is_c(collid) && collid != DEFAULT_COLLATION_OID)
+	if (!lc_collate_is_c(collid))
 		mylocale = pg_newlocale_from_collation(collid);
 
 	if (!mylocale || mylocale->deterministic)

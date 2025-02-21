@@ -5,7 +5,7 @@
  *		bits of hard-wired knowledge
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -26,14 +26,14 @@
 #include "access/table.h"
 #include "access/transam.h"
 #include "catalog/catalog.h"
-#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_auth_members.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_database.h"
-#include "catalog/pg_namespace.h"
-#include "catalog/pg_pltemplate.h"
 #include "catalog/pg_db_role_setting.h"
+#include "catalog/pg_largeobject.h"
+#include "catalog/pg_namespace.h"
+#include "catalog/pg_parameter_acl.h"
 #include "catalog/pg_replication_origin.h"
 #include "catalog/pg_shdepend.h"
 #include "catalog/pg_shdescription.h"
@@ -41,7 +41,6 @@
 #include "catalog/pg_subscription.h"
 #include "catalog/pg_tablespace.h"
 #include "catalog/pg_type.h"
-#include "catalog/toasting.h"
 #ifdef PGXC
 #include "catalog/pgxc_node.h"
 #include "catalog/pgxc_group.h"
@@ -57,6 +56,12 @@
 #include "pgxc/pgxc.h"
 #endif
 
+/*
+ * Parameters to determine when to emit a log message in
+ * GetNewOidWithIndex()
+ */
+#define GETNEWOID_LOG_THRESHOLD 1000000
+#define GETNEWOID_LOG_MAX_INTERVAL 128000000
 
 /*
  * IsSystemRelation
@@ -124,9 +129,9 @@ bool
 IsCatalogRelationOid(Oid relid)
 {
 	/*
-	 * We consider a relation to be a system catalog if it has an OID that was
-	 * manually assigned or assigned by genbki.pl.  This includes all the
-	 * defined catalogs, their indexes, and their TOAST tables and indexes.
+	 * We consider a relation to be a system catalog if it has a pinned OID.
+	 * This includes all the defined catalogs, their indexes, and their TOAST
+	 * tables and indexes.
 	 *
 	 * This rule excludes the relations in information_schema, which are not
 	 * integral to the system and can be treated the same as user relations.
@@ -136,7 +141,38 @@ IsCatalogRelationOid(Oid relid)
 	 * This test is reliable since an OID wraparound will skip this range of
 	 * OIDs; see GetNewObjectId().
 	 */
-	return (relid < (Oid) FirstBootstrapObjectId);
+	return (relid < (Oid) FirstUnpinnedObjectId);
+}
+
+
+/*
+ * IsInplaceUpdateRelation
+ *		True iff core code performs inplace updates on the relation.
+ *
+ *		This is used for assertions and for making the executor follow the
+ *		locking protocol described at README.tuplock section "Locking to write
+ *		inplace-updated tables".  Extensions may inplace-update other heap
+ *		tables, but concurrent SQL UPDATE on the same table may overwrite
+ *		those modifications.
+ *
+ *		The executor can assume these are not partitions or partitioned and
+ *		have no triggers.
+ */
+bool
+IsInplaceUpdateRelation(Relation relation)
+{
+	return IsInplaceUpdateOid(RelationGetRelid(relation));
+}
+
+/*
+ * IsInplaceUpdateOid
+ *		Like the above, but takes an OID as argument.
+ */
+bool
+IsInplaceUpdateOid(Oid relid)
+{
+	return (relid == RelationRelationId ||
+			relid == DatabaseRelationId);
 }
 
 /*
@@ -271,33 +307,27 @@ IsSharedRelation(Oid relationId)
 	if (relationId == AuthIdRelationId ||
 		relationId == AuthMemRelationId ||
 		relationId == DatabaseRelationId ||
-		relationId == PLTemplateRelationId ||
-		relationId == SharedDescriptionRelationId ||
+		relationId == DbRoleSettingRelationId ||
+		relationId == ParameterAclRelationId ||
+		relationId == ReplicationOriginRelationId ||
 		relationId == SharedDependRelationId ||
+		relationId == SharedDescriptionRelationId ||
 		relationId == SharedSecLabelRelationId ||
+		relationId == SubscriptionRelationId ||
 		relationId == TableSpaceRelationId ||
 #ifdef PGXC
 		relationId == PgxcGroupRelationId ||
-		relationId == PgxcNodeRelationId ||
+		relationId == PgxcNodeRelationId 
 #endif		
-		relationId == DbRoleSettingRelationId ||
-		relationId == ReplicationOriginRelationId ||
-		relationId == SubscriptionRelationId)
+		)
 		return true;
-	/* These are their indexes (see indexing.h) */
-	if (relationId == AuthIdRolnameIndexId ||
-		relationId == AuthIdOidIndexId ||
-		relationId == AuthMemRoleMemIndexId ||
+	/* These are their indexes */
+	if (relationId == AuthIdOidIndexId ||
+		relationId == AuthIdRolnameIndexId ||
 		relationId == AuthMemMemRoleIndexId ||
+		relationId == AuthMemRoleMemIndexId ||
 		relationId == DatabaseNameIndexId ||
 		relationId == DatabaseOidIndexId ||
-		relationId == PLTemplateNameIndexId ||
-		relationId == SharedDescriptionObjIndexId ||
-		relationId == SharedDependDependerIndexId ||
-		relationId == SharedDependReferenceIndexId ||
-		relationId == SharedSecLabelObjectIndexId ||
-		relationId == TablespaceOidIndexId ||
-		relationId == TablespaceNameIndexId ||
 #ifdef PGXC
 		relationId == PgxcNodeNodeNameIndexId ||
 		relationId == PgxcNodeNodeIdIndexId ||
@@ -306,20 +336,28 @@ IsSharedRelation(Oid relationId)
 		relationId == PgxcGroupOidIndexId ||
 #endif
 		relationId == DbRoleSettingDatidRolidIndexId ||
+		relationId == ParameterAclOidIndexId ||
+		relationId == ParameterAclParnameIndexId ||
 		relationId == ReplicationOriginIdentIndex ||
 		relationId == ReplicationOriginNameIndex ||
+		relationId == SharedDependDependerIndexId ||
+		relationId == SharedDependReferenceIndexId ||
+		relationId == SharedDescriptionObjIndexId ||
+		relationId == SharedSecLabelObjectIndexId ||
+		relationId == SubscriptionNameIndexId ||
 		relationId == SubscriptionObjectIndexId ||
-		relationId == SubscriptionNameIndexId)
+		relationId == TablespaceNameIndexId ||
+		relationId == TablespaceOidIndexId)
 		return true;
-	/* These are their toast tables and toast indexes (see toasting.h) */
+	/* These are their toast tables and toast indexes */
 	if (relationId == PgAuthidToastTable ||
 		relationId == PgAuthidToastIndex ||
 		relationId == PgDatabaseToastTable ||
 		relationId == PgDatabaseToastIndex ||
 		relationId == PgDbRoleSettingToastTable ||
 		relationId == PgDbRoleSettingToastIndex ||
-		relationId == PgPlTemplateToastTable ||
-		relationId == PgPlTemplateToastIndex ||
+		relationId == PgParameterAclToastTable ||
+		relationId == PgParameterAclToastIndex ||
 		relationId == PgReplicationOriginToastTable ||
 		relationId == PgReplicationOriginToastIndex ||
 		relationId == PgShdescriptionToastTable ||
@@ -332,6 +370,68 @@ IsSharedRelation(Oid relationId)
 		relationId == PgTablespaceToastIndex)
 		return true;
 	return false;
+}
+
+/*
+ * IsPinnedObject
+ *		Given the class + OID identity of a database object, report whether
+ *		it is "pinned", that is not droppable because the system requires it.
+ *
+ * We used to represent this explicitly in pg_depend, but that proved to be
+ * an undesirable amount of overhead, so now we rely on an OID range test.
+ */
+bool
+IsPinnedObject(Oid classId, Oid objectId)
+{
+	/*
+	 * Objects with OIDs above FirstUnpinnedObjectId are never pinned.  Since
+	 * the OID generator skips this range when wrapping around, this check
+	 * guarantees that user-defined objects are never considered pinned.
+	 */
+	if (objectId >= FirstUnpinnedObjectId)
+		return false;
+
+	/*
+	 * Large objects are never pinned.  We need this special case because
+	 * their OIDs can be user-assigned.
+	 */
+	if (classId == LargeObjectRelationId)
+		return false;
+
+	/*
+	 * There are a few objects defined in the catalog .dat files that, as a
+	 * matter of policy, we prefer not to treat as pinned.  We used to handle
+	 * that by excluding them from pg_depend, but it's just as easy to
+	 * hard-wire their OIDs here.  (If the user does indeed drop and recreate
+	 * them, they'll have new but certainly-unpinned OIDs, so no problem.)
+	 *
+	 * Checking both classId and objectId is overkill, since OIDs below
+	 * FirstGenbkiObjectId should be globally unique, but do it anyway for
+	 * robustness.
+	 */
+
+	/* the public namespace is not pinned */
+	if (classId == NamespaceRelationId &&
+		objectId == PG_PUBLIC_NAMESPACE)
+		return false;
+
+	/*
+	 * Databases are never pinned.  It might seem that it'd be prudent to pin
+	 * at least template0; but we do this intentionally so that template0 and
+	 * template1 can be rebuilt from each other, thus letting them serve as
+	 * mutual backups (as long as you've not modified template1, anyway).
+	 */
+	if (classId == DatabaseRelationId)
+		return false;
+
+	/*
+	 * All other initdb-created objects are pinned.  This is overkill (the
+	 * system doesn't really depend on having every last weird datatype, for
+	 * instance) but generating only the minimum required set of dependencies
+	 * seems hard, and enforcing an accurate list would be much more expensive
+	 * than the simple range test used here.
+	 */
+	return true;
 }
 
 
@@ -356,13 +456,6 @@ IsSharedRelation(Oid relationId)
  * consecutive existing OIDs.  This is a mostly reasonable assumption for
  * system catalogs.
  *
- * This is exported separately because there are cases where we want to use
- * an index that will not be recognized by RelationGetOidIndex: TOAST tables
- * have indexes that are usable, but have multiple columns and are on
- * ordinary columns rather than a true OID column.  This code will work
- * anyway, so long as the OID is the index's first column.  The caller must
- * pass in the actual heap attnum of the OID column, however.
- *
  * Caller must have a suitable lock on the relation.
  */
 Oid
@@ -372,6 +465,8 @@ GetNewOidWithIndex(Relation relation, Oid indexId, AttrNumber oidcolumn)
 	SysScanDesc scan;
 	ScanKeyData key;
 	bool		collides;
+	uint64		retries = 0;
+	uint64		retries_before_log = GETNEWOID_LOG_THRESHOLD;
 
 	/* Only system relations are supported */
 	Assert(IsSystemRelation(relation));
@@ -407,7 +502,51 @@ GetNewOidWithIndex(Relation relation, Oid indexId, AttrNumber oidcolumn)
 		collides = HeapTupleIsValid(systable_getnext(scan));
 
 		systable_endscan(scan);
+
+		/*
+		 * Log that we iterate more than GETNEWOID_LOG_THRESHOLD but have not
+		 * yet found OID unused in the relation. Then repeat logging with
+		 * exponentially increasing intervals until we iterate more than
+		 * GETNEWOID_LOG_MAX_INTERVAL. Finally repeat logging every
+		 * GETNEWOID_LOG_MAX_INTERVAL unless an unused OID is found. This
+		 * logic is necessary not to fill up the server log with the similar
+		 * messages.
+		 */
+		if (retries >= retries_before_log)
+		{
+			ereport(LOG,
+					(errmsg("still searching for an unused OID in relation \"%s\"",
+							RelationGetRelationName(relation)),
+					 errdetail_plural("OID candidates have been checked %llu time, but no unused OID has been found yet.",
+									  "OID candidates have been checked %llu times, but no unused OID has been found yet.",
+									  retries,
+									  (unsigned long long) retries)));
+
+			/*
+			 * Double the number of retries to do before logging next until it
+			 * reaches GETNEWOID_LOG_MAX_INTERVAL.
+			 */
+			if (retries_before_log * 2 <= GETNEWOID_LOG_MAX_INTERVAL)
+				retries_before_log *= 2;
+			else
+				retries_before_log += GETNEWOID_LOG_MAX_INTERVAL;
+		}
+
+		retries++;
 	} while (collides);
+
+	/*
+	 * If at least one log message is emitted, also log the completion of OID
+	 * assignment.
+	 */
+	if (retries > GETNEWOID_LOG_THRESHOLD)
+	{
+		ereport(LOG,
+				(errmsg_plural("new OID has been assigned in relation \"%s\" after %llu retry",
+							   "new OID has been assigned in relation \"%s\" after %llu retries",
+							   retries,
+							   RelationGetRelationName(relation), (unsigned long long) retries)));
+	}
 
 	return newOid;
 }
@@ -534,7 +673,8 @@ pg_nextoid(PG_FUNCTION_ARGS)
 	if (!superuser())
 		ereport(ERROR,
 				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
-				 errmsg("must be superuser to call pg_nextoid()")));
+				 errmsg("must be superuser to call %s()",
+						"pg_nextoid")));
 
 	rel = table_open(reloid, RowExclusiveLock);
 	idx = index_open(idxoid, RowExclusiveLock);
@@ -581,5 +721,29 @@ pg_nextoid(PG_FUNCTION_ARGS)
 	table_close(rel, RowExclusiveLock);
 	index_close(idx, RowExclusiveLock);
 
-	return newoid;
+	PG_RETURN_OID(newoid);
+}
+
+/*
+ * SQL callable interface for StopGeneratingPinnedObjectIds().
+ *
+ * This is only to be used by initdb, so it's intentionally not documented in
+ * the user facing docs.
+ */
+Datum
+pg_stop_making_pinned_objects(PG_FUNCTION_ARGS)
+{
+	/*
+	 * Belt-and-suspenders check, since StopGeneratingPinnedObjectIds will
+	 * fail anyway in non-single-user mode.
+	 */
+	if (!superuser())
+		ereport(ERROR,
+				(errcode(ERRCODE_INSUFFICIENT_PRIVILEGE),
+				 errmsg("must be superuser to call %s()",
+						"pg_stop_making_pinned_objects")));
+
+	StopGeneratingPinnedObjectIds();
+
+	PG_RETURN_VOID();
 }

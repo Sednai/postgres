@@ -20,11 +20,6 @@ CREATE TABLE regress_table_dumpable (
 SELECT pg_catalog.pg_extension_config_dump('regress_table_dumpable', '');
 GRANT SELECT ON regress_table_dumpable TO public;
 
-CREATE TABLE regress_table_dumpable (
-	col1 int check (col1 > 0)
-);
-SELECT pg_catalog.pg_extension_config_dump('regress_table_dumpable', '');
-
 CREATE SCHEMA regress_pg_dump_schema;
 
 GRANT USAGE ON regress_pg_dump_seq TO regress_dump_test_role;

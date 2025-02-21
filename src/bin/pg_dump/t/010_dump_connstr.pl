@@ -1,17 +1,16 @@
+
+# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+
 use strict;
 use warnings;
 
-use PostgresNode;
-use TestLib;
+use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::Utils;
 use Test::More;
 
-if ($^O eq 'msys' && `uname -or` =~ /^[2-9].*Msys/)
+if ($PostgreSQL::Test::Utils::is_msys2)
 {
 	plan skip_all => 'High bit name tests fail on Msys2';
-}
-else
-{
-	plan tests => 14;
 }
 
 # We're going to use byte sequences that aren't valid UTF-8 strings.  Use
@@ -31,8 +30,11 @@ my $dbname1 =
   . generate_ascii_string(1,  9)
   . generate_ascii_string(11, 12)
   . generate_ascii_string(14, 33)
-  . ($TestLib::windows_os ? '' : '"x"')   # IPC::Run mishandles '"' on Windows
-  . generate_ascii_string(35, 43)         # skip ','
+  . (
+	$PostgreSQL::Test::Utils::windows_os
+	? ''
+	: '"x"')    # IPC::Run mishandles '"' on Windows
+  . generate_ascii_string(35, 43)    # skip ','
   . generate_ascii_string(45, 54);
 my $dbname2 = 'regression' . generate_ascii_string(55, 65)    # skip 'B'-'W'
   . generate_ascii_string(88,  99)                            # skip 'd'-'w'
@@ -48,7 +50,7 @@ my $dbname4 = 'regression' . generate_ascii_string(203, 255);
 my $src_bootstrap_super = 'regress_postgres';
 my $dst_bootstrap_super = 'boot';
 
-my $node = get_new_node('main');
+my $node = PostgreSQL::Test::Cluster->new('main');
 $node->init(extra =>
 	  [ '-U', $src_bootstrap_super, '--locale=C', '--encoding=LATIN1' ]);
 
@@ -171,21 +173,20 @@ $node->command_ok(
 system_log('cat', $plain);
 my ($stderr, $result);
 my $restore_super = qq{regress_a'b\\c=d\\ne"f};
+$restore_super =~ s/"//g
+  if
+  $PostgreSQL::Test::Utils::windows_os;   # IPC::Run mishandles '"' on Windows
 
 
 # Restore full dump through psql using environment variables for
 # dbname/user connection parameters
 
-my $envar_node = get_new_node('destination_envar');
-$envar_node->init(extra =>
-	  [ '-U', $dst_bootstrap_super, '--locale=C', '--encoding=LATIN1' ]);
-$envar_node->run_log(
-	[
-		$ENV{PG_REGRESS},      '--config-auth',
-		$envar_node->data_dir, '--user',
-		$dst_bootstrap_super,  '--create-role',
-		$restore_super
-	]);
+my $envar_node = PostgreSQL::Test::Cluster->new('destination_envar');
+$envar_node->init(
+	extra =>
+	  [ '-U', $dst_bootstrap_super, '--locale=C', '--encoding=LATIN1' ],
+	auth_extra =>
+	  [ '--user', $dst_bootstrap_super, '--create-role', $restore_super ]);
 $envar_node->start;
 
 # make superuser for restore
@@ -207,18 +208,12 @@ is($stderr, '', 'no dump errors');
 # dbname/user connection parameters.  "\connect dbname=" forgets
 # user/port from command line.
 
-$restore_super =~ s/"//g
-  if $TestLib::windows_os;    # IPC::Run mishandles '"' on Windows
-my $cmdline_node = get_new_node('destination_cmdline');
-$cmdline_node->init(extra =>
-	  [ '-U', $dst_bootstrap_super, '--locale=C', '--encoding=LATIN1' ]);
-$cmdline_node->run_log(
-	[
-		$ENV{PG_REGRESS},        '--config-auth',
-		$cmdline_node->data_dir, '--user',
-		$dst_bootstrap_super,    '--create-role',
-		$restore_super
-	]);
+my $cmdline_node = PostgreSQL::Test::Cluster->new('destination_cmdline');
+$cmdline_node->init(
+	extra =>
+	  [ '-U', $dst_bootstrap_super, '--locale=C', '--encoding=LATIN1' ],
+	auth_extra =>
+	  [ '--user', $dst_bootstrap_super, '--create-role', $restore_super ]);
 $cmdline_node->start;
 $cmdline_node->run_log(
 	[ 'createuser', '-U', $dst_bootstrap_super, '-s', $restore_super ]);
@@ -234,3 +229,5 @@ $cmdline_node->run_log(
 ok($result,
 	'restore full dump with command-line options for connection parameters');
 is($stderr, '', 'no dump errors');
+
+done_testing();

@@ -21,7 +21,13 @@ PostgreSQL documentation
 
  <refsynopsisdiv>
 <synopsis>
-REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable class="parameter">name</replaceable>
+REINDEX [ ( <replaceable class="parameter">option</replaceable> [, ...] ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURRENTLY ] <replaceable class="parameter">name</replaceable>
+
+<phrase>where <replaceable class="parameter">option</replaceable> can be one of:</phrase>
+
+    CONCURRENTLY [ <replaceable class="parameter">boolean</replaceable> ]
+    TABLESPACE <replaceable class="parameter">new_tablespace</replaceable>
+    VERBOSE [ <replaceable class="parameter">boolean</replaceable> ]
 </synopsis>
  </refsynopsisdiv>
 
@@ -84,7 +90,9 @@ REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURR
     <term><literal>INDEX</literal></term>
     <listitem>
      <para>
-      Recreate the specified index.
+      Recreate the specified index. This form of <command>REINDEX</command>
+      cannot be executed inside a transaction block when used with a
+      partitioned index.
      </para>
     </listitem>
    </varlistentry>
@@ -95,6 +103,8 @@ REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURR
      <para>
       Recreate all indexes of the specified table.  If the table has a
       secondary <quote>TOAST</quote> table, that is reindexed as well.
+      This form of <command>REINDEX</command> cannot be executed inside a
+      transaction block when used with a partitioned table.
      </para>
     </listitem>
    </varlistentry>
@@ -159,8 +169,21 @@ REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURR
       updates, or deletes on the table; whereas a standard index rebuild
       locks out writes (but not reads) on the table until it's done.
       There are several caveats to be aware of when using this option
-      &mdash; see <xref linkend="sql-reindex-concurrently"
-      endterm="sql-reindex-concurrently-title"/>.
+      &mdash; see <xref linkend="sql-reindex-concurrently"/> below.
+     </para>
+     <para>
+      For temporary tables, <command>REINDEX</command> is always
+      non-concurrent, as no other session can access them, and
+      non-concurrent reindex is cheaper.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><literal>TABLESPACE</literal></term>
+    <listitem>
+     <para>
+      Specifies that indexes will be rebuilt on a new tablespace.
      </para>
      <para>
       For temporary tables, <command>REINDEX</command> is always
@@ -175,6 +198,29 @@ REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURR
     <listitem>
      <para>
       Prints a progress report as each index is reindexed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">boolean</replaceable></term>
+    <listitem>
+     <para>
+      Specifies whether the selected option should be turned on or off.
+      You can write <literal>TRUE</literal>, <literal>ON</literal>, or
+      <literal>1</literal> to enable the option, and <literal>FALSE</literal>,
+      <literal>OFF</literal>, or <literal>0</literal> to disable it.  The
+      <replaceable class="parameter">boolean</replaceable> value can also
+      be omitted, in which case <literal>TRUE</literal> is assumed.
+     </para>
+    </listitem>
+   </varlistentry>
+
+   <varlistentry>
+    <term><replaceable class="parameter">new_tablespace</replaceable></term>
+    <listitem>
+     <para>
+      The tablespace where indexes will be rebuilt.
      </para>
     </listitem>
    </varlistentry>
@@ -234,7 +280,12 @@ REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURR
    considerations are rather different.  <command>REINDEX</command> locks out writes
    but not reads of the index's parent table.  It also takes an
    <literal>ACCESS EXCLUSIVE</literal> lock on the specific index being processed,
-   which will block reads that attempt to use that index.  In contrast,
+   which will block reads that attempt to use that index. In particular,
+   the query planner tries to take an <literal>ACCESS SHARE</literal>
+   lock on every index of the table, regardless of the query, and so
+   <command>REINDEX</command> blocks virtually any queries except for some
+   prepared queries whose plan has been cached and which don't use this very
+   index. In contrast,
    <command>DROP INDEX</command> momentarily takes an
    <literal>ACCESS EXCLUSIVE</literal> lock on the parent table, blocking both
    writes and reads.  The subsequent <command>CREATE INDEX</command> locks out
@@ -246,7 +297,7 @@ REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURR
   <para>
    Reindexing a single index or table requires being the owner of that
    index or table.  Reindexing a schema or database requires being the
-   owner of that schema or database.  Note that is therefore sometimes
+   owner of that schema or database.  Note specifically that it's thus
    possible for non-superusers to rebuild indexes of tables owned by
    other users.  However, as a special exception, when
    <command>REINDEX DATABASE</command>, <command>REINDEX SCHEMA</command>
@@ -257,12 +308,35 @@ REINDEX [ ( VERBOSE ) ] { INDEX | TABLE | SCHEMA | DATABASE | SYSTEM } [ CONCURR
   </para>
 
   <para>
-   Reindexing partitioned tables or partitioned indexes is not supported.
-   Each individual partition can be reindexed separately instead.
+   Reindexing partitioned indexes or partitioned tables is supported
+   with <command>REINDEX INDEX</command> or <command>REINDEX TABLE</command>,
+   respectively. Each partition of the specified partitioned relation is
+   reindexed in a separate transaction. Those commands cannot be used inside
+   a transaction block when working on a partitioned table or index.
   </para>
 
-  <refsect2 id="sql-reindex-concurrently">
-   <title id="sql-reindex-concurrently-title">Rebuilding Indexes Concurrently</title>
+  <para>
+   When using the <literal>TABLESPACE</literal> clause with
+   <command>REINDEX</command> on a partitioned index or table, only the
+   tablespace references of the leaf partitions are updated. As partitioned
+   indexes are not updated, it is recommended to separately use
+   <command>ALTER TABLE ONLY</command> on them so as any new partitions
+   attached inherit the new tablespace. On failure, it may not have moved
+   all the indexes to the new tablespace. Re-running the command will rebuild
+   all the leaf partitions and move previously-unprocessed indexes to the new
+   tablespace.
+  </para>
+
+  <para>
+   If <literal>SCHEMA</literal>, <literal>DATABASE</literal> or
+   <literal>SYSTEM</literal> is used with <literal>TABLESPACE</literal>,
+   system relations are skipped and a single <literal>WARNING</literal>
+   will be generated. Indexes on TOAST tables are rebuilt, but not moved
+   to the new tablespace.
+  </para>
+
+  <refsect2 id="sql-reindex-concurrently" xreflabel="Rebuilding Indexes Concurrently">
+   <title>Rebuilding Indexes Concurrently</title>
 
    <indexterm zone="sql-reindex-concurrently">
     <primary>index</primary>
@@ -421,6 +495,12 @@ Indexes:
     is reindexed concurrently, those indexes will be skipped.  (It is possible
     to reindex such indexes without the <command>CONCURRENTLY</command> option.)
    </para>
+
+  <para>
+    Each backend running <command>REINDEX</command> will report its progress
+    in the <structname>pg_stat_progress_create_index</structname> view. See
+    <xref linkend="create-index-progress-reporting"/> for details.
+  </para>
   </refsect2>
  </refsect1>
 
@@ -479,6 +559,7 @@ REINDEX TABLE CONCURRENTLY my_broken_table;
    <member><xref linkend="sql-createindex"/></member>
    <member><xref linkend="sql-dropindex"/></member>
    <member><xref linkend="app-reindexdb"/></member>
+   <member><xref linkend="create-index-progress-reporting"/></member>
   </simplelist>
  </refsect1>
 </refentry>

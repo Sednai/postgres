@@ -5,10 +5,10 @@
 
 #include <ctype.h>
 
-#include "ecpgtype.h"
-#include "ecpglib.h"
 #include "ecpgerrno.h"
+#include "ecpglib.h"
 #include "ecpglib_extern.h"
+#include "ecpgtype.h"
 #include "sqlca.h"
 
 #define STMTID_SIZE 32
@@ -132,7 +132,7 @@ replace_variables(char **text, int lineno)
 
 			for (len = 1; (*text)[ptr + len] && isvarchar((*text)[ptr + len]); len++)
 				 /* skip */ ;
-			if (!(newcopy = (char *) ecpg_alloc(strlen(*text) -len + strlen(buffer) + 1, lineno)))
+			if (!(newcopy = (char *) ecpg_alloc(strlen(*text) - len + strlen(buffer) + 1, lineno)))
 			{
 				ecpg_free(buffer);
 				return false;

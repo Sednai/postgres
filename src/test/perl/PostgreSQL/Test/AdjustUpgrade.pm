@@ -98,18 +98,31 @@ sub adjust_database_contents
 			'drop extension if exists test_ext7');
 	}
 
-	# get rid of dblink's dependencies on regress.so
-	my $regrdb =
-	  $old_version le '9.4'
-	  ? 'contrib_regression'
-	  : 'contrib_regression_dblink';
-
-	if ($dbnames{$regrdb})
+	# stuff not supported from release 14
+	if ($old_version < 14)
 	{
+		# postfix operators (some don't exist in very old versions)
 		_add_st(
-			$result, $regrdb,
-			'drop function if exists public.putenv(text)',
-			'drop function if exists public.wait_pid(integer)');
+			$result,
+			'regression',
+			'drop operator #@# (bigint,NONE)',
+			'drop operator #%# (bigint,NONE)',
+			'drop operator if exists !=- (bigint,NONE)',
+			'drop operator if exists #@%# (bigint,NONE)');
+
+		# get rid of dblink's dependencies on regress.so
+		my $regrdb =
+		  $old_version le '9.4'
+		  ? 'contrib_regression'
+		  : 'contrib_regression_dblink';
+
+		if ($dbnames{$regrdb})
+		{
+			_add_st(
+				$result, $regrdb,
+				'drop function if exists public.putenv(text)',
+				'drop function if exists public.wait_pid(integer)');
+		}
 	}
 
 	# user table OIDs are gone from release 12 on
@@ -242,6 +255,17 @@ sub adjust_old_dumpfile
 	# Version comments will certainly not match.
 	$dump =~ s/^-- Dumped from database version.*\n//mg;
 
+	if ($old_version < 14)
+	{
+		# Remove mentions of extended hash functions.
+		$dump =~ s {^(\s+OPERATOR\s1\s=\(integer,integer\))\s,\n
+                    \s+FUNCTION\s2\s\(integer,\sinteger\)\spublic\.part_hashint4_noop\(integer,bigint\);}
+				   {$1;}mxg;
+		$dump =~ s {^(\s+OPERATOR\s1\s=\(text,text\))\s,\n
+                    \s+FUNCTION\s2\s\(text,\stext\)\spublic\.part_hashtext_length\(text,bigint\);}
+				   {$1;}mxg;
+	}
+
 	# Change trigger definitions to say ... EXECUTE FUNCTION ...
 	if ($old_version < 12)
 	{
@@ -268,34 +292,6 @@ sub adjust_old_dumpfile
 		$orig = "( 'peterburg' | 'peter' ) | 'sanct' & 'peterburg'";
 		$repl = "'peterburg' | 'peter' | 'sanct' & 'peterburg'";
 		$dump =~ s/(?<=^\Q$prefix\E)\Q$orig\E/$repl/mg;
-	}
-
-	# dumps from pre-9.6 databases will show assorted default grants explicitly
-	if ($old_version lt '9.6')
-	{
-		my $comment =
-		  "-- Name: SCHEMA public; Type: ACL; Schema: -; Owner: .*";
-		my $sql =
-		    "REVOKE ALL ON SCHEMA public FROM PUBLIC;\n"
-		  . "REVOKE ALL ON SCHEMA public FROM .*;\n"
-		  . "GRANT ALL ON SCHEMA public TO .*;\n"
-		  . "GRANT ALL ON SCHEMA public TO PUBLIC;";
-		$dump =~ s/^--\n$comment\n--\n+$sql\n+//mg;
-
-		$comment = "-- Name: DATABASE .*; Type: ACL; Schema: -; Owner: .*";
-		$sql =
-		    "REVOKE ALL ON DATABASE .* FROM PUBLIC;\n"
-		  . "REVOKE ALL ON DATABASE .* FROM .*;\n"
-		  . "GRANT ALL ON DATABASE .* TO .*;\n"
-		  . "GRANT CONNECT,TEMPORARY ON DATABASE .* TO PUBLIC;\n";
-		$dump =~ s/^--\n$comment\n--\n+$sql\n+//mg;
-		$dump =~ s/^$sql//mg;
-
-		$sql =
-		    "REVOKE ALL ON TABLE .* FROM PUBLIC;\n"
-		  . "REVOKE ALL ON TABLE .* FROM .*;\n"
-		  . "GRANT ALL ON TABLE .* TO .*;\n";
-		$dump =~ s/^$sql//mg;
 	}
 
 	if ($old_version lt '9.5')
@@ -440,6 +436,31 @@ sub adjust_new_dumpfile
 
 	# Version comments will certainly not match.
 	$dump =~ s/^-- Dumped from database version.*\n//mg;
+
+	if ($old_version < 14)
+	{
+		# Suppress noise-word uses of IN in CREATE/ALTER PROCEDURE.
+		$dump =~ s/^(CREATE PROCEDURE .*?)\(IN /$1(/mg;
+		$dump =~ s/^(ALTER PROCEDURE .*?)\(IN /$1(/mg;
+		$dump =~ s/^(CREATE PROCEDURE .*?), IN /$1, /mg;
+		$dump =~ s/^(ALTER PROCEDURE .*?), IN /$1, /mg;
+		$dump =~ s/^(CREATE PROCEDURE .*?), IN /$1, /mg;
+		$dump =~ s/^(ALTER PROCEDURE .*?), IN /$1, /mg;
+
+		# Remove SUBSCRIPT clauses in CREATE TYPE.
+		$dump =~ s/^\s+SUBSCRIPT = raw_array_subscript_handler,\n//mg;
+
+		# Remove multirange_type_name clauses in CREATE TYPE AS RANGE.
+		$dump =~ s {,\n\s+multirange_type_name = .*?(,?)$} {$1}mg;
+
+		# Remove mentions of extended hash functions.
+		$dump =~
+		  s {^ALTER\sOPERATOR\sFAMILY\spublic\.part_test_int4_ops\sUSING\shash\sADD\n
+						\s+FUNCTION\s2\s\(integer,\sinteger\)\spublic\.part_hashint4_noop\(integer,bigint\);} {}mxg;
+		$dump =~
+		  s {^ALTER\sOPERATOR\sFAMILY\spublic\.part_test_text_ops\sUSING\shash\sADD\n
+						\s+FUNCTION\s2\s\(text,\stext\)\spublic\.part_hashtext_length\(text,bigint\);} {}mxg;
+	}
 
 	# pre-v12 dumps will not say anything about default_table_access_method.
 	if ($old_version < 12)

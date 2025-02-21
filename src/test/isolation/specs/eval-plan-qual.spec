@@ -51,7 +51,7 @@ setup
   r bool;
   BEGIN
   EXECUTE format('SELECT $1 %s $2', p_op) INTO r USING p_a, p_b;
-  RAISE WARNING '%: % % % % %: %', p_comment, pg_typeof(p_a), p_a, p_op, pg_typeof(p_b), p_b, r;
+  RAISE NOTICE '%: % % % % %: %', p_comment, pg_typeof(p_a), p_a, p_op, pg_typeof(p_b), p_b, r;
   RETURN r;
   END;$$;
 }
@@ -69,7 +69,7 @@ teardown
 }
 
 session s1
-setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; SET client_min_messages = 'WARNING'; }
+setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; }
 # wx1 then wx2 checks the basic case of re-fetching up-to-date values
 step wx1	{ UPDATE accounts SET balance = balance - 200 WHERE accountid = 'checking' RETURNING balance; }
 # wy1 then wy2 checks the case where quals pass then fail
@@ -83,7 +83,7 @@ step tocdsext1 { UPDATE accounts_ext SET accountid = 'cds' WHERE accountid = 'ch
 # wx2 then d1 checks that the delete affects the updated row
 # wx2, wx2 then d1 checks that the delete checks the quals correctly (balance too high)
 # wx2, d2, then d1 checks that delete handles a vanishing row correctly
-step d1	{ DELETE FROM accounts WHERE accountid = 'checking' AND balance < 1500 RETURNING balance; }
+step d1		{ DELETE FROM accounts WHERE accountid = 'checking' AND balance < 1500 RETURNING balance; }
 
 # upsert tests are to check writable-CTE cases
 step upsert1	{
@@ -190,7 +190,7 @@ step simplepartupdate_noroute {
 	update parttbl set b = 2 where c = 1 returning *;
 }
 
-# test system class updates
+# test system class LockTuple()
 
 step sys1	{
 	UPDATE pg_class SET reltuples = 123 WHERE oid = 'accounts'::regclass;
@@ -198,10 +198,10 @@ step sys1	{
 
 
 session s2
-setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; SET client_min_messages = 'WARNING'; }
+setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; }
 step wx2	{ UPDATE accounts SET balance = balance + 450 WHERE accountid = 'checking' RETURNING balance; }
 step wy2	{ UPDATE accounts SET balance = balance + 1000 WHERE accountid = 'checking' AND balance < 1000  RETURNING balance; }
-step d2	{ DELETE FROM accounts WHERE accountid = 'checking'; }
+step d2		{ DELETE FROM accounts WHERE accountid = 'checking'; }
 
 step upsert2	{
 	WITH upsert AS
@@ -289,14 +289,21 @@ step sysupd2	{
 	WHERE oid = 'accounts'::regclass;
 }
 
+step sysmerge2	{
+	MERGE INTO pg_class
+	USING (SELECT 'accounts'::regclass AS o) j
+	ON o = oid
+	WHEN MATCHED THEN UPDATE SET reltuples = reltuples * 2;
+}
+
 step c2	{ COMMIT; }
 step r2	{ ROLLBACK; }
 
 session s3
-setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; SET client_min_messages = 'WARNING'; }
+setup		{ BEGIN ISOLATION LEVEL READ COMMITTED; }
 step read	{ SELECT * FROM accounts ORDER BY accountid; }
 step read_ext	{ SELECT * FROM accounts_ext ORDER BY accountid; }
-step read_a	{ SELECT * FROM table_a ORDER BY id; }
+step read_a		{ SELECT * FROM table_a ORDER BY id; }
 step read_part	{ SELECT * FROM parttbl ORDER BY a, c; }
 
 # this test exercises EvalPlanQual with a CTE, cf bug #14328
@@ -387,3 +394,4 @@ permutation simplepartupdate_noroute complexpartupdate_route c1 c2 read_part
 permutation simplepartupdate_noroute complexpartupdate_doesnt_route c1 c2 read_part
 
 permutation sys1 sysupd2 c1 c2
+permutation sys1 sysmerge2 c1 c2

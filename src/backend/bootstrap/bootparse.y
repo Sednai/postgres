@@ -4,7 +4,7 @@
  * bootparse.y
  *	  yacc grammar for the "bootstrap" mode (BKI file format)
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -18,16 +18,10 @@
 
 #include <unistd.h>
 
-#include "access/attnum.h"
-#include "access/htup.h"
-#include "access/itup.h"
-#include "access/tupdesc.h"
 #include "bootstrap/bootstrap.h"
-#include "catalog/catalog.h"
 #include "catalog/heap.h"
 #include "catalog/namespace.h"
 #include "catalog/pg_am.h"
-#include "catalog/pg_attribute.h"
 #include "catalog/pg_authid.h"
 #include "catalog/pg_class.h"
 #include "catalog/pg_namespace.h"
@@ -36,20 +30,7 @@
 #include "commands/defrem.h"
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
-#include "nodes/nodes.h"
-#include "nodes/parsenodes.h"
-#include "nodes/pg_list.h"
-#include "nodes/primnodes.h"
-#include "rewrite/prs2lock.h"
-#include "storage/block.h"
-#include "storage/fd.h"
-#include "storage/ipc.h"
-#include "storage/itemptr.h"
-#include "storage/off.h"
-#include "storage/smgr.h"
-#include "tcop/dest.h"
 #include "utils/memutils.h"
-#include "utils/rel.h"
 
 
 /*
@@ -186,9 +167,9 @@ Boot_CreateStmt:
 				}
 		  RPAREN
 				{
-					TupleDesc tupdesc;
-					bool	shared_relation;
-					bool	mapped_relation;
+					TupleDesc	tupdesc;
+					bool		shared_relation;
+					bool		mapped_relation;
 
 					do_start();
 
@@ -231,12 +212,13 @@ Boot_CreateStmt:
 												   mapped_relation,
 												   true,
 												   &relfrozenxid,
-												   &relminmxid);
+												   &relminmxid,
+												   true);
 						elog(DEBUG4, "bootstrap relation created");
 					}
 					else
 					{
-						Oid id;
+						Oid			id;
 
 						id = heap_create_with_catalog($2,
 													  PG_CATALOG_NAMESPACE,
@@ -287,8 +269,8 @@ Boot_InsertStmt:
 Boot_DeclareIndexStmt:
 		  XDECLARE INDEX boot_ident oidspec ON boot_ident USING boot_ident LPAREN boot_index_params RPAREN
 				{
-					IndexStmt *stmt = makeNode(IndexStmt);
-					Oid		relationId;
+					IndexStmt  *stmt = makeNode(IndexStmt);
+					Oid			relationId;
 
 					elog(DEBUG4, "creating index \"%s\"", $3);
 
@@ -306,6 +288,8 @@ Boot_DeclareIndexStmt:
 					stmt->idxcomment = NULL;
 					stmt->indexOid = InvalidOid;
 					stmt->oldNode = InvalidOid;
+					stmt->oldCreateSubid = InvalidSubTransactionId;
+					stmt->oldFirstRelfilenodeSubid = InvalidSubTransactionId;
 					stmt->unique = false;
 					stmt->primary = false;
 					stmt->isconstraint = false;
@@ -337,8 +321,8 @@ Boot_DeclareIndexStmt:
 Boot_DeclareUniqueIndexStmt:
 		  XDECLARE UNIQUE INDEX boot_ident oidspec ON boot_ident USING boot_ident LPAREN boot_index_params RPAREN
 				{
-					IndexStmt *stmt = makeNode(IndexStmt);
-					Oid		relationId;
+					IndexStmt  *stmt = makeNode(IndexStmt);
+					Oid			relationId;
 
 					elog(DEBUG4, "creating unique index \"%s\"", $4);
 
@@ -356,6 +340,8 @@ Boot_DeclareUniqueIndexStmt:
 					stmt->idxcomment = NULL;
 					stmt->indexOid = InvalidOid;
 					stmt->oldNode = InvalidOid;
+					stmt->oldCreateSubid = InvalidSubTransactionId;
+					stmt->oldFirstRelfilenodeSubid = InvalidSubTransactionId;
 					stmt->unique = true;
 					stmt->primary = false;
 					stmt->isconstraint = false;
@@ -414,7 +400,8 @@ boot_index_params:
 boot_index_param:
 		boot_ident boot_ident
 				{
-					IndexElem *n = makeNode(IndexElem);
+					IndexElem  *n = makeNode(IndexElem);
+
 					n->name = $1;
 					n->expr = NULL;
 					n->indexcolname = NULL;

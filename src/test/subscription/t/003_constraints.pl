@@ -1,17 +1,20 @@
+
+# Copyright (c) 2021-2022, PostgreSQL Global Development Group
+
 # This test checks that constraints work on subscriber
 use strict;
 use warnings;
-use PostgresNode;
-use TestLib;
-use Test::More tests => 6;
+use PostgreSQL::Test::Cluster;
+use PostgreSQL::Test::Utils;
+use Test::More;
 
 # Initialize publisher node
-my $node_publisher = get_new_node('publisher');
+my $node_publisher = PostgreSQL::Test::Cluster->new('publisher');
 $node_publisher->init(allows_streaming => 'logical');
 $node_publisher->start;
 
 # Create subscriber node
-my $node_subscriber = get_new_node('subscriber');
+my $node_subscriber = PostgreSQL::Test::Cluster->new('subscriber');
 $node_subscriber->init(allows_streaming => 'logical');
 $node_subscriber->start;
 
@@ -117,7 +120,8 @@ $node_publisher->wait_for_catchup('tap_sub');
 # The trigger should cause the update to be skipped on subscriber
 $result = $node_subscriber->safe_psql('postgres',
 	"SELECT count(*), min(bid), max(bid) FROM tab_fk_ref;");
-is($result, qq(2|1|2), 'check replica update column trigger applied on subscriber');
+is($result, qq(2|1|2),
+	'check replica update column trigger applied on subscriber');
 
 # Update on a column not specified in the trigger, but it will trigger
 # anyway because logical replication ships all columns in an update.
@@ -133,3 +137,5 @@ is($result, qq(2|1|2),
 
 $node_subscriber->stop('fast');
 $node_publisher->stop('fast');
+
+done_testing();

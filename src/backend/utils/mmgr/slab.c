@@ -7,7 +7,7 @@
  * numbers of equally-sized objects are allocated (and freed).
  *
  *
- * Portions Copyright (c) 2017-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2017-2022, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/mmgr/slab.c
@@ -40,7 +40,7 @@
  *
  *	For each block, we maintain pointer to the first free chunk - this is quite
  *	cheap and allows us to skip all the preceding used chunks, eliminating
- *	a significant number of lookups in many common usage patters. In the worst
+ *	a significant number of lookups in many common usage patterns. In the worst
  *	case this performs as if the pointer was not maintained.
  *
  *	We cache the freelist index for the blocks with the fewest free chunks
@@ -52,10 +52,9 @@
 
 #include "postgres.h"
 
+#include "lib/ilist.h"
 #include "utils/memdebug.h"
 #include "utils/memutils.h"
-#include "lib/ilist.h"
-
 
 #define Slab_BLOCKHDRSZ	MAXALIGN(sizeof(SlabBlock))
 
@@ -138,7 +137,8 @@ static Size SlabGetChunkSpace(MemoryContext context, void *pointer);
 static bool SlabIsEmpty(MemoryContext context);
 static void SlabStats(MemoryContext context,
 					  MemoryStatsPrintFunc printfunc, void *passthru,
-					  MemoryContextCounters *totals);
+					  MemoryContextCounters *totals,
+					  bool print_to_stderr);
 #ifdef MEMORY_CONTEXT_CHECKING
 static void SlabCheck(MemoryContext context);
 #endif
@@ -159,22 +159,6 @@ static const MemoryContextMethods SlabMethods = {
 	,SlabCheck
 #endif
 };
-
-/* ----------
- * Debug macros
- * ----------
- */
-#ifdef HAVE_ALLOCINFO
-#define SlabFreeInfo(_cxt, _chunk) \
-			fprintf(stderr, "SlabFree: %s: %p, %zu\n", \
-				(_cxt)->header.name, (_chunk), (_chunk)->header.size)
-#define SlabAllocInfo(_cxt, _chunk) \
-			fprintf(stderr, "SlabAlloc: %s: %p, %zu\n", \
-				(_cxt)->header.name, (_chunk), (_chunk)->header.size)
-#else
-#define SlabFreeInfo(_cxt, _chunk)
-#define SlabAllocInfo(_cxt, _chunk)
-#endif
 
 
 /*
@@ -236,10 +220,11 @@ SlabContextCreate(MemoryContext parent,
 	headerSize = offsetof(SlabContext, freelist) + freelistSize;
 
 #ifdef MEMORY_CONTEXT_CHECKING
+
 	/*
-	 * With memory checking, we need to allocate extra space for the bitmap
-	 * of free chunks. The bitmap is an array of bools, so we don't need to
-	 * worry about alignment.
+	 * With memory checking, we need to allocate extra space for the bitmap of
+	 * free chunks. The bitmap is an array of bools, so we don't need to worry
+	 * about alignment.
 	 */
 	headerSize += chunksPerBlock * sizeof(bool);
 #endif
@@ -325,12 +310,14 @@ SlabReset(MemoryContext context)
 #endif
 			free(block);
 			slab->nblocks--;
+			context->mem_allocated -= slab->blockSize;
 		}
 	}
 
 	slab->minFreeChunks = 0;
 
 	Assert(slab->nblocks == 0);
+	Assert(context->mem_allocated == 0);
 }
 
 /*
@@ -408,6 +395,7 @@ SlabAlloc(MemoryContext context, Size size)
 
 		slab->minFreeChunks = slab->chunksPerBlock;
 		slab->nblocks += 1;
+		context->mem_allocated += slab->blockSize;
 	}
 
 	/* grab the block from the freelist (even the new block is there) */
@@ -499,7 +487,8 @@ SlabAlloc(MemoryContext context, Size size)
 	randomize_mem((char *) SlabChunkGetPointer(chunk), size);
 #endif
 
-	SlabAllocInfo(slab, chunk);
+	Assert(slab->nblocks * slab->blockSize == context->mem_allocated);
+
 	return SlabChunkGetPointer(chunk);
 }
 
@@ -514,8 +503,6 @@ SlabFree(MemoryContext context, void *pointer)
 	SlabContext *slab = castNode(SlabContext, context);
 	SlabChunk  *chunk = SlabPointerGetChunk(pointer);
 	SlabBlock  *block = chunk->block;
-
-	SlabFreeInfo(slab, chunk);
 
 #ifdef MEMORY_CONTEXT_CHECKING
 	/* Test for someone scribbling on unused space in chunk */
@@ -575,11 +562,13 @@ SlabFree(MemoryContext context, void *pointer)
 	{
 		free(block);
 		slab->nblocks--;
+		context->mem_allocated -= slab->blockSize;
 	}
 	else
 		dlist_push_head(&slab->freelist[block->nfree], &block->node);
 
 	Assert(slab->nblocks >= 0);
+	Assert(slab->nblocks * slab->blockSize == context->mem_allocated);
 }
 
 /*
@@ -646,11 +635,13 @@ SlabIsEmpty(MemoryContext context)
  * printfunc: if not NULL, pass a human-readable stats string to this.
  * passthru: pass this pointer through to printfunc.
  * totals: if not NULL, add stats about this context into *totals.
+ * print_to_stderr: print stats to stderr if true, elog otherwise.
  */
 static void
 SlabStats(MemoryContext context,
 		  MemoryStatsPrintFunc printfunc, void *passthru,
-		  MemoryContextCounters *totals)
+		  MemoryContextCounters *totals,
+		  bool print_to_stderr)
 {
 	SlabContext *slab = castNode(SlabContext, context);
 	Size		nblocks = 0;
@@ -682,10 +673,10 @@ SlabStats(MemoryContext context,
 		char		stats_string[200];
 
 		snprintf(stats_string, sizeof(stats_string),
-				 "%zu total in %zd blocks; %zu free (%zd chunks); %zu used",
+				 "%zu total in %zu blocks; %zu free (%zu chunks); %zu used",
 				 totalspace, nblocks, freespace, freechunks,
 				 totalspace - freespace);
-		printfunc(context, passthru, stats_string);
+		printfunc(context, passthru, stats_string, print_to_stderr);
 	}
 
 	if (totals)
@@ -798,6 +789,8 @@ SlabCheck(MemoryContext context)
 					 name, block->nfree, block, nfree);
 		}
 	}
+
+	Assert(slab->nblocks * slab->blockSize == context->mem_allocated);
 }
 
 #endif							/* MEMORY_CONTEXT_CHECKING */

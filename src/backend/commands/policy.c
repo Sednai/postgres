@@ -3,7 +3,7 @@
  * policy.c
  *	  Commands for manipulating policies.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/policy.c
@@ -16,8 +16,8 @@
 #include "access/htup.h"
 #include "access/htup_details.h"
 #include "access/relation.h"
-#include "access/table.h"
 #include "access/sysattr.h"
+#include "access/table.h"
 #include "access/xact.h"
 #include "catalog/catalog.h"
 #include "catalog/dependency.h"
@@ -501,7 +501,7 @@ RemoveRoleFromObjectPolicy(Oid roleid, Oid classid, Oid policy_id)
 
 		/* This is the array for the new tuple */
 		role_ids = construct_array(role_oids, num_roles, OIDOID,
-								   sizeof(Oid), true, 'i');
+								   sizeof(Oid), true, TYPALIGN_INT);
 
 		replaces[Anum_pg_policy_polroles - 1] = true;
 		values[Anum_pg_policy_polroles - 1] = PointerGetDatum(role_ids);
@@ -582,7 +582,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	ArrayType  *role_ids;
 	ParseState *qual_pstate;
 	ParseState *with_check_pstate;
-	RangeTblEntry *rte;
+	ParseNamespaceItem *nsitem;
 	Node	   *qual;
 	Node	   *with_check_qual;
 	ScanKeyData skey[2];
@@ -618,7 +618,7 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	/* Collect role ids */
 	role_oids = policy_role_list_to_array(stmt->roles, &nitems);
 	role_ids = construct_array(role_oids, nitems, OIDOID,
-							   sizeof(Oid), true, 'i');
+							   sizeof(Oid), true, TYPALIGN_INT);
 
 	/* Parse the supplied clause */
 	qual_pstate = make_parsestate(NULL);
@@ -638,24 +638,24 @@ CreatePolicy(CreatePolicyStmt *stmt)
 	target_table = relation_open(table_id, NoLock);
 
 	/* Add for the regular security quals */
-	rte = addRangeTableEntryForRelation(qual_pstate, target_table,
-										AccessShareLock,
-										NULL, false, false);
-	addRTEtoQuery(qual_pstate, rte, false, true, true);
+	nsitem = addRangeTableEntryForRelation(qual_pstate, target_table,
+										   AccessShareLock,
+										   NULL, false, false);
+	addNSItemToQuery(qual_pstate, nsitem, false, true, true);
 
 	/* Add for the with-check quals */
-	rte = addRangeTableEntryForRelation(with_check_pstate, target_table,
-										AccessShareLock,
-										NULL, false, false);
-	addRTEtoQuery(with_check_pstate, rte, false, true, true);
+	nsitem = addRangeTableEntryForRelation(with_check_pstate, target_table,
+										   AccessShareLock,
+										   NULL, false, false);
+	addNSItemToQuery(with_check_pstate, nsitem, false, true, true);
 
 	qual = transformWhereClause(qual_pstate,
-								copyObject(stmt->qual),
+								stmt->qual,
 								EXPR_KIND_POLICY,
 								"POLICY");
 
 	with_check_qual = transformWhereClause(with_check_pstate,
-										   copyObject(stmt->with_check),
+										   stmt->with_check,
 										   EXPR_KIND_POLICY,
 										   "POLICY");
 
@@ -802,7 +802,7 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	{
 		role_oids = policy_role_list_to_array(stmt->roles, &nitems);
 		role_ids = construct_array(role_oids, nitems, OIDOID,
-								   sizeof(Oid), true, 'i');
+								   sizeof(Oid), true, TYPALIGN_INT);
 	}
 
 	/* Get id of table.  Also handles permissions checks. */
@@ -816,16 +816,16 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	/* Parse the using policy clause */
 	if (stmt->qual)
 	{
-		RangeTblEntry *rte;
+		ParseNamespaceItem *nsitem;
 		ParseState *qual_pstate = make_parsestate(NULL);
 
-		rte = addRangeTableEntryForRelation(qual_pstate, target_table,
-											AccessShareLock,
-											NULL, false, false);
+		nsitem = addRangeTableEntryForRelation(qual_pstate, target_table,
+											   AccessShareLock,
+											   NULL, false, false);
 
-		addRTEtoQuery(qual_pstate, rte, false, true, true);
+		addNSItemToQuery(qual_pstate, nsitem, false, true, true);
 
-		qual = transformWhereClause(qual_pstate, copyObject(stmt->qual),
+		qual = transformWhereClause(qual_pstate, stmt->qual,
 									EXPR_KIND_POLICY,
 									"POLICY");
 
@@ -839,17 +839,17 @@ AlterPolicy(AlterPolicyStmt *stmt)
 	/* Parse the with-check policy clause */
 	if (stmt->with_check)
 	{
-		RangeTblEntry *rte;
+		ParseNamespaceItem *nsitem;
 		ParseState *with_check_pstate = make_parsestate(NULL);
 
-		rte = addRangeTableEntryForRelation(with_check_pstate, target_table,
-											AccessShareLock,
-											NULL, false, false);
+		nsitem = addRangeTableEntryForRelation(with_check_pstate, target_table,
+											   AccessShareLock,
+											   NULL, false, false);
 
-		addRTEtoQuery(with_check_pstate, rte, false, true, true);
+		addNSItemToQuery(with_check_pstate, nsitem, false, true, true);
 
 		with_check_qual = transformWhereClause(with_check_pstate,
-											   copyObject(stmt->with_check),
+											   stmt->with_check,
 											   EXPR_KIND_POLICY,
 											   "POLICY");
 
@@ -990,9 +990,9 @@ AlterPolicy(AlterPolicyStmt *stmt)
 			qual = stringToNode(qual_value);
 
 			/* Add this rel to the parsestate's rangetable, for dependencies */
-			addRangeTableEntryForRelation(qual_pstate, target_table,
-										  AccessShareLock,
-										  NULL, false, false);
+			(void) addRangeTableEntryForRelation(qual_pstate, target_table,
+												 AccessShareLock,
+												 NULL, false, false);
 
 			qual_parse_rtable = qual_pstate->p_rtable;
 			free_parsestate(qual_pstate);
@@ -1032,9 +1032,10 @@ AlterPolicy(AlterPolicyStmt *stmt)
 			with_check_qual = stringToNode(with_check_value);
 
 			/* Add this rel to the parsestate's rangetable, for dependencies */
-			addRangeTableEntryForRelation(with_check_pstate, target_table,
-										  AccessShareLock,
-										  NULL, false, false);
+			(void) addRangeTableEntryForRelation(with_check_pstate,
+												 target_table,
+												 AccessShareLock,
+												 NULL, false, false);
 
 			with_check_parse_rtable = with_check_pstate->p_rtable;
 			free_parsestate(with_check_pstate);

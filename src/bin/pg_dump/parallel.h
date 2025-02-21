@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -16,9 +16,11 @@
 #ifndef PG_DUMP_PARALLEL_H
 #define PG_DUMP_PARALLEL_H
 
+#include <limits.h>
+
 #include "pg_backup_archiver.h"
 
-/* Function to call in master process on completion of a worker task */
+/* Function to call in leader process on completion of a worker task */
 typedef void (*ParallelCompletionPtr) (ArchiveHandle *AH,
 									   TocEntry *te,
 									   int status,
@@ -32,6 +34,19 @@ typedef enum
 	WFW_ONE_IDLE,
 	WFW_ALL_IDLE
 } WFW_WaitOption;
+
+/*
+ * Maximum number of parallel jobs allowed.
+ *
+ * On Windows we can only have at most MAXIMUM_WAIT_OBJECTS (= 64 usually)
+ * parallel jobs because that's the maximum limit for the
+ * WaitForMultipleObjects() call.
+ */
+#ifdef WIN32
+#define PG_MAX_JOBS MAXIMUM_WAIT_OBJECTS
+#else
+#define PG_MAX_JOBS INT_MAX
+#endif
 
 /* ParallelSlot is an opaque struct known only within parallel.c */
 typedef struct ParallelSlot ParallelSlot;

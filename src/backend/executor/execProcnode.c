@@ -7,7 +7,7 @@
  *	 ExecProcNode, or ExecEndNode on its subnodes and do the appropriate
  *	 processing.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -88,11 +88,13 @@
 #include "executor/nodeGroup.h"
 #include "executor/nodeHash.h"
 #include "executor/nodeHashjoin.h"
+#include "executor/nodeIncrementalSort.h"
 #include "executor/nodeIndexonlyscan.h"
 #include "executor/nodeIndexscan.h"
 #include "executor/nodeLimit.h"
 #include "executor/nodeLockRows.h"
 #include "executor/nodeMaterial.h"
+#include "executor/nodeMemoize.h"
 #include "executor/nodeMergeAppend.h"
 #include "executor/nodeMergejoin.h"
 #include "executor/nodeModifyTable.h"
@@ -108,13 +110,14 @@
 #include "executor/nodeSubplan.h"
 #include "executor/nodeSubqueryscan.h"
 #include "executor/nodeTableFuncscan.h"
+#include "executor/nodeTidrangescan.h"
 #include "executor/nodeTidscan.h"
 #include "executor/nodeUnique.h"
 #include "executor/nodeValuesscan.h"
 #include "executor/nodeWindowAgg.h"
 #include "executor/nodeWorktablescan.h"
-#include "nodes/nodeFuncs.h"
 #include "miscadmin.h"
+#include "nodes/nodeFuncs.h"
 #ifdef PGXC
 #include "pgxc/execRemote.h"
 #endif
@@ -242,6 +245,11 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 												   estate, eflags);
 			break;
 
+		case T_TidRangeScan:
+			result = (PlanState *) ExecInitTidRangeScan((TidRangeScan *) node,
+														estate, eflags);
+			break;
+
 		case T_SubqueryScan:
 			result = (PlanState *) ExecInitSubqueryScan((SubqueryScan *) node,
 														estate, eflags);
@@ -316,6 +324,16 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 		case T_Sort:
 			result = (PlanState *) ExecInitSort((Sort *) node,
 												estate, eflags);
+			break;
+
+		case T_IncrementalSort:
+			result = (PlanState *) ExecInitIncrementalSort((IncrementalSort *) node,
+														   estate, eflags);
+			break;
+
+		case T_Memoize:
+			result = (PlanState *) ExecInitMemoize((Memoize *) node, estate,
+												   eflags);
 			break;
 
 		case T_Group:
@@ -402,7 +420,8 @@ ExecInitNode(Plan *node, EState *estate, int eflags)
 
 	/* Set up instrumentation for this node if requested */
 	if (estate->es_instrument)
-		result->instrument = InstrAlloc(1, estate->es_instrument);
+		result->instrument = InstrAlloc(1, estate->es_instrument,
+										result->async_capable);
 
 	return result;
 }
@@ -644,6 +663,10 @@ ExecEndNode(PlanState *node)
 			ExecEndTidScan((TidScanState *) node);
 			break;
 
+		case T_TidRangeScanState:
+			ExecEndTidRangeScan((TidRangeScanState *) node);
+			break;
+
 		case T_SubqueryScanState:
 			ExecEndSubqueryScan((SubqueryScanState *) node);
 			break;
@@ -704,6 +727,14 @@ ExecEndNode(PlanState *node)
 
 		case T_SortState:
 			ExecEndSort((SortState *) node);
+			break;
+
+		case T_IncrementalSortState:
+			ExecEndIncrementalSort((IncrementalSortState *) node);
+			break;
+
+		case T_MemoizeState:
+			ExecEndMemoize((MemoizeState *) node);
 			break;
 
 		case T_GroupState:
@@ -852,6 +883,30 @@ ExecSetTupleBound(int64 tuples_needed, PlanState *child_node)
 		 * mechanism.
 		 */
 		SortState  *sortState = (SortState *) child_node;
+
+		if (tuples_needed < 0)
+		{
+			/* make sure flag gets reset if needed upon rescan */
+			sortState->bounded = false;
+		}
+		else
+		{
+			sortState->bounded = true;
+			sortState->bound = tuples_needed;
+		}
+	}
+	else if (IsA(child_node, IncrementalSortState))
+	{
+		/*
+		 * If it is an IncrementalSort node, notify it that it can use bounded
+		 * sort.
+		 *
+		 * Note: it is the responsibility of nodeIncrementalSort.c to react
+		 * properly to changes of these parameters.  If we ever redesign this,
+		 * it'd be a good idea to integrate this signaling with the
+		 * parameter-change mechanism.
+		 */
+		IncrementalSortState *sortState = (IncrementalSortState *) child_node;
 
 		if (tuples_needed < 0)
 		{

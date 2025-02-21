@@ -3,7 +3,7 @@
  * pg_collation.c
  *	  routines to support manipulation of the pg_collation relation
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -49,6 +49,7 @@ CollationCreate(const char *collname, Oid collnamespace,
 				bool collisdeterministic,
 				int32 collencoding,
 				const char *collcollate, const char *collctype,
+				const char *colliculocale,
 				const char *collversion,
 				bool if_not_exists,
 				bool quiet)
@@ -58,9 +59,7 @@ CollationCreate(const char *collname, Oid collnamespace,
 	HeapTuple	tup;
 	Datum		values[Natts_pg_collation];
 	bool		nulls[Natts_pg_collation];
-	NameData	name_name,
-				name_collate,
-				name_ctype;
+	NameData	name_name;
 	Oid			oid;
 	ObjectAddress myself,
 				referenced;
@@ -68,8 +67,7 @@ CollationCreate(const char *collname, Oid collnamespace,
 	AssertArg(collname);
 	AssertArg(collnamespace);
 	AssertArg(collowner);
-	AssertArg(collcollate);
-	AssertArg(collctype);
+	AssertArg((collcollate && collctype) || colliculocale);
 
 	/*
 	 * Make sure there is no existing collation of same name & encoding.
@@ -184,10 +182,18 @@ CollationCreate(const char *collname, Oid collnamespace,
 	values[Anum_pg_collation_collprovider - 1] = CharGetDatum(collprovider);
 	values[Anum_pg_collation_collisdeterministic - 1] = BoolGetDatum(collisdeterministic);
 	values[Anum_pg_collation_collencoding - 1] = Int32GetDatum(collencoding);
-	namestrcpy(&name_collate, collcollate);
-	values[Anum_pg_collation_collcollate - 1] = NameGetDatum(&name_collate);
-	namestrcpy(&name_ctype, collctype);
-	values[Anum_pg_collation_collctype - 1] = NameGetDatum(&name_ctype);
+	if (collcollate)
+		values[Anum_pg_collation_collcollate - 1] = CStringGetTextDatum(collcollate);
+	else
+		nulls[Anum_pg_collation_collcollate - 1] = true;
+	if (collctype)
+		values[Anum_pg_collation_collctype - 1] = CStringGetTextDatum(collctype);
+	else
+		nulls[Anum_pg_collation_collctype - 1] = true;
+	if (colliculocale)
+		values[Anum_pg_collation_colliculocale - 1] = CStringGetTextDatum(colliculocale);
+	else
+		nulls[Anum_pg_collation_colliculocale - 1] = true;
 	if (collversion)
 		values[Anum_pg_collation_collversion - 1] = CStringGetTextDatum(collversion);
 	else
@@ -223,40 +229,4 @@ CollationCreate(const char *collname, Oid collnamespace,
 	table_close(rel, NoLock);
 
 	return oid;
-}
-
-/*
- * RemoveCollationById
- *
- * Remove a tuple from pg_collation by Oid. This function is solely
- * called inside catalog/dependency.c
- */
-void
-RemoveCollationById(Oid collationOid)
-{
-	Relation	rel;
-	ScanKeyData scanKeyData;
-	SysScanDesc scandesc;
-	HeapTuple	tuple;
-
-	rel = table_open(CollationRelationId, RowExclusiveLock);
-
-	ScanKeyInit(&scanKeyData,
-				Anum_pg_collation_oid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(collationOid));
-
-	scandesc = systable_beginscan(rel, CollationOidIndexId, true,
-								  NULL, 1, &scanKeyData);
-
-	tuple = systable_getnext(scandesc);
-
-	if (HeapTupleIsValid(tuple))
-		CatalogTupleDelete(rel, &tuple->t_self);
-	else
-		elog(ERROR, "could not find tuple for collation %u", collationOid);
-
-	systable_endscan(scandesc);
-
-	table_close(rel, RowExclusiveLock);
 }

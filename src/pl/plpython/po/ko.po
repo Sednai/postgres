@@ -25,7 +25,9 @@ msgstr "plpy.cursor 객체는 쿼리나 plpy.prepare 객체를 인자로 사용�
 #: plpy_cursorobject.c:161
 #, c-format
 msgid "plpy.cursor takes a sequence as its second argument"
-msgstr "plpy.cursor 객체의 인자로 plpy.prepare 객체를 사용한 경우 두번째 인자는 prepare 객체의 매개변수가 있어야 합니다."
+msgstr ""
+"plpy.cursor 객체의 인자로 plpy.prepare 객체를 사용한 경우 두번째 인자는 "
+"prepare 객체의 매개변수가 있어야 합니다."
 
 #: plpy_cursorobject.c:177 plpy_spi.c:211
 #, c-format
@@ -75,8 +77,11 @@ msgstr "지원하지 않는 집합 함수 리턴 모드"
 
 #: plpy_exec.c:144
 #, c-format
-msgid "PL/Python set-returning functions only support returning one value per call."
-msgstr "PL/Python 집합-반환 함수는 한번의 호출에 대해서 하나의 값만 반환할 수 있습니다."
+msgid ""
+"PL/Python set-returning functions only support returning one value per call."
+msgstr ""
+"PL/Python 집합-반환 함수는 한번의 호출에 대해서 하나의 값만 반환할 수 있습니"
+"다."
 
 #: plpy_exec.c:157
 #, c-format
@@ -101,7 +106,8 @@ msgstr "PL/Python 프로시져가 None을 반환하지 않았음"
 #: plpy_exec.c:219
 #, c-format
 msgid "PL/Python function with return type \"void\" did not return None"
-msgstr "반환 자료형이 \"void\"인 PL/Python 함수가 return None으로 끝나지 않았음"
+msgstr ""
+"반환 자료형이 \"void\"인 PL/Python 함수가 return None으로 끝나지 않았음"
 
 #: plpy_exec.c:375 plpy_exec.c:401
 #, c-format
@@ -115,8 +121,10 @@ msgstr "None 이나 문자열이 있어야합니다."
 
 #: plpy_exec.c:391
 #, c-format
-msgid "PL/Python trigger function returned \"MODIFY\" in a DELETE trigger -- ignored"
-msgstr "PL/Python 트리거 함수가 DELETE 트리거에서 \"MODIFY\"를 반환했음 -- 무시함"
+msgid ""
+"PL/Python trigger function returned \"MODIFY\" in a DELETE trigger -- ignored"
+msgstr ""
+"PL/Python 트리거 함수가 DELETE 트리거에서 \"MODIFY\"를 반환했음 -- 무시함"
 
 #: plpy_exec.c:402
 #, c-format
@@ -135,7 +143,8 @@ msgstr "PyDict_SetItemString() 함수가 인자 설정하는 중 실패"
 
 #: plpy_exec.c:468
 #, c-format
-msgid "function returning record called in context that cannot accept type record"
+msgid ""
+"function returning record called in context that cannot accept type record"
 msgstr "반환 자료형이 record인데 함수가 그 자료형으로 반환하지 않음"
 
 #: plpy_exec.c:685
@@ -160,8 +169,11 @@ msgstr "%d 번째 TD[\"new\"] 딕션너리 키가 문자열이 아님"
 
 #: plpy_exec.c:958
 #, c-format
-msgid "key \"%s\" found in TD[\"new\"] does not exist as a column in the triggering row"
-msgstr "로우 트리거 작업에서 칼럼으로 사용되는 \"%s\" 키가 TD[\"new\"] 변수에 없음."
+msgid ""
+"key \"%s\" found in TD[\"new\"] does not exist as a column in the triggering "
+"row"
+msgstr ""
+"로우 트리거 작업에서 칼럼으로 사용되는 \"%s\" 키가 TD[\"new\"] 변수에 없음."
 
 #: plpy_exec.c:963
 #, c-format
@@ -374,8 +386,12 @@ msgstr "Python 객체를 문자열 자료형으로 변환할 수 없음"
 
 #: plpy_typeio.c:1074
 #, c-format
-msgid "could not convert Python object into cstring: Python string representation appears to contain null bytes"
-msgstr "Python 객체를 cstring 형으로 변환할 수 없음: Python string 변수에 null문자열이 포함되어 있음"
+msgid ""
+"could not convert Python object into cstring: Python string representation "
+"appears to contain null bytes"
+msgstr ""
+"Python 객체를 cstring 형으로 변환할 수 없음: Python string 변수에 null문자열"
+"이 포함되어 있음"
 
 #: plpy_typeio.c:1183
 #, c-format
@@ -436,8 +452,12 @@ msgstr "맵 안에 \"%s\" 키가 없음"
 
 #: plpy_typeio.c:1397
 #, c-format
-msgid "To return null in a column, add the value None to the mapping with the key named after the column."
-msgstr "칼럼값으로 null을 반환하려면, 칼럼 다음에 해당 키 이름과 맵핑 되는 None값을 지정하세요"
+msgid ""
+"To return null in a column, add the value None to the mapping with the key "
+"named after the column."
+msgstr ""
+"칼럼값으로 null을 반환하려면, 칼럼 다음에 해당 키 이름과 맵핑 되는 None값을 "
+"지정하세요"
 
 #: plpy_typeio.c:1450
 #, c-format
@@ -451,8 +471,12 @@ msgstr "Python 객체 가운데 \"%s\" 속성이 없음"
 
 #: plpy_typeio.c:1551
 #, c-format
-msgid "To return null in a column, let the returned object have an attribute named after column with value None."
-msgstr "칼럼 값으로 null 을 반환하려면, 값으로 None 값을 가지는 칼럼 뒤에, 속성 이름이 있는 객체를 반환하세요"
+msgid ""
+"To return null in a column, let the returned object have an attribute named "
+"after column with value None."
+msgstr ""
+"칼럼 값으로 null 을 반환하려면, 값으로 None 값을 가지는 칼럼 뒤에, 속성 이름"
+"이 있는 객체를 반환하세요"
 
 #: plpy_util.c:35
 #, c-format

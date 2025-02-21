@@ -1,7 +1,7 @@
 /* src/interfaces/ecpg/preproc/ecpg.c */
 
 /* Main for ecpg, the PostgreSQL embedded SQL precompiler. */
-/* Copyright (c) 1996-2019, PostgreSQL Global Development Group */
+/* Copyright (c) 1996-2022, PostgreSQL Global Development Group */
 
 #include "postgres_fe.h"
 
@@ -28,6 +28,7 @@ struct _include_path *include_paths = NULL;
 struct cursor *cur = NULL;
 struct typedefs *types = NULL;
 struct _defines *defines = NULL;
+struct declared_list *g_declared_list = NULL;
 
 static void
 help(const char *progname)
@@ -58,7 +59,8 @@ help(const char *progname)
 	printf(_("  -?, --help     show this help, then exit\n"));
 	printf(_("\nIf no output file is specified, the name is formed by adding .c to the\n"
 			 "input file name, after stripping off .pgc if present.\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }
 
 static void
@@ -219,7 +221,7 @@ main(int argc, char *const argv[])
 					snprintf(informix_path, MAXPGPATH, "%s/informix/esql", pkginclude_path);
 					add_include_path(informix_path);
 				}
-				else if (strncmp(optarg, "ORACLE", strlen("ORACLE")) == 0)
+				else if (pg_strcasecmp(optarg, "ORACLE") == 0)
 				{
 					compat = ECPG_COMPAT_ORACLE;
 				}
@@ -230,11 +232,11 @@ main(int argc, char *const argv[])
 				}
 				break;
 			case 'r':
-				if (strcmp(optarg, "no_indicator") == 0)
+				if (pg_strcasecmp(optarg, "no_indicator") == 0)
 					force_indicator = false;
-				else if (strcmp(optarg, "prepare") == 0)
+				else if (pg_strcasecmp(optarg, "prepare") == 0)
 					auto_prepare = true;
-				else if (strcmp(optarg, "questionmarks") == 0)
+				else if (pg_strcasecmp(optarg, "questionmarks") == 0)
 					questionmarks = true;
 				else
 				{
@@ -359,6 +361,7 @@ main(int argc, char *const argv[])
 				struct _defines *prevdefptr;
 				struct _defines *nextdefptr;
 				struct typedefs *typeptr;
+				struct declared_list *list;
 
 				/* remove old cursor definitions if any are still there */
 				for (ptr = cur; ptr != NULL;)
@@ -384,6 +387,15 @@ main(int argc, char *const argv[])
 					free(this);
 				}
 				cur = NULL;
+
+				/* remove old declared statements if any are still there */
+				for (list = g_declared_list; list != NULL;)
+				{
+					struct declared_list *this = list;
+
+					list = list->next;
+					free(this);
+				}
 
 				/* restore defines to their command-line state */
 				prevdefptr = NULL;

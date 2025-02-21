@@ -12,7 +12,7 @@
  * the metapage.  When the revmap needs to be expanded, all tuples on the
  * regular BRIN page at that block (if any) are moved out of the way.
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -371,6 +371,11 @@ brinRevmapDesummarizeRange(Relation idxrel, BlockNumber heapBlk)
 	regBuf = ReadBuffer(idxrel, ItemPointerGetBlockNumber(iptr));
 	LockBuffer(regBuf, BUFFER_LOCK_EXCLUSIVE);
 	regPg = BufferGetPage(regBuf);
+	/*
+	 * We're only removing data, not reading it, so there's no need to
+	 * TestForOldSnapshot here.
+	 */
+
 	/*
 	 * We're only removing data, not reading it, so there's no need to
 	 * TestForOldSnapshot here.

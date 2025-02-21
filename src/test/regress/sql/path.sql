@@ -35,10 +35,10 @@ INSERT INTO PATH_TBL VALUES (13, '(1,2,3,4');
 
 INSERT INTO PATH_TBL VALUES (14, '(1,2),(3,4)]');
 
-SELECT '' AS count, f1 AS open_path FROM PATH_TBL WHERE isopen(f1) ORDER BY id;
+SELECT f1 AS open_path FROM PATH_TBL WHERE isopen(f1) ORDER BY id;
 
-SELECT '' AS count, f1 AS closed_path FROM PATH_TBL WHERE isclosed(f1) ORDER BY id;
+SELECT f1 AS closed_path FROM PATH_TBL WHERE isclosed(f1) ORDER BY id;
 
-SELECT '' AS count, pclose(f1) AS closed_path FROM PATH_TBL ORDER BY id;
+SELECT pclose(f1) AS closed_path FROM PATH_TBL ORDER BY id;
 
-SELECT '' AS count, popen(f1) AS open_path FROM PATH_TBL ORDER BY id;
+SELECT popen(f1) AS open_path FROM PATH_TBL ORDER BY id;

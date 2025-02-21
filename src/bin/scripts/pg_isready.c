@@ -2,7 +2,7 @@
  *
  * pg_isready --- checks the status of the PostgreSQL server
  *
- * Copyright (c) 2013-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2013-2022, PostgreSQL Global Development Group
  *
  * src/bin/scripts/pg_isready.c
  *
@@ -12,6 +12,7 @@
 #include "postgres_fe.h"
 #include "common.h"
 #include "common/logging.h"
+#include "fe_utils/option_utils.h"
 
 #define DEFAULT_CONNECT_TIMEOUT "3"
 
@@ -92,7 +93,8 @@ main(int argc, char **argv)
 				pguser = pg_strdup(optarg);
 				break;
 			default:
-				fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+				/* getopt_long already emitted a complaint */
+				pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 
 				/*
 				 * We need to make sure we don't return 1 here because someone
@@ -106,7 +108,7 @@ main(int argc, char **argv)
 	{
 		pg_log_error("too many command-line arguments (first is \"%s\")",
 					 argv[optind]);
-		fprintf(stderr, _("Try \"%s --help\" for more information.\n"), progname);
+		pg_log_error_hint("Try \"%s --help\" for more information.", progname);
 
 		/*
 		 * We need to make sure we don't return 1 here because someone
@@ -235,5 +237,6 @@ help(const char *progname)
 	printf(_("  -p, --port=PORT          database server port\n"));
 	printf(_("  -t, --timeout=SECS       seconds to wait when attempting connection, 0 disables (default: %s)\n"), DEFAULT_CONNECT_TIMEOUT);
 	printf(_("  -U, --username=USERNAME  user name to connect as\n"));
-	printf(_("\nReport bugs to <pgsql-bugs@lists.postgresql.org>.\n"));
+	printf(_("\nReport bugs to <%s>.\n"), PACKAGE_BUGREPORT);
+	printf(_("%s home page: <%s>\n"), PACKAGE_NAME, PACKAGE_URL);
 }

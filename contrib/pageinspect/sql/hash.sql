@@ -16,12 +16,14 @@ SELECT hash_page_type(get_raw_page('test_hash_a_idx', 5));
 SELECT hash_page_type(get_raw_page('test_hash_a_idx', 6));
 
 
+SELECT * FROM hash_bitmap_info('test_hash_a_idx', -1);
 SELECT * FROM hash_bitmap_info('test_hash_a_idx', 0);
 SELECT * FROM hash_bitmap_info('test_hash_a_idx', 1);
 SELECT * FROM hash_bitmap_info('test_hash_a_idx', 2);
 SELECT * FROM hash_bitmap_info('test_hash_a_idx', 3);
 SELECT * FROM hash_bitmap_info('test_hash_a_idx', 4);
 SELECT * FROM hash_bitmap_info('test_hash_a_idx', 5);
+SELECT * FROM hash_bitmap_info('test_hash_a_idx', 6);
 SELECT * FROM hash_bitmap_info('test_hash_part_idx', 1); -- error
 
 

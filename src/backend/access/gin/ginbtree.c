@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -17,8 +17,8 @@
 #include "access/gin_private.h"
 #include "access/ginxlog.h"
 #include "access/xloginsert.h"
-#include "storage/predicate.h"
 #include "miscadmin.h"
+#include "storage/predicate.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
@@ -91,7 +91,7 @@ ginFindLeafPage(GinBtree btree, bool searchMode,
 	stack->predictNumber = 1;
 
 	if (rootConflictCheck)
-		CheckForSerializableConflictIn(btree->index, NULL, stack->buffer);
+		CheckForSerializableConflictIn(btree->index, NULL, btree->rootBlkno);
 
 	for (;;)
 	{
@@ -246,7 +246,6 @@ ginFindParents(GinBtree btree, GinBtreeStack *stack)
 
 	blkno = root->blkno;
 	buffer = root->buffer;
-	offset = InvalidOffsetNumber;
 
 	ptr = (GinBtreeStack *) palloc(sizeof(GinBtreeStack));
 
@@ -537,7 +536,6 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 									   BufferGetBlockNumber(stack->buffer),
 									   BufferGetBlockNumber(rbuffer));
 			}
-
 		}
 		else
 		{
@@ -652,7 +650,7 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 	}
 	else
 	{
-		elog(ERROR, "invalid return code from GIN placeToPage method: %d", rc);
+		elog(ERROR, "invalid return code from GIN beginPlaceToPage method: %d", rc);
 		result = false;			/* keep compiler quiet */
 	}
 

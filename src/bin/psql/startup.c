@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2019, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2022, PostgreSQL Global Development Group
  *
  * src/bin/psql/startup.c
  */
@@ -14,20 +14,17 @@
 #include <win32.h>
 #endif							/* WIN32 */
 
-#include "getopt_long.h"
-
-#include "common/logging.h"
-#include "fe_utils/print.h"
-
 #include "command.h"
 #include "common.h"
+#include "common/logging.h"
+#include "common/string.h"
 #include "describe.h"
+#include "fe_utils/print.h"
+#include "getopt_long.h"
 #include "help.h"
 #include "input.h"
 #include "mainloop.h"
 #include "settings.h"
-
-
 
 /*
  * Global psql options
@@ -113,6 +110,13 @@ log_locus_callback(const char **filename, uint64 *lineno)
 	}
 }
 
+#ifdef HAVE_POSIX_DECL_SIGWAIT
+static void
+empty_signal_handler(SIGNAL_ARGS)
+{
+}
+#endif
+
 /*
  *
  * main
@@ -123,8 +127,7 @@ main(int argc, char *argv[])
 {
 	struct adhoc_opts options;
 	int			successResult;
-	bool		have_password = false;
-	char		password[100];
+	char	   *password = NULL;
 	bool		new_pass;
 
 	pg_logging_init(argv[0]);
@@ -149,6 +152,7 @@ main(int argc, char *argv[])
 	pset.progname = get_progname(argv[0]);
 
 	pset.db = NULL;
+	pset.dead_conn = NULL;
 	setDecimalLocale();
 	pset.encoding = PQenv2encoding();
 	pset.queryFout = stdout;
@@ -199,6 +203,7 @@ main(int argc, char *argv[])
 	SetVariable(pset.vars, "PROMPT1", DEFAULT_PROMPT1);
 	SetVariable(pset.vars, "PROMPT2", DEFAULT_PROMPT2);
 	SetVariable(pset.vars, "PROMPT3", DEFAULT_PROMPT3);
+	SetVariableBool(pset.vars, "SHOW_ALL_RESULTS");
 
 	parse_psql_options(argc, argv, &options);
 
@@ -212,10 +217,7 @@ main(int argc, char *argv[])
 
 	/* Bail out if -1 was specified but will be ignored. */
 	if (options.single_txn && options.actions.head == NULL)
-	{
-		pg_log_fatal("-1 can only be used in non-interactive mode");
-		exit(EXIT_FAILURE);
-	}
+		pg_fatal("-1 can only be used in non-interactive mode");
 
 	if (!pset.popt.topt.fieldSep.separator &&
 		!pset.popt.topt.fieldSep.separator_zero)
@@ -235,10 +237,10 @@ main(int argc, char *argv[])
 		/*
 		 * We can't be sure yet of the username that will be used, so don't
 		 * offer a potentially wrong one.  Typical uses of this option are
-		 * noninteractive anyway.
+		 * noninteractive anyway.  (Note: since we've not yet set up our
+		 * cancel handler, there's no need to use simple_prompt_extended.)
 		 */
-		simple_prompt("Password: ", password, sizeof(password), false);
-		have_password = true;
+		password = simple_prompt("Password: ", false);
 	}
 
 	/* loop until we have a password if requested by backend */
@@ -255,7 +257,7 @@ main(int argc, char *argv[])
 		keywords[2] = "user";
 		values[2] = options.username;
 		keywords[3] = "password";
-		values[3] = have_password ? password : NULL;
+		values[3] = password;
 		keywords[4] = "dbname"; /* see do_connect() */
 		values[4] = (options.list_dbs && options.dbname == NULL) ?
 			"postgres" : options.dbname;
@@ -273,7 +275,7 @@ main(int argc, char *argv[])
 
 		if (PQstatus(pset.db) == CONNECTION_BAD &&
 			PQconnectionNeedsPassword(pset.db) &&
-			!have_password &&
+			!password &&
 			pset.getPassword != TRI_NO)
 		{
 			/*
@@ -291,9 +293,8 @@ main(int argc, char *argv[])
 				password_prompt = pg_strdup(_("Password: "));
 			PQfinish(pset.db);
 
-			simple_prompt(password_prompt, password, sizeof(password), false);
+			password = simple_prompt(password_prompt, false);
 			free(password_prompt);
-			have_password = true;
 			new_pass = true;
 		}
 	} while (new_pass);
@@ -305,7 +306,19 @@ main(int argc, char *argv[])
 		exit(EXIT_BADCONN);
 	}
 
-	setup_cancel_handler();
+	psql_setup_cancel_handler();
+
+#ifdef HAVE_POSIX_DECL_SIGWAIT
+
+	/*
+	 * do_watch() needs signal handlers installed (otherwise sigwait() will
+	 * filter them out on some platforms), but doesn't need them to do
+	 * anything, and they shouldn't ever run (unless perhaps a stray SIGALRM
+	 * arrives due to a race when do_watch() cancels an itimer).
+	 */
+	pqsignal(SIGCHLD, empty_signal_handler);
+	pqsignal(SIGALRM, empty_signal_handler);
+#endif
 
 	PQsetNoticeProcessor(pset.db, NoticeProcessor, NULL);
 
@@ -327,11 +340,8 @@ main(int argc, char *argv[])
 	{
 		pset.logfile = fopen(options.logfilename, "a");
 		if (!pset.logfile)
-		{
-			pg_log_fatal("could not open log file \"%s\": %m",
-						 options.logfilename);
-			exit(EXIT_FAILURE);
-		}
+			pg_fatal("could not open log file \"%s\": %m",
+					 options.logfilename);
 	}
 
 	if (!options.no_psqlrc)
@@ -416,7 +426,14 @@ main(int argc, char *argv[])
 
 		if (options.single_txn)
 		{
-			if ((res = PSQLexec("COMMIT")) == NULL)
+			/*
+			 * Rollback the contents of the single transaction if the caller
+			 * has set ON_ERROR_STOP and one of the steps has failed.  This
+			 * check needs to match the one done a couple of lines above.
+			 */
+			res = PSQLexec((successResult != EXIT_SUCCESS && pset.on_error_stop) ?
+						   "ROLLBACK" : "COMMIT");
+			if (res == NULL)
 			{
 				if (pset.on_error_stop)
 				{
@@ -448,7 +465,10 @@ error:
 	/* clean up */
 	if (pset.logfile)
 		fclose(pset.logfile);
-	PQfinish(pset.db);
+	if (pset.db)
+		PQfinish(pset.db);
+	if (pset.dead_conn)
+		PQfinish(pset.dead_conn);
 	setQFout(NULL);
 
 	return successResult;
@@ -589,10 +609,7 @@ parse_psql_options(int argc, char *argv[], struct adhoc_opts *options)
 					}
 
 					if (!result)
-					{
-						pg_log_fatal("could not set printing parameter \"%s\"", value);
-						exit(EXIT_FAILURE);
-					}
+						pg_fatal("could not set printing parameter \"%s\"", value);
 
 					free(value);
 					break;
@@ -698,10 +715,10 @@ parse_psql_options(int argc, char *argv[], struct adhoc_opts *options)
 				break;
 			default:
 		unknown_option:
-				fprintf(stderr, _("Try \"%s --help\" for more information.\n"),
-						pset.progname);
+				/* getopt_long already emitted a complaint */
+				pg_log_error_hint("Try \"%s --help\" for more information.",
+								  pset.progname);
 				exit(EXIT_FAILURE);
-				break;
 		}
 	}
 
@@ -763,10 +780,7 @@ process_psqlrc(char *argv0)
 	char	   *envrc = getenv("PSQLRC");
 
 	if (find_my_exec(argv0, my_exec_path) < 0)
-	{
-		pg_log_fatal("could not find own program executable");
-		exit(EXIT_FAILURE);
-	}
+		pg_fatal("could not find own program executable");
 
 	get_etc_path(my_exec_path, etc_path);
 
@@ -1132,6 +1146,12 @@ verbosity_hook(const char *newval)
 	return true;
 }
 
+static bool
+show_all_results_hook(const char *newval)
+{
+	return ParseVariableBool(newval, "SHOW_ALL_RESULTS", &pset.show_all_results);
+}
+
 static char *
 show_context_substitute_hook(char *newval)
 {
@@ -1159,6 +1179,13 @@ show_context_hook(const char *newval)
 	if (pset.db)
 		PQsetErrorContextVisibility(pset.db, pset.show_context);
 	return true;
+}
+
+static bool
+hide_compression_hook(const char *newval)
+{
+	return ParseVariableBool(newval, "HIDE_TOAST_COMPRESSION",
+							 &pset.hide_compression);
 }
 
 static bool
@@ -1226,9 +1253,15 @@ EstablishVariableSpace(void)
 	SetVariableHooks(pset.vars, "VERBOSITY",
 					 verbosity_substitute_hook,
 					 verbosity_hook);
+	SetVariableHooks(pset.vars, "SHOW_ALL_RESULTS",
+					 bool_substitute_hook,
+					 show_all_results_hook);
 	SetVariableHooks(pset.vars, "SHOW_CONTEXT",
 					 show_context_substitute_hook,
 					 show_context_hook);
+	SetVariableHooks(pset.vars, "HIDE_TOAST_COMPRESSION",
+					 bool_substitute_hook,
+					 hide_compression_hook);
 	SetVariableHooks(pset.vars, "HIDE_TABLEAM",
 					 bool_substitute_hook,
 					 hide_tableam_hook);

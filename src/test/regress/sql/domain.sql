@@ -59,9 +59,8 @@ select testtext || testvarchar as concat, testnumeric + 42 as sum
 from basictest order by 1;
 
 -- check that union/case/coalesce type resolution handles domains properly
-select coalesce(4::domainint4, 7) is of (int4) as t;
-select coalesce(4::domainint4, 7) is of (domainint4) as f;
-select coalesce(4::domainint4, 7::domainint4) is of (domainint4) as t;
+select pg_typeof(coalesce(4::domainint4, 7));
+select pg_typeof(coalesce(4::domainint4, 7::domainint4));
 
 drop table basictest;
 drop domain domainvarchar restrict;
@@ -156,7 +155,7 @@ create rule silly as on delete to dcomptable do instead
 \d+ dcomptable
 
 create function makedcomp(r float8, i float8) returns dcomptype
-as 'select row(r, i)::dcomptype' language sql;
+as 'select row(r, i)' language sql;
 
 select makedcomp(1,2);
 select makedcomp(2,1);  -- fail

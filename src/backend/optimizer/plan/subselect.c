@@ -6,7 +6,7 @@
  * This module deals with SubLinks and CTEs, but not subquery RTEs (i.e.,
  * not sub-SELECT-in-FROM cases).
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -86,6 +86,7 @@ static Node *convert_testexpr(PlannerInfo *root,
 static Node *convert_testexpr_mutator(Node *node,
 									  convert_testexpr_context *context);
 static bool subplan_is_hashable(Plan *plan);
+static bool subpath_is_hashable(Path *path);
 static bool testexpr_is_hashable(Node *testexpr, List *param_ids);
 static bool test_opexpr_is_hashable(OpExpr *testexpr, List *param_ids);
 static bool hash_ok_operator(OpExpr *expr);
@@ -206,7 +207,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 	 * XXX If an ANY subplan is uncorrelated, build_subplan may decide to hash
 	 * its output.  In that case it would've been better to specify full
 	 * retrieval.  At present, however, we can only check hashability after
-	 * we've made the subplan :-(.  (Determining whether it'll fit in work_mem
+	 * we've made the subplan :-(.  (Determining whether it'll fit in hash_mem
 	 * is the really hard part.)  Therefore, we don't want to be too
 	 * optimistic about the percentage of tuples retrieved, for fear of
 	 * selecting a plan that's bad for the materialization case.
@@ -259,7 +260,7 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 	 * likely to be better (it depends on the expected number of executions of
 	 * the EXISTS qual, and we are much too early in planning the outer query
 	 * to be able to guess that).  So we generate both plans, if possible, and
-	 * leave it to the executor to decide which to use.
+	 * leave it to setrefs.c to decide which to use.
 	 */
 	if (simple_exists && IsA(result, SubPlan))
 	{
@@ -285,20 +286,20 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 			plan_params = root->plan_params;
 			root->plan_params = NIL;
 
-			/* Select best Path and turn it into a Plan */
+			/* Select best Path */
 			final_rel = fetch_upper_rel(subroot, UPPERREL_FINAL, NULL);
 			best_path = final_rel->cheapest_total_path;
 
-			plan = create_plan(subroot, best_path);
-
-			/* Now we can check if it'll fit in work_mem */
-			/* XXX can we check this at the Path stage? */
-			if (subplan_is_hashable(plan))
+			/* Now we can check if it'll fit in hash_mem */
+			if (subpath_is_hashable(best_path))
 			{
 				SubPlan    *hashplan;
 				AlternativeSubPlan *asplan;
 
-				/* OK, convert to SubPlan format. */
+				/* OK, finish planning the ANY subquery */
+				plan = create_plan(subroot, best_path);
+
+				/* ... and convert to SubPlan format */
 				hashplan = castNode(SubPlan,
 									build_subplan(root, plan, subroot,
 												  plan_params,
@@ -310,10 +311,11 @@ make_subplan(PlannerInfo *root, Query *orig_subquery,
 				Assert(hashplan->parParam == NIL);
 				Assert(hashplan->useHashTable);
 
-				/* Leave it to the executor to decide which plan to use */
+				/* Leave it to setrefs.c to decide which plan to use */
 				asplan = makeNode(AlternativeSubPlan);
 				asplan->subplans = list_make2(result, hashplan);
 				result = (Node *) asplan;
+				root->hasAlternativeSubPlans = true;
 			}
 		}
 	}
@@ -585,7 +587,7 @@ build_subplan(PlannerInfo *root, Plan *plan, PlannerInfo *subroot,
 		{
 			ptr += sprintf(ptr, "$%d%s",
 						   lfirst_int(lc),
-						   lnext(lc) ? "," : ")");
+						   lnext(splan->setParam, lc) ? "," : ")");
 		}
 	}
 
@@ -729,6 +731,9 @@ convert_testexpr_mutator(Node *node,
 
 /*
  * subplan_is_hashable: can we implement an ANY subplan by hashing?
+ *
+ * This is not responsible for checking whether the combining testexpr
+ * is suitable for hashing.  We only look at the subquery itself.
  */
 static bool
 subplan_is_hashable(Plan *plan)
@@ -736,14 +741,38 @@ subplan_is_hashable(Plan *plan)
 	double		subquery_size;
 
 	/*
-	 * The estimated size of the subquery result must fit in work_mem. (Note:
+	 * The estimated size of the subquery result must fit in hash_mem. (Note:
 	 * we use heap tuple overhead here even though the tuples will actually be
 	 * stored as MinimalTuples; this provides some fudge factor for hashtable
 	 * overhead.)
 	 */
 	subquery_size = plan->plan_rows *
 		(MAXALIGN(plan->plan_width) + MAXALIGN(SizeofHeapTupleHeader));
-	if (subquery_size > work_mem * 1024L)
+	if (subquery_size > get_hash_memory_limit())
+		return false;
+
+	return true;
+}
+
+/*
+ * subpath_is_hashable: can we implement an ANY subplan by hashing?
+ *
+ * Identical to subplan_is_hashable, but work from a Path for the subplan.
+ */
+static bool
+subpath_is_hashable(Path *path)
+{
+	double		subquery_size;
+
+	/*
+	 * The estimated size of the subquery result must fit in hash_mem. (Note:
+	 * we use heap tuple overhead here even though the tuples will actually be
+	 * stored as MinimalTuples; this provides some fudge factor for hashtable
+	 * overhead.)
+	 */
+	subquery_size = path->rows *
+		(MAXALIGN(path->pathtarget->width) + MAXALIGN(SizeofHeapTupleHeader));
+	if (subquery_size > get_hash_memory_limit())
 		return false;
 
 	return true;
@@ -834,10 +863,10 @@ hash_ok_operator(OpExpr *expr)
 	/* quick out if not a binary operator */
 	if (list_length(expr->args) != 2)
 		return false;
-	if (opid == ARRAY_EQ_OP)
+	if (opid == ARRAY_EQ_OP ||
+		opid == RECORD_EQ_OP)
 	{
-		/* array_eq is strict, but must check input type to ensure hashable */
-		/* XXX record_eq will need same treatment when it becomes hashable */
+		/* these are strict, but must check input type to ensure hashable */
 		Node	   *leftarg = linitial(expr->args);
 
 		return op_hashjoinable(opid, exprType(leftarg));
@@ -1259,6 +1288,7 @@ convert_ANY_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	Query	   *subselect = (Query *) sublink->subselect;
 	Relids		upper_varnos;
 	int			rtindex;
+	ParseNamespaceItem *nsitem;
 	RangeTblEntry *rte;
 	RangeTblRef *rtr;
 	List	   *subquery_vars;
@@ -1306,11 +1336,12 @@ convert_ANY_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	 * below). Therefore this is a lot easier than what pull_up_subqueries has
 	 * to go through.
 	 */
-	rte = addRangeTableEntryForSubquery(pstate,
-										subselect,
-										makeAlias("ANY_subquery", NIL),
-										false,
-										false);
+	nsitem = addRangeTableEntryForSubquery(pstate,
+										   subselect,
+										   makeAlias("ANY_subquery", NIL),
+										   false,
+										   false);
+	rte = nsitem->p_rte;
 	parse->rtable = lappend(parse->rtable, rte);
 	rtindex = list_length(parse->rtable);
 
@@ -1341,6 +1372,7 @@ convert_ANY_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	result->larg = NULL;		/* caller must fill this in */
 	result->rarg = (Node *) rtr;
 	result->usingClause = NIL;
+	result->join_using_alias = NULL;
 	result->quals = quals;
 	result->alias = NULL;
 	result->rtindex = 0;		/* we don't need an RTE for it */
@@ -1495,6 +1527,7 @@ convert_EXISTS_sublink_to_join(PlannerInfo *root, SubLink *sublink,
 	else
 		result->rarg = (Node *) subselect->jointree;
 	result->usingClause = NIL;
+	result->join_using_alias = NULL;
 	result->quals = whereClause;
 	result->alias = NULL;
 	result->rtindex = 0;		/* we don't need an RTE for it */
@@ -2353,6 +2386,12 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			context.paramids = bms_add_members(context.paramids, scan_params);
 			break;
 
+		case T_TidRangeScan:
+			finalize_primnode((Node *) ((TidRangeScan *) plan)->tidrangequals,
+							  &context);
+			context.paramids = bms_add_members(context.paramids, scan_params);
+			break;
+
 		case T_SubqueryScan:
 			{
 				SubqueryScan *sscan = (SubqueryScan *) plan;
@@ -2513,7 +2552,6 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 		case T_ModifyTable:
 			{
 				ModifyTable *mtplan = (ModifyTable *) plan;
-				ListCell   *l;
 
 				/* Force descendant scan nodes to reference epqParam */
 				locally_added_param = mtplan->epqParam;
@@ -2528,16 +2566,6 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 				finalize_primnode((Node *) mtplan->onConflictWhere,
 								  &context);
 				/* exclRelTlist contains only Vars, doesn't need examination */
-				foreach(l, mtplan->plans)
-				{
-					context.paramids =
-						bms_add_members(context.paramids,
-										finalize_plan(root,
-													  (Plan *) lfirst(l),
-													  gather_param,
-													  valid_params,
-													  scan_params));
-				}
 			}
 			break;
 #ifdef PGXC
@@ -2744,9 +2772,15 @@ finalize_plan(PlannerInfo *root, Plan *plan,
 			/* rescan_param does *not* get added to scan_params */
 			break;
 
+		case T_Memoize:
+			finalize_primnode((Node *) ((Memoize *) plan)->param_exprs,
+							  &context);
+			break;
+
 		case T_ProjectSet:
 		case T_Material:
 		case T_Sort:
+		case T_IncrementalSort:
 		case T_Unique:
 		case T_SetOp:
 		case T_Group:

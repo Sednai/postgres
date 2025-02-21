@@ -396,8 +396,6 @@ BEGIN
         RAISE NOTICE 'END: command_tag=% type=% identity=%',
             r.command_tag, r.object_type, r.object_identity;
     END LOOP;
-EXCEPTION WHEN SQLSTATE 'XX000' THEN
-	RAISE NOTICE 'END: got internal exception';
 END; $$;
 CREATE EVENT TRIGGER regress_event_trigger_report_end ON ddl_command_end
   EXECUTE PROCEDURE event_trigger_report_end();
@@ -456,7 +454,7 @@ NOTICE:  END: command_tag=ALTER SEQUENCE type=sequence identity=evttrig.id_col_d
 NOTICE:  END: command_tag=ALTER TABLE type=table identity=evttrig.id
 ALTER TABLE evttrig.id ALTER COLUMN col_d DROP IDENTITY,
   ALTER COLUMN col_d SET DATA TYPE int;
-NOTICE:  END: got internal exception
+NOTICE:  END: command_tag=ALTER TABLE type=table identity=evttrig.id
 DROP INDEX evttrig.one_idx;
 NOTICE:  NORMAL: orig=t normal=f istemp=f type=index identity=evttrig.one_idx name={evttrig,one_idx} args={}
 DROP SCHEMA evttrig CASCADE;
@@ -518,6 +516,11 @@ alter table rewriteme
  add column another int default -1,
  alter column foo type numeric(10,4);
 NOTICE:  Table 'rewriteme' is being rewritten (reason = 4)
+-- matview rewrite when changing access method
+CREATE MATERIALIZED VIEW heapmv USING heap AS SELECT 1 AS a;
+ALTER MATERIALIZED VIEW heapmv SET ACCESS METHOD heap2;
+NOTICE:  Table 'heapmv' is being rewritten (reason = 8)
+DROP MATERIALIZED VIEW heapmv;
 -- shouldn't trigger a table_rewrite event
 alter table rewriteme alter column foo type numeric(12,4);
 begin;

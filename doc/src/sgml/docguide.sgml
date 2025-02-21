@@ -84,7 +84,7 @@
      <listitem>
       <para>
        This is the definition of DocBook itself.  We currently use version
-       4.2; you cannot use later or earlier versions.  You need
+       4.5; you cannot use later or earlier versions.  You need
        the <acronym>XML</acronym> variant of the DocBook DTD, not
        the <acronym>SGML</acronym> variant.
       </para>
@@ -296,6 +296,13 @@ checking for dbtoepub... dbtoepub
 <screen>
 <prompt>doc/src/sgml$ </prompt><userinput>make STYLE=website html</userinput>
 </screen>
+   </para>
+
+   <para>
+    If the <literal>STYLE=website</literal> option is used, the generated HTML
+    files include references to stylesheets hosted on <ulink
+    url="https://www.postgresql.org/docs/current/">postgresql.org</ulink> and
+    require network access to view.
    </para>
  </sect2>
 

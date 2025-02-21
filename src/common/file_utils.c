@@ -5,14 +5,19 @@
  * Assorted utility functions to work on files.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/common/file_utils.c
  *
  *-------------------------------------------------------------------------
  */
+
+#ifndef FRONTEND
+#include "postgres.h"
+#else
 #include "postgres_fe.h"
+#endif
 
 #include <dirent.h>
 #include <fcntl.h>
@@ -20,8 +25,11 @@
 #include <unistd.h>
 
 #include "common/file_utils.h"
+#ifdef FRONTEND
 #include "common/logging.h"
+#endif
 
+#ifdef FRONTEND
 
 /* Define PG_FLUSH_DATA_WORKS if we have an implementation for pg_flush_data */
 #if defined(HAVE_SYNC_FILE_RANGE)
@@ -51,8 +59,6 @@ static void walkdir(const char *path,
  * fsyncing, and might not have privileges to write at all.
  *
  * serverVersion indicates the version of the server to be fsync'd.
- *
- * Errors are reported but not considered fatal.
  */
 void
 fsync_pgdata(const char *pg_data,
@@ -73,7 +79,6 @@ fsync_pgdata(const char *pg_data,
 	 */
 	xlog_is_symlink = false;
 
-#ifndef WIN32
 	{
 		struct stat st;
 
@@ -82,10 +87,6 @@ fsync_pgdata(const char *pg_data,
 		else if (S_ISLNK(st.st_mode))
 			xlog_is_symlink = true;
 	}
-#else
-	if (pgwin32_is_junction(pg_wal))
-		xlog_is_symlink = true;
-#endif
 
 	/*
 	 * If possible, hint to the kernel that we're soon going to fsync the data
@@ -164,8 +165,6 @@ walkdir(const char *path,
 	while (errno = 0, (de = readdir(dir)) != NULL)
 	{
 		char		subpath[MAXPGPATH * 2];
-		struct stat fst;
-		int			sret;
 
 		if (strcmp(de->d_name, ".") == 0 ||
 			strcmp(de->d_name, "..") == 0)
@@ -173,21 +172,23 @@ walkdir(const char *path,
 
 		snprintf(subpath, sizeof(subpath), "%s/%s", path, de->d_name);
 
-		if (process_symlinks)
-			sret = stat(subpath, &fst);
-		else
-			sret = lstat(subpath, &fst);
-
-		if (sret < 0)
+		switch (get_dirent_type(subpath, de, process_symlinks, PG_LOG_ERROR))
 		{
-			pg_log_error("could not stat file \"%s\": %m", subpath);
-			continue;
-		}
+			case PGFILETYPE_REG:
+				(*action) (subpath, false);
+				break;
+			case PGFILETYPE_DIR:
+				walkdir(subpath, action, false);
+				break;
+			default:
 
-		if (S_ISREG(fst.st_mode))
-			(*action) (subpath, false);
-		else if (S_ISDIR(fst.st_mode))
-			walkdir(subpath, action, false);
+				/*
+				 * Errors are already reported directly by get_dirent_type(),
+				 * and any remaining symlinks and unknown file types are
+				 * ignored.
+				 */
+				break;
+		}
 	}
 
 	if (errno)
@@ -250,8 +251,8 @@ pre_sync_fname(const char *fname, bool isdir)
  * fsync_fname -- Try to fsync a file or directory
  *
  * Ignores errors trying to open unreadable files, or trying to fsync
- * directories on systems where that isn't allowed/required.  Reports
- * other errors non-fatally.
+ * directories on systems where that isn't allowed/required.  All other errors
+ * are fatal.
  */
 int
 fsync_fname(const char *fname, bool isdir)
@@ -296,7 +297,7 @@ fsync_fname(const char *fname, bool isdir)
 	{
 		pg_log_error("could not fsync file \"%s\": %m", fname);
 		(void) close(fd);
-		return -1;
+		exit(EXIT_FAILURE);
 	}
 
 	(void) close(fd);
@@ -366,7 +367,7 @@ durable_rename(const char *oldfile, const char *newfile)
 		{
 			pg_log_error("could not fsync file \"%s\": %m", newfile);
 			close(fd);
-			return -1;
+			exit(EXIT_FAILURE);
 		}
 		close(fd);
 	}
@@ -390,4 +391,72 @@ durable_rename(const char *oldfile, const char *newfile)
 		return -1;
 
 	return 0;
+}
+
+#endif							/* FRONTEND */
+
+/*
+ * Return the type of a directory entry.
+ *
+ * In frontend code, elevel should be a level from logging.h; in backend code
+ * it should be a level from elog.h.
+ */
+PGFileType
+get_dirent_type(const char *path,
+				const struct dirent *de,
+				bool look_through_symlinks,
+				int elevel)
+{
+	PGFileType	result;
+
+	/*
+	 * Some systems tell us the type directly in the dirent struct, but that's
+	 * a BSD and Linux extension not required by POSIX.  Even when the
+	 * interface is present, sometimes the type is unknown, depending on the
+	 * filesystem.
+	 */
+#if defined(DT_REG) && defined(DT_DIR) && defined(DT_LNK)
+	if (de->d_type == DT_REG)
+		result = PGFILETYPE_REG;
+	else if (de->d_type == DT_DIR)
+		result = PGFILETYPE_DIR;
+	else if (de->d_type == DT_LNK && !look_through_symlinks)
+		result = PGFILETYPE_LNK;
+	else
+		result = PGFILETYPE_UNKNOWN;
+#else
+	result = PGFILETYPE_UNKNOWN;
+#endif
+
+	if (result == PGFILETYPE_UNKNOWN)
+	{
+		struct stat fst;
+		int			sret;
+
+
+		if (look_through_symlinks)
+			sret = stat(path, &fst);
+		else
+			sret = lstat(path, &fst);
+
+		if (sret < 0)
+		{
+			result = PGFILETYPE_ERROR;
+#ifdef FRONTEND
+			pg_log_generic(elevel, PG_LOG_PRIMARY, "could not stat file \"%s\": %m", path);
+#else
+			ereport(elevel,
+					(errcode_for_file_access(),
+					 errmsg("could not stat file \"%s\": %m", path)));
+#endif
+		}
+		else if (S_ISREG(fst.st_mode))
+			result = PGFILETYPE_REG;
+		else if (S_ISDIR(fst.st_mode))
+			result = PGFILETYPE_DIR;
+		else if (S_ISLNK(fst.st_mode))
+			result = PGFILETYPE_LNK;
+	}
+
+	return result;
 }

@@ -3,7 +3,7 @@
  * clauses.c
  *	  routines to manipulate qualification clauses
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -32,6 +32,7 @@
 #include "miscadmin.h"
 #include "nodes/makefuncs.h"
 #include "nodes/nodeFuncs.h"
+#include "nodes/subscripting.h"
 #include "nodes/supportnodes.h"
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
@@ -42,6 +43,7 @@
 #include "parser/parse_agg.h"
 #include "parser/parse_coerce.h"
 #include "parser/parse_func.h"
+#include "rewrite/rewriteHandler.h"
 #include "rewrite/rewriteManip.h"
 #include "tcop/tcopprot.h"
 #include "utils/acl.h"
@@ -52,17 +54,6 @@
 #include "utils/memutils.h"
 #include "utils/syscache.h"
 #include "utils/typcache.h"
-
-
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-
-typedef struct
-{
-	PlannerInfo *root;
-	AggSplit	aggsplit;
-	AggClauseCosts *costs;
-} get_agg_clause_costs_context;
 
 typedef struct
 {
@@ -101,8 +92,6 @@ typedef struct
 } max_parallel_hazard_context;
 
 static bool contain_agg_clause_walker(Node *node, void *context);
-static bool get_agg_clause_costs_walker(Node *node,
-										get_agg_clause_costs_context *context);
 static bool find_window_functions_walker(Node *node, WindowFuncLists *lists);
 static bool contain_subplans_walker(Node *node, void *context);
 static bool contain_mutable_functions_walker(Node *node, void *context);
@@ -118,6 +107,7 @@ static bool contain_leaked_vars_walker(Node *node, void *context);
 static Relids find_nonnullable_rels_walker(Node *node, bool top_level);
 static List *find_nonnullable_vars_walker(Node *node, bool top_level);
 static bool is_strict_saop(ScalarArrayOpExpr *expr, bool falseOK);
+static bool convert_saop_to_hashed_saop_walker(Node *node, void *context);
 static Node *eval_const_expressions_mutator(Node *node,
 											eval_const_expressions_context *context);
 static bool contain_non_const_walker(Node *node, void *context);
@@ -135,10 +125,13 @@ static Expr *simplify_function(Oid funcid,
 							   Oid result_collid, Oid input_collid, List **args_p,
 							   bool funcvariadic, bool process_args, bool allow_non_const,
 							   eval_const_expressions_context *context);
-static List *reorder_function_arguments(List *args, HeapTuple func_tuple);
-static List *add_function_defaults(List *args, HeapTuple func_tuple);
+static List *reorder_function_arguments(List *args, int pronargs,
+										HeapTuple func_tuple);
+static List *add_function_defaults(List *args, int pronargs,
+								   HeapTuple func_tuple);
 static List *fetch_function_defaults(HeapTuple func_tuple);
 static void recheck_cast_function_args(List *args, Oid result_type,
+									   Oid *proargtypes, int pronargs,
 									   HeapTuple func_tuple);
 static Expr *evaluate_function(Oid funcid, Oid result_type, int32 result_typmod,
 							   Oid result_collid, Oid input_collid, List *args,
@@ -159,7 +152,7 @@ static Query *substitute_actual_srf_parameters(Query *expr,
 											   int nargs, List *args);
 static Node *substitute_actual_srf_parameters_mutator(Node *node,
 													  substitute_actual_srf_parameters_context *context);
-static bool tlist_matches_coltypelist(List *tlist, List *coltypelist);
+static bool pull_paramids_walker(Node *node, Bitmapset **context);
 
 
 /*****************************************************************************
@@ -203,284 +196,6 @@ contain_agg_clause_walker(Node *node, void *context)
 	Assert(!IsA(node, SubLink));
 	return expression_tree_walker(node, contain_agg_clause_walker, context);
 }
-
-/*
- * get_agg_clause_costs
- *	  Recursively find the Aggref nodes in an expression tree, and
- *	  accumulate cost information about them.
- *
- * 'aggsplit' tells us the expected partial-aggregation mode, which affects
- * the cost estimates.
- *
- * NOTE that the counts/costs are ADDED to those already in *costs ... so
- * the caller is responsible for zeroing the struct initially.
- *
- * We count the nodes, estimate their execution costs, and estimate the total
- * space needed for their transition state values if all are evaluated in
- * parallel (as would be done in a HashAgg plan).  Also, we check whether
- * partial aggregation is feasible.  See AggClauseCosts for the exact set
- * of statistics collected.
- *
- * In addition, we mark Aggref nodes with the correct aggtranstype, so
- * that that doesn't need to be done repeatedly.  (That makes this function's
- * name a bit of a misnomer.)
- *
- * This does not descend into subqueries, and so should be used only after
- * reduction of sublinks to subplans, or in contexts where it's known there
- * are no subqueries.  There mustn't be outer-aggregate references either.
- */
-void
-get_agg_clause_costs(PlannerInfo *root, Node *clause, AggSplit aggsplit,
-					 AggClauseCosts *costs)
-{
-	get_agg_clause_costs_context context;
-
-	context.root = root;
-	context.aggsplit = aggsplit;
-	context.costs = costs;
-	(void) get_agg_clause_costs_walker(clause, &context);
-}
-
-static bool
-get_agg_clause_costs_walker(Node *node, get_agg_clause_costs_context *context)
-{
-	if (node == NULL)
-		return false;
-	if (IsA(node, Aggref))
-	{
-		Aggref	   *aggref = (Aggref *) node;
-		AggClauseCosts *costs = context->costs;
-		HeapTuple	aggTuple;
-		Form_pg_aggregate aggform;
-		Oid			aggtransfn;
-		Oid			aggfinalfn;
-		Oid			aggcombinefn;
-		Oid			aggserialfn;
-		Oid			aggdeserialfn;
-		Oid			aggtranstype;
-		int32		aggtransspace;
-		QualCost	argcosts;
-
-		Assert(aggref->agglevelsup == 0);
-
-		/*
-		 * Fetch info about aggregate from pg_aggregate.  Note it's correct to
-		 * ignore the moving-aggregate variant, since what we're concerned
-		 * with here is aggregates not window functions.
-		 */
-		aggTuple = SearchSysCache1(AGGFNOID,
-								   ObjectIdGetDatum(aggref->aggfnoid));
-		if (!HeapTupleIsValid(aggTuple))
-			elog(ERROR, "cache lookup failed for aggregate %u",
-				 aggref->aggfnoid);
-		aggform = (Form_pg_aggregate) GETSTRUCT(aggTuple);
-		aggtransfn = aggform->aggtransfn;
-		aggfinalfn = aggform->aggfinalfn;
-		aggcombinefn = aggform->aggcombinefn;
-		aggserialfn = aggform->aggserialfn;
-		aggdeserialfn = aggform->aggdeserialfn;
-		aggtranstype = aggform->aggtranstype;
-		aggtransspace = aggform->aggtransspace;
-		ReleaseSysCache(aggTuple);
-
-		/*
-		 * Resolve the possibly-polymorphic aggregate transition type, unless
-		 * already done in a previous pass over the expression.
-		 */
-		if (OidIsValid(aggref->aggtranstype))
-			aggtranstype = aggref->aggtranstype;
-		else
-		{
-			Oid			inputTypes[FUNC_MAX_ARGS];
-			int			numArguments;
-
-			/* extract argument types (ignoring any ORDER BY expressions) */
-			numArguments = get_aggregate_argtypes(aggref, inputTypes);
-
-			/* resolve actual type of transition state, if polymorphic */
-			aggtranstype = resolve_aggregate_transtype(aggref->aggfnoid,
-													   aggtranstype,
-													   inputTypes,
-													   numArguments);
-			aggref->aggtranstype = aggtranstype;
-		}
-
-		/*
-		 * Count it, and check for cases requiring ordered input.  Note that
-		 * ordered-set aggs always have nonempty aggorder.  Any ordered-input
-		 * case also defeats partial aggregation.
-		 */
-		costs->numAggs++;
-		if (aggref->aggorder != NIL || aggref->aggdistinct != NIL)
-		{
-			costs->numOrderedAggs++;
-			costs->hasNonPartial = true;
-		}
-
-		/*
-		 * Check whether partial aggregation is feasible, unless we already
-		 * found out that we can't do it.
-		 */
-		if (!costs->hasNonPartial)
-		{
-			/*
-			 * If there is no combine function, then partial aggregation is
-			 * not possible.
-			 */
-			if (!OidIsValid(aggcombinefn))
-				costs->hasNonPartial = true;
-
-			/*
-			 * If we have any aggs with transtype INTERNAL then we must check
-			 * whether they have serialization/deserialization functions; if
-			 * not, we can't serialize partial-aggregation results.
-			 */
-			else if (aggtranstype == INTERNALOID &&
-					 (!OidIsValid(aggserialfn) || !OidIsValid(aggdeserialfn)))
-				costs->hasNonSerial = true;
-		}
-
-		/*
-		 * Add the appropriate component function execution costs to
-		 * appropriate totals.
-		 */
-		if (DO_AGGSPLIT_COMBINE(context->aggsplit))
-		{
-			/* charge for combining previously aggregated states */
-			add_function_cost(context->root, aggcombinefn, NULL,
-							  &costs->transCost);
-		}
-		else
-			add_function_cost(context->root, aggtransfn, NULL,
-							  &costs->transCost);
-		if (DO_AGGSPLIT_DESERIALIZE(context->aggsplit) &&
-			OidIsValid(aggdeserialfn))
-			add_function_cost(context->root, aggdeserialfn, NULL,
-							  &costs->transCost);
-		if (DO_AGGSPLIT_SERIALIZE(context->aggsplit) &&
-			OidIsValid(aggserialfn))
-			add_function_cost(context->root, aggserialfn, NULL,
-							  &costs->finalCost);
-		if (!DO_AGGSPLIT_SKIPFINAL(context->aggsplit) &&
-			OidIsValid(aggfinalfn))
-			add_function_cost(context->root, aggfinalfn, NULL,
-							  &costs->finalCost);
-
-		/*
-		 * These costs are incurred only by the initial aggregate node, so we
-		 * mustn't include them again at upper levels.
-		 */
-		if (!DO_AGGSPLIT_COMBINE(context->aggsplit))
-		{
-			/* add the input expressions' cost to per-input-row costs */
-			cost_qual_eval_node(&argcosts, (Node *) aggref->args, context->root);
-			costs->transCost.startup += argcosts.startup;
-			costs->transCost.per_tuple += argcosts.per_tuple;
-
-			/*
-			 * Add any filter's cost to per-input-row costs.
-			 *
-			 * XXX Ideally we should reduce input expression costs according
-			 * to filter selectivity, but it's not clear it's worth the
-			 * trouble.
-			 */
-			if (aggref->aggfilter)
-			{
-				cost_qual_eval_node(&argcosts, (Node *) aggref->aggfilter,
-									context->root);
-				costs->transCost.startup += argcosts.startup;
-				costs->transCost.per_tuple += argcosts.per_tuple;
-			}
-		}
-
-		/*
-		 * If there are direct arguments, treat their evaluation cost like the
-		 * cost of the finalfn.
-		 */
-		if (aggref->aggdirectargs)
-		{
-			cost_qual_eval_node(&argcosts, (Node *) aggref->aggdirectargs,
-								context->root);
-			costs->finalCost.startup += argcosts.startup;
-			costs->finalCost.per_tuple += argcosts.per_tuple;
-		}
-
-		/*
-		 * If the transition type is pass-by-value then it doesn't add
-		 * anything to the required size of the hashtable.  If it is
-		 * pass-by-reference then we have to add the estimated size of the
-		 * value itself, plus palloc overhead.
-		 */
-		if (!get_typbyval(aggtranstype))
-		{
-			int32		avgwidth;
-
-			/* Use average width if aggregate definition gave one */
-			if (aggtransspace > 0)
-				avgwidth = aggtransspace;
-			else if (aggtransfn == F_ARRAY_APPEND)
-			{
-				/*
-				 * If the transition function is array_append(), it'll use an
-				 * expanded array as transvalue, which will occupy at least
-				 * ALLOCSET_SMALL_INITSIZE and possibly more.  Use that as the
-				 * estimate for lack of a better idea.
-				 */
-				avgwidth = ALLOCSET_SMALL_INITSIZE;
-			}
-			else
-			{
-				/*
-				 * If transition state is of same type as first aggregated
-				 * input, assume it's the same typmod (same width) as well.
-				 * This works for cases like MAX/MIN and is probably somewhat
-				 * reasonable otherwise.
-				 */
-				int32		aggtranstypmod = -1;
-
-				if (aggref->args)
-				{
-					TargetEntry *tle = (TargetEntry *) linitial(aggref->args);
-
-					if (aggtranstype == exprType((Node *) tle->expr))
-						aggtranstypmod = exprTypmod((Node *) tle->expr);
-				}
-
-				avgwidth = get_typavgwidth(aggtranstype, aggtranstypmod);
-			}
-
-			avgwidth = MAXALIGN(avgwidth);
-			costs->transitionSpace += avgwidth + 2 * sizeof(void *);
-		}
-		else if (aggtranstype == INTERNALOID)
-		{
-			/*
-			 * INTERNAL transition type is a special case: although INTERNAL
-			 * is pass-by-value, it's almost certainly being used as a pointer
-			 * to some large data structure.  The aggregate definition can
-			 * provide an estimate of the size.  If it doesn't, then we assume
-			 * ALLOCSET_DEFAULT_INITSIZE, which is a good guess if the data is
-			 * being kept in a private memory context, as is done by
-			 * array_agg() for instance.
-			 */
-			if (aggtransspace > 0)
-				costs->transitionSpace += aggtransspace;
-			else
-				costs->transitionSpace += ALLOCSET_DEFAULT_INITSIZE;
-		}
-
-		/*
-		 * We assume that the parser checked that there are no aggregates (of
-		 * this level anyway) in the aggregated arguments, direct arguments,
-		 * or filter clause.  Hence, we need not recurse into any of them.
-		 */
-		return false;
-	}
-	Assert(!IsA(node, SubLink));
-	return expression_tree_walker(node, get_agg_clause_costs_walker,
-								  (void *) context);
-}
-
 
 /*****************************************************************************
  *		Window-function clause manipulation
@@ -761,6 +476,16 @@ contain_mutable_functions_after_planning(Expr *expr)
  * subsequent planning need not consider volatility within those, since
  * the executor won't change its evaluation rules for a SubPlan based on
  * volatility.
+ *
+ * For some node types, for example, RestrictInfo and PathTarget, we cache
+ * whether we found any volatile functions or not and reuse that value in any
+ * future checks for that node.  All of the logic for determining if the
+ * cached value should be set to VOLATILITY_NOVOLATILE or VOLATILITY_VOLATILE
+ * belongs in this function.  Any code which makes changes to these nodes
+ * which could change the outcome this function must set the cached value back
+ * to VOLATILITY_UNKNOWN.  That allows this function to redetermine the
+ * correct value during the next call, should we need to redetermine if the
+ * node contains any volatile functions again in the future.
  */
 bool
 contain_volatile_functions(Node *clause)
@@ -788,6 +513,63 @@ contain_volatile_functions_walker(Node *node, void *context)
 	{
 		/* NextValueExpr is volatile */
 		return true;
+	}
+
+	if (IsA(node, RestrictInfo))
+	{
+		RestrictInfo *rinfo = (RestrictInfo *) node;
+
+		/*
+		 * For RestrictInfo, check if we've checked the volatility of it
+		 * before.  If so, we can just use the cached value and not bother
+		 * checking it again.  Otherwise, check it and cache if whether we
+		 * found any volatile functions.
+		 */
+		if (rinfo->has_volatile == VOLATILITY_NOVOLATILE)
+			return false;
+		else if (rinfo->has_volatile == VOLATILITY_VOLATILE)
+			return true;
+		else
+		{
+			bool		hasvolatile;
+
+			hasvolatile = contain_volatile_functions_walker((Node *) rinfo->clause,
+															context);
+			if (hasvolatile)
+				rinfo->has_volatile = VOLATILITY_VOLATILE;
+			else
+				rinfo->has_volatile = VOLATILITY_NOVOLATILE;
+
+			return hasvolatile;
+		}
+	}
+
+	if (IsA(node, PathTarget))
+	{
+		PathTarget *target = (PathTarget *) node;
+
+		/*
+		 * We also do caching for PathTarget the same as we do above for
+		 * RestrictInfos.
+		 */
+		if (target->has_volatile_expr == VOLATILITY_NOVOLATILE)
+			return false;
+		else if (target->has_volatile_expr == VOLATILITY_VOLATILE)
+			return true;
+		else
+		{
+			bool		hasvolatile;
+
+			hasvolatile = contain_volatile_functions_walker((Node *) target->exprs,
+															context);
+
+			if (hasvolatile)
+				target->has_volatile_expr = VOLATILITY_VOLATILE;
+			else
+				target->has_volatile_expr = VOLATILITY_NOVOLATILE;
+
+			return hasvolatile;
+		}
 	}
 
 	/*
@@ -849,7 +631,7 @@ contain_volatile_functions_not_nextval(Node *clause)
 static bool
 contain_volatile_functions_not_nextval_checker(Oid func_id, void *context)
 {
-	return (func_id != F_NEXTVAL_OID &&
+	return (func_id != F_NEXTVAL &&
 			func_volatile(func_id) == PROVOLATILE_VOLATILE);
 }
 
@@ -951,11 +733,9 @@ is_parallel_safe(PlannerInfo *root, Node *node)
 		foreach(l, proot->init_plans)
 		{
 			SubPlan    *initsubplan = (SubPlan *) lfirst(l);
-			ListCell   *l2;
 
-			foreach(l2, initsubplan->setParam)
-				context.safe_param_ids = lcons_int(lfirst_int(l2),
-												   context.safe_param_ids);
+			context.safe_param_ids = list_concat(context.safe_param_ids,
+												 initsubplan->setParam);
 		}
 	}
 
@@ -1081,10 +861,11 @@ max_parallel_hazard_walker(Node *node, max_parallel_hazard_context *context)
 			max_parallel_hazard_test(PROPARALLEL_RESTRICTED, context))
 			return true;
 		save_safe_param_ids = context->safe_param_ids;
-		context->safe_param_ids = list_concat(list_copy(subplan->paramIds),
-											  context->safe_param_ids);
+		context->safe_param_ids = list_concat_copy(context->safe_param_ids,
+												   subplan->paramIds);
 		if (max_parallel_hazard_walker(subplan->testexpr, context))
 			return true;		/* no need to restore safe_param_ids */
+		list_free(context->safe_param_ids);
 		context->safe_param_ids = save_safe_param_ids;
 		/* we must also check args, but no special Param treatment there */
 		if (max_parallel_hazard_walker((Node *) subplan->args, context))
@@ -1097,8 +878,8 @@ max_parallel_hazard_walker(Node *node, max_parallel_hazard_context *context)
 	 * We can't pass Params to workers at the moment either, so they are also
 	 * parallel-restricted, unless they are PARAM_EXTERN Params or are
 	 * PARAM_EXEC Params listed in safe_param_ids, meaning they could be
-	 * either generated within the worker or can be computed in master and
-	 * then their value can be passed to the worker.
+	 * either generated within workers or can be computed by the leader and
+	 * then their value can be passed to workers.
 	 */
 	else if (IsA(node, Param))
 	{
@@ -1198,13 +979,16 @@ contain_nonstrict_functions_walker(Node *node, void *context)
 	}
 	if (IsA(node, SubscriptingRef))
 	{
-		/*
-		 * subscripting assignment is nonstrict, but subscripting itself is
-		 * strict
-		 */
-		if (((SubscriptingRef *) node)->refassgnexpr != NULL)
-			return true;
+		SubscriptingRef *sbsref = (SubscriptingRef *) node;
+		const SubscriptRoutines *sbsroutines;
 
+		/* Subscripting assignment is always presumed nonstrict */
+		if (sbsref->refassgnexpr != NULL)
+			return true;
+		/* Otherwise we must look up the subscripting support methods */
+		sbsroutines = getSubscriptingRoutines(sbsref->refcontainertype, NULL);
+		if (!(sbsroutines && sbsroutines->fetch_strict))
+			return true;
 		/* else fall through to check args */
 	}
 	if (IsA(node, DistinctExpr))
@@ -1494,12 +1278,15 @@ contain_leaked_vars_walker(Node *node, void *context)
 		case T_SubscriptingRef:
 			{
 				SubscriptingRef *sbsref = (SubscriptingRef *) node;
+				const SubscriptRoutines *sbsroutines;
 
-				/*
-				 * subscripting assignment is leaky, but subscripted fetches
-				 * are not
-				 */
-				if (sbsref->refassgnexpr != NULL)
+				/* Consult the subscripting support method info */
+				sbsroutines = getSubscriptingRoutines(sbsref->refcontainertype,
+													  NULL);
+				if (!sbsroutines ||
+					!(sbsref->refassgnexpr != NULL ?
+					  sbsroutines->store_leakproof :
+					  sbsroutines->fetch_leakproof))
 				{
 					/* Node is leaky, so reject if it contains Vars */
 					if (contain_var_clause(node))
@@ -2249,13 +2036,7 @@ is_pseudo_constant_clause_relids(Node *clause, Relids relids)
  * Returns the number of different relations referenced in 'clause'.
  */
 int
-NumRelids(Node *clause)
-{
-	return NumRelids_new(NULL, clause);
-}
-
-int
-NumRelids_new(PlannerInfo *root, Node *clause)
+NumRelids(PlannerInfo *root, Node *clause)
 {
 	Relids		varnos = pull_varnos(root, clause);
 	int			result = bms_num_members(varnos);
@@ -2392,6 +2173,114 @@ eval_const_expressions(PlannerInfo *root, Node *node)
 	return eval_const_expressions_mutator(node, &context);
 }
 
+#define MIN_ARRAY_SIZE_FOR_HASHED_SAOP 9
+/*--------------------
+ * convert_saop_to_hashed_saop
+ *
+ * Recursively search 'node' for ScalarArrayOpExprs and fill in the hash
+ * function for any ScalarArrayOpExpr that looks like it would be useful to
+ * evaluate using a hash table rather than a linear search.
+ *
+ * We'll use a hash table if all of the following conditions are met:
+ * 1. The 2nd argument of the array contain only Consts.
+ * 2. useOr is true or there is a valid negator operator for the
+ *	  ScalarArrayOpExpr's opno.
+ * 3. There's valid hash function for both left and righthand operands and
+ *	  these hash functions are the same.
+ * 4. If the array contains enough elements for us to consider it to be
+ *	  worthwhile using a hash table rather than a linear search.
+ */
+void
+convert_saop_to_hashed_saop(Node *node)
+{
+	(void) convert_saop_to_hashed_saop_walker(node, NULL);
+}
+
+static bool
+convert_saop_to_hashed_saop_walker(Node *node, void *context)
+{
+	if (node == NULL)
+		return false;
+
+	if (IsA(node, ScalarArrayOpExpr))
+	{
+		ScalarArrayOpExpr *saop = (ScalarArrayOpExpr *) node;
+		Expr	   *arrayarg = (Expr *) lsecond(saop->args);
+		Oid			lefthashfunc;
+		Oid			righthashfunc;
+
+		if (arrayarg && IsA(arrayarg, Const) &&
+			!((Const *) arrayarg)->constisnull)
+		{
+			if (saop->useOr)
+			{
+				if (get_op_hash_functions(saop->opno, &lefthashfunc, &righthashfunc) &&
+					lefthashfunc == righthashfunc)
+				{
+					Datum		arrdatum = ((Const *) arrayarg)->constvalue;
+					ArrayType  *arr = (ArrayType *) DatumGetPointer(arrdatum);
+					int			nitems;
+
+					/*
+					 * Only fill in the hash functions if the array looks
+					 * large enough for it to be worth hashing instead of
+					 * doing a linear search.
+					 */
+					nitems = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+
+					if (nitems >= MIN_ARRAY_SIZE_FOR_HASHED_SAOP)
+					{
+						/* Looks good. Fill in the hash functions */
+						saop->hashfuncid = lefthashfunc;
+					}
+					return true;
+				}
+			}
+			else				/* !saop->useOr */
+			{
+				Oid			negator = get_negator(saop->opno);
+
+				/*
+				 * Check if this is a NOT IN using an operator whose negator
+				 * is hashable.  If so we can still build a hash table and
+				 * just ensure the lookup items are not in the hash table.
+				 */
+				if (OidIsValid(negator) &&
+					get_op_hash_functions(negator, &lefthashfunc, &righthashfunc) &&
+					lefthashfunc == righthashfunc)
+				{
+					Datum		arrdatum = ((Const *) arrayarg)->constvalue;
+					ArrayType  *arr = (ArrayType *) DatumGetPointer(arrdatum);
+					int			nitems;
+
+					/*
+					 * Only fill in the hash functions if the array looks
+					 * large enough for it to be worth hashing instead of
+					 * doing a linear search.
+					 */
+					nitems = ArrayGetNItems(ARR_NDIM(arr), ARR_DIMS(arr));
+
+					if (nitems >= MIN_ARRAY_SIZE_FOR_HASHED_SAOP)
+					{
+						/* Looks good. Fill in the hash functions */
+						saop->hashfuncid = lefthashfunc;
+
+						/*
+						 * Also set the negfuncid.  The executor will need
+						 * that to perform hashtable lookups.
+						 */
+						saop->negfuncid = get_opcode(negator);
+					}
+					return true;
+				}
+			}
+		}
+	}
+
+	return expression_tree_walker(node, convert_saop_to_hashed_saop_walker, NULL);
+}
+
+
 /*--------------------
  * estimate_expression_value
  *
@@ -2513,6 +2402,7 @@ eval_const_expressions_mutator(Node *node,
 							int16		typLen;
 							bool		typByVal;
 							Datum		pval;
+							Const	   *con;
 
 							get_typlenbyval(param->paramtype,
 											&typLen, &typByVal);
@@ -2520,13 +2410,15 @@ eval_const_expressions_mutator(Node *node,
 								pval = prm->value;
 							else
 								pval = datumCopy(prm->value, typByVal, typLen);
-							return (Node *) makeConst(param->paramtype,
-													  param->paramtypmod,
-													  param->paramcollid,
-													  (int) typLen,
-													  pval,
-													  prm->isnull,
-													  typByVal);
+							con = makeConst(param->paramtype,
+											param->paramtypmod,
+											param->paramcollid,
+											(int) typLen,
+											pval,
+											prm->isnull,
+											typByVal);
+							con->location = param->location;
+							return (Node *) con;
 						}
 					}
 				}
@@ -2557,7 +2449,8 @@ eval_const_expressions_mutator(Node *node,
 				if (!HeapTupleIsValid(func_tuple))
 					elog(ERROR, "cache lookup failed for function %u", funcid);
 
-				args = expand_function_arguments(expr->args, expr->wintype,
+				args = expand_function_arguments(expr->args,
+												 false, expr->wintype,
 												 func_tuple);
 
 				ReleaseSysCache(func_tuple);
@@ -2791,6 +2684,36 @@ eval_const_expressions_mutator(Node *node,
 				newexpr->args = args;
 				newexpr->location = expr->location;
 				return (Node *) newexpr;
+			}
+		case T_NullIfExpr:
+			{
+				NullIfExpr *expr;
+				ListCell   *arg;
+				bool		has_nonconst_input = false;
+
+				/* Copy the node and const-simplify its arguments */
+				expr = (NullIfExpr *) ece_generic_processing(node);
+
+				/* If either argument is NULL they can't be equal */
+				foreach(arg, expr->args)
+				{
+					if (!IsA(lfirst(arg), Const))
+						has_nonconst_input = true;
+					else if (((Const *) lfirst(arg))->constisnull)
+						return (Node *) linitial(expr->args);
+				}
+
+				/*
+				 * Need to get OID of underlying function before checking if
+				 * the function is OK to evaluate.
+				 */
+				set_opfuncid((OpExpr *) expr);
+
+				if (!has_nonconst_input &&
+					ece_function_is_safe(expr->opfuncid, context))
+					return ece_evaluate_expr(expr);
+
+				return (Node *) expr;
 			}
 		case T_ScalarArrayOpExpr:
 			{
@@ -3228,6 +3151,11 @@ eval_const_expressions_mutator(Node *node,
 				 * known to be immutable, and for which we need no smarts
 				 * beyond "simplify if all inputs are constants".
 				 *
+				 * Treating SubscriptingRef this way assumes that subscripting
+				 * fetch and assignment are both immutable.  This constrains
+				 * type-specific subscripting implementations; maybe we should
+				 * relax it someday.
+				 *
 				 * Treating MinMaxExpr this way amounts to assuming that the
 				 * btree comparison function it calls is immutable; see the
 				 * reasoning in contain_mutable_functions_walker.
@@ -3491,10 +3419,10 @@ eval_const_expressions_mutator(Node *node,
 			{
 				/*
 				 * This case could be folded into the generic handling used
-				 * for SubscriptingRef etc.  But because the simplification
-				 * logic is so trivial, applying evaluate_expr() to perform it
-				 * would be a heavy overhead.  BooleanTest is probably common
-				 * enough to justify keeping this bespoke implementation.
+				 * for ArrayExpr etc.  But because the simplification logic is
+				 * so trivial, applying evaluate_expr() to perform it would be
+				 * a heavy overhead.  BooleanTest is probably common enough to
+				 * justify keeping this bespoke implementation.
 				 */
 				BooleanTest *btest = (BooleanTest *) node;
 				BooleanTest *newbtest;
@@ -3761,18 +3689,12 @@ simplify_or_arguments(List *args,
 		/* flatten nested ORs as per above comment */
 		if (is_orclause(arg))
 		{
-			List	   *subargs = list_copy(((BoolExpr *) arg)->args);
+			List	   *subargs = ((BoolExpr *) arg)->args;
+			List	   *oldlist = unprocessed_args;
 
-			/* overly tense code to avoid leaking unused list header */
-			if (!unprocessed_args)
-				unprocessed_args = subargs;
-			else
-			{
-				List	   *oldhdr = unprocessed_args;
-
-				unprocessed_args = list_concat(subargs, unprocessed_args);
-				pfree(oldhdr);
-			}
+			unprocessed_args = list_concat_copy(subargs, unprocessed_args);
+			/* perhaps-overly-tense code to avoid leaking old lists */
+			list_free(oldlist);
 			continue;
 		}
 
@@ -3782,14 +3704,14 @@ simplify_or_arguments(List *args,
 		/*
 		 * It is unlikely but not impossible for simplification of a non-OR
 		 * clause to produce an OR.  Recheck, but don't be too tense about it
-		 * since it's not a mainstream case. In particular we don't worry
-		 * about const-simplifying the input twice.
+		 * since it's not a mainstream case.  In particular we don't worry
+		 * about const-simplifying the input twice, nor about list leakage.
 		 */
 		if (is_orclause(arg))
 		{
-			List	   *subargs = list_copy(((BoolExpr *) arg)->args);
+			List	   *subargs = ((BoolExpr *) arg)->args;
 
-			unprocessed_args = list_concat(subargs, unprocessed_args);
+			unprocessed_args = list_concat_copy(subargs, unprocessed_args);
 			continue;
 		}
 
@@ -3863,18 +3785,12 @@ simplify_and_arguments(List *args,
 		/* flatten nested ANDs as per above comment */
 		if (is_andclause(arg))
 		{
-			List	   *subargs = list_copy(((BoolExpr *) arg)->args);
+			List	   *subargs = ((BoolExpr *) arg)->args;
+			List	   *oldlist = unprocessed_args;
 
-			/* overly tense code to avoid leaking unused list header */
-			if (!unprocessed_args)
-				unprocessed_args = subargs;
-			else
-			{
-				List	   *oldhdr = unprocessed_args;
-
-				unprocessed_args = list_concat(subargs, unprocessed_args);
-				pfree(oldhdr);
-			}
+			unprocessed_args = list_concat_copy(subargs, unprocessed_args);
+			/* perhaps-overly-tense code to avoid leaking old lists */
+			list_free(oldlist);
 			continue;
 		}
 
@@ -3884,14 +3800,14 @@ simplify_and_arguments(List *args,
 		/*
 		 * It is unlikely but not impossible for simplification of a non-AND
 		 * clause to produce an AND.  Recheck, but don't be too tense about it
-		 * since it's not a mainstream case. In particular we don't worry
-		 * about const-simplifying the input twice.
+		 * since it's not a mainstream case.  In particular we don't worry
+		 * about const-simplifying the input twice, nor about list leakage.
 		 */
 		if (is_andclause(arg))
 		{
-			List	   *subargs = list_copy(((BoolExpr *) arg)->args);
+			List	   *subargs = ((BoolExpr *) arg)->args;
 
-			unprocessed_args = list_concat(subargs, unprocessed_args);
+			unprocessed_args = list_concat_copy(subargs, unprocessed_args);
 			continue;
 		}
 
@@ -4049,7 +3965,7 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
 	 */
 	if (process_args)
 	{
-		args = expand_function_arguments(args, result_type, func_tuple);
+		args = expand_function_arguments(args, false, result_type, func_tuple);
 		args = (List *) expression_tree_mutator((Node *) args,
 												eval_const_expressions_mutator,
 												(void *) context);
@@ -4113,6 +4029,15 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
  * expand_function_arguments: convert named-notation args to positional args
  * and/or insert default args, as needed
  *
+ * Returns a possibly-transformed version of the args list.
+ *
+ * If include_out_arguments is true, then the args list and the result
+ * include OUT arguments.
+ *
+ * The expected result type of the call must be given, for sanity-checking
+ * purposes.  Also, we ask the caller to provide the function's actual
+ * pg_proc tuple, not just its OID.
+ *
  * If we need to change anything, the input argument list is copied, not
  * modified.
  *
@@ -4121,11 +4046,45 @@ simplify_function(Oid funcid, Oid result_type, int32 result_typmod,
  * will fall through very quickly if there's nothing to do.
  */
 List *
-expand_function_arguments(List *args, Oid result_type, HeapTuple func_tuple)
+expand_function_arguments(List *args, bool include_out_arguments,
+						  Oid result_type, HeapTuple func_tuple)
 {
 	Form_pg_proc funcform = (Form_pg_proc) GETSTRUCT(func_tuple);
+	Oid		   *proargtypes = funcform->proargtypes.values;
+	int			pronargs = funcform->pronargs;
 	bool		has_named_args = false;
 	ListCell   *lc;
+
+	/*
+	 * If we are asked to match to OUT arguments, then use the proallargtypes
+	 * array (which includes those); otherwise use proargtypes (which
+	 * doesn't).  Of course, if proallargtypes is null, we always use
+	 * proargtypes.  (Fetching proallargtypes is annoyingly expensive
+	 * considering that we may have nothing to do here, but fortunately the
+	 * common case is include_out_arguments == false.)
+	 */
+	if (include_out_arguments)
+	{
+		Datum		proallargtypes;
+		bool		isNull;
+
+		proallargtypes = SysCacheGetAttr(PROCOID, func_tuple,
+										 Anum_pg_proc_proallargtypes,
+										 &isNull);
+		if (!isNull)
+		{
+			ArrayType  *arr = DatumGetArrayTypeP(proallargtypes);
+
+			pronargs = ARR_DIMS(arr)[0];
+			if (ARR_NDIM(arr) != 1 ||
+				pronargs < 0 ||
+				ARR_HASNULL(arr) ||
+				ARR_ELEMTYPE(arr) != OIDOID)
+				elog(ERROR, "proallargtypes is not a 1-D Oid array or it contains nulls");
+			Assert(pronargs >= funcform->pronargs);
+			proargtypes = (Oid *) ARR_DATA_PTR(arr);
+		}
+	}
 
 	/* Do we have any named arguments? */
 	foreach(lc, args)
@@ -4142,16 +4101,20 @@ expand_function_arguments(List *args, Oid result_type, HeapTuple func_tuple)
 	/* If so, we must apply reorder_function_arguments */
 	if (has_named_args)
 	{
-		args = reorder_function_arguments(args, func_tuple);
+		args = reorder_function_arguments(args, pronargs, func_tuple);
 		/* Recheck argument types and add casts if needed */
-		recheck_cast_function_args(args, result_type, func_tuple);
+		recheck_cast_function_args(args, result_type,
+								   proargtypes, pronargs,
+								   func_tuple);
 	}
-	else if (list_length(args) < funcform->pronargs)
+	else if (list_length(args) < pronargs)
 	{
 		/* No named args, but we seem to be short some defaults */
-		args = add_function_defaults(args, func_tuple);
+		args = add_function_defaults(args, pronargs, func_tuple);
 		/* Recheck argument types and add casts if needed */
-		recheck_cast_function_args(args, result_type, func_tuple);
+		recheck_cast_function_args(args, result_type,
+								   proargtypes, pronargs,
+								   func_tuple);
 	}
 
 	return args;
@@ -4164,10 +4127,9 @@ expand_function_arguments(List *args, Oid result_type, HeapTuple func_tuple)
  * impossible to form a truly valid positional call without that.
  */
 static List *
-reorder_function_arguments(List *args, HeapTuple func_tuple)
+reorder_function_arguments(List *args, int pronargs, HeapTuple func_tuple)
 {
 	Form_pg_proc funcform = (Form_pg_proc) GETSTRUCT(func_tuple);
-	int			pronargs = funcform->pronargs;
 	int			nargsprovided = list_length(args);
 	Node	   *argarray[FUNC_MAX_ARGS];
 	ListCell   *lc;
@@ -4194,6 +4156,7 @@ reorder_function_arguments(List *args, HeapTuple func_tuple)
 		{
 			NamedArgExpr *na = (NamedArgExpr *) arg;
 
+			Assert(na->argnumber >= 0 && na->argnumber < pronargs);
 			Assert(argarray[na->argnumber] == NULL);
 			argarray[na->argnumber] = (Node *) na->arg;
 		}
@@ -4234,9 +4197,8 @@ reorder_function_arguments(List *args, HeapTuple func_tuple)
  * and so we know we just need to add defaults at the end.
  */
 static List *
-add_function_defaults(List *args, HeapTuple func_tuple)
+add_function_defaults(List *args, int pronargs, HeapTuple func_tuple)
 {
-	Form_pg_proc funcform = (Form_pg_proc) GETSTRUCT(func_tuple);
 	int			nargsprovided = list_length(args);
 	List	   *defaults;
 	int			ndelete;
@@ -4245,14 +4207,14 @@ add_function_defaults(List *args, HeapTuple func_tuple)
 	defaults = fetch_function_defaults(func_tuple);
 
 	/* Delete any unused defaults from the list */
-	ndelete = nargsprovided + list_length(defaults) - funcform->pronargs;
+	ndelete = nargsprovided + list_length(defaults) - pronargs;
 	if (ndelete < 0)
 		elog(ERROR, "not enough default arguments");
-	while (ndelete-- > 0)
-		defaults = list_delete_first(defaults);
+	if (ndelete > 0)
+		defaults = list_delete_first_n(defaults, ndelete);
 
 	/* And form the combined argument list, not modifying the input list */
-	return list_concat(list_copy(args), defaults);
+	return list_concat_copy(args, defaults);
 }
 
 /*
@@ -4294,7 +4256,9 @@ fetch_function_defaults(HeapTuple func_tuple)
  * caller should have already copied the list structure.
  */
 static void
-recheck_cast_function_args(List *args, Oid result_type, HeapTuple func_tuple)
+recheck_cast_function_args(List *args, Oid result_type,
+						   Oid *proargtypes, int pronargs,
+						   HeapTuple func_tuple)
 {
 	Form_pg_proc funcform = (Form_pg_proc) GETSTRUCT(func_tuple);
 	int			nargs;
@@ -4310,9 +4274,8 @@ recheck_cast_function_args(List *args, Oid result_type, HeapTuple func_tuple)
 	{
 		actual_arg_types[nargs++] = exprType((Node *) lfirst(lc));
 	}
-	Assert(nargs == funcform->pronargs);
-	memcpy(declared_arg_types, funcform->proargtypes.values,
-		   funcform->pronargs * sizeof(Oid));
+	Assert(nargs == pronargs);
+	memcpy(declared_arg_types, proargtypes, pronargs * sizeof(Oid));
 	rettype = enforce_generic_type_consistency(actual_arg_types,
 											   declared_arg_types,
 											   nargs,
@@ -4474,15 +4437,16 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	char	   *src;
 	Datum		tmp;
 	bool		isNull;
-	bool		modifyTargetList;
 	MemoryContext oldcxt;
 	MemoryContext mycxt;
 	inline_error_callback_arg callback_arg;
 	ErrorContextCallback sqlerrcontext;
 	FuncExpr   *fexpr;
 	SQLFunctionParseInfoPtr pinfo;
+	TupleDesc	rettupdesc;
 	ParseState *pstate;
 	List	   *raw_parsetree_list;
+	List	   *querytree_list;
 	Query	   *querytree;
 	Node	   *newexpr;
 	int		   *usecounts;
@@ -4523,6 +4487,22 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 								  ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(mycxt);
 
+	/*
+	 * We need a dummy FuncExpr node containing the already-simplified
+	 * arguments.  (In some cases we don't really need it, but building it is
+	 * cheap enough that it's not worth contortions to avoid.)
+	 */
+	fexpr = makeNode(FuncExpr);
+	fexpr->funcid = funcid;
+	fexpr->funcresulttype = result_type;
+	fexpr->funcretset = false;
+	fexpr->funcvariadic = funcvariadic;
+	fexpr->funcformat = COERCE_EXPLICIT_CALL;	/* doesn't matter */
+	fexpr->funccollid = result_collid;	/* doesn't matter */
+	fexpr->inputcollid = input_collid;
+	fexpr->args = args;
+	fexpr->location = -1;
+
 	/* Fetch the function body */
 	tmp = SysCacheGetAttr(PROCOID,
 						  func_tuple,
@@ -4544,44 +4524,56 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	sqlerrcontext.previous = error_context_stack;
 	error_context_stack = &sqlerrcontext;
 
-	/*
-	 * Set up to handle parameters while parsing the function body.  We need a
-	 * dummy FuncExpr node containing the already-simplified arguments to pass
-	 * to prepare_sql_fn_parse_info.  (It is really only needed if there are
-	 * some polymorphic arguments, but for simplicity we always build it.)
-	 */
-	fexpr = makeNode(FuncExpr);
-	fexpr->funcid = funcid;
-	fexpr->funcresulttype = result_type;
-	fexpr->funcretset = false;
-	fexpr->funcvariadic = funcvariadic;
-	fexpr->funcformat = COERCE_EXPLICIT_CALL;	/* doesn't matter */
-	fexpr->funccollid = result_collid;	/* doesn't matter */
-	fexpr->inputcollid = input_collid;
-	fexpr->args = args;
-	fexpr->location = -1;
+	/* If we have prosqlbody, pay attention to that not prosrc */
+	tmp = SysCacheGetAttr(PROCOID,
+						  func_tuple,
+						  Anum_pg_proc_prosqlbody,
+						  &isNull);
+	if (!isNull)
+	{
+		Node	   *n;
+		List	   *querytree_list;
 
-	pinfo = prepare_sql_fn_parse_info(func_tuple,
-									  (Node *) fexpr,
-									  input_collid);
+		n = stringToNode(TextDatumGetCString(tmp));
+		if (IsA(n, List))
+			querytree_list = linitial_node(List, castNode(List, n));
+		else
+			querytree_list = list_make1(n);
+		if (list_length(querytree_list) != 1)
+			goto fail;
+		querytree = linitial(querytree_list);
 
-	/*
-	 * We just do parsing and parse analysis, not rewriting, because rewriting
-	 * will not affect table-free-SELECT-only queries, which is all that we
-	 * care about.  Also, we can punt as soon as we detect more than one
-	 * command in the function body.
-	 */
-	raw_parsetree_list = pg_parse_query(src);
-	if (list_length(raw_parsetree_list) != 1)
-		goto fail;
+		/*
+		 * Because we'll insist below that the querytree have an empty rtable
+		 * and no sublinks, it cannot have any relation references that need
+		 * to be locked or rewritten.  So we can omit those steps.
+		 */
+	}
+	else
+	{
+		/* Set up to handle parameters while parsing the function body. */
+		pinfo = prepare_sql_fn_parse_info(func_tuple,
+										  (Node *) fexpr,
+										  input_collid);
 
-	pstate = make_parsestate(NULL);
-	pstate->p_sourcetext = src;
-	sql_fn_parser_setup(pstate, pinfo);
+		/*
+		 * We just do parsing and parse analysis, not rewriting, because
+		 * rewriting will not affect table-free-SELECT-only queries, which is
+		 * all that we care about.  Also, we can punt as soon as we detect
+		 * more than one command in the function body.
+		 */
+		raw_parsetree_list = pg_parse_query(src);
+		if (list_length(raw_parsetree_list) != 1)
+			goto fail;
 
-	querytree = transformTopLevelStmt(pstate, linitial(raw_parsetree_list));
+		pstate = make_parsestate(NULL);
+		pstate->p_sourcetext = src;
+		sql_fn_parser_setup(pstate, pinfo);
 
-	free_parsestate(pstate);
+		querytree = transformTopLevelStmt(pstate, linitial(raw_parsetree_list));
+
+		free_parsestate(pstate);
+	}
 
 	/*
 	 * The single command must be a simple "SELECT expression".
@@ -4613,20 +4605,34 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 		list_length(querytree->targetList) != 1)
 		goto fail;
 
+	/* If the function result is composite, resolve it */
+	(void) get_expr_result_type((Node *) fexpr,
+								NULL,
+								&rettupdesc);
+
 	/*
 	 * Make sure the function (still) returns what it's declared to.  This
 	 * will raise an error if wrong, but that's okay since the function would
 	 * fail at runtime anyway.  Note that check_sql_fn_retval will also insert
-	 * a RelabelType if needed to make the tlist expression match the declared
+	 * a coercion if needed to make the tlist expression match the declared
 	 * type of the function.
 	 *
 	 * Note: we do not try this until we have verified that no rewriting was
 	 * needed; that's probably not important, but let's be careful.
 	 */
-	if (check_sql_fn_retval_ext(funcid, result_type, funcform->prokind,
-								list_make1(querytree),
-								&modifyTargetList, NULL))
+	querytree_list = list_make1(querytree);
+	if (check_sql_fn_retval_ext(list_make1(querytree_list),
+								result_type, rettupdesc,
+								funcform->prokind,
+								false, NULL))
 		goto fail;				/* reject whole-tuple-result cases */
+
+	/*
+	 * Given the tests above, check_sql_fn_retval shouldn't have decided to
+	 * inject a projection step, but let's just make sure.
+	 */
+	if (querytree != linitial(querytree_list))
+		goto fail;
 
 	/* Now we can grab the tlist expression */
 	newexpr = (Node *) ((TargetEntry *) linitial(querytree->targetList))->expr;
@@ -4641,9 +4647,6 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	 */
 	if (exprType(newexpr) != result_type)
 		goto fail;
-
-	/* check_sql_fn_retval couldn't have made any dangerous tlist changes */
-	Assert(!modifyTargetList);
 
 	/*
 	 * Additional validity checks on the expression.  It mustn't be more
@@ -4764,9 +4767,9 @@ inline_function(Oid funcid, Oid result_type, Oid result_collid,
 	 * Recursively try to simplify the modified expression.  Here we must add
 	 * the current function to the context list of active functions.
 	 */
-	context->active_fns = lcons_oid(funcid, context->active_fns);
+	context->active_fns = lappend_oid(context->active_fns, funcid);
 	newexpr = eval_const_expressions_mutator(newexpr, context);
-	context->active_fns = list_delete_first(context->active_fns);
+	context->active_fns = list_delete_last(context->active_fns);
 
 	error_context_stack = sqlerrcontext.previous;
 
@@ -4934,6 +4937,10 @@ evaluate_expr(Expr *expr, Oid result_type, int32 result_typmod,
  * set-returning SQL function that can safely be inlined, expand the function
  * and return the substitute Query structure.  Otherwise, return NULL.
  *
+ * We assume that the RTE's expression has already been put through
+ * eval_const_expressions(), which among other things will take care of
+ * default arguments and named-argument notation.
+ *
  * This has a good deal of similarity to inline_function(), but that's
  * for the non-set-returning case, and there are enough differences to
  * justify separate functions.
@@ -4949,13 +4956,13 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	char	   *src;
 	Datum		tmp;
 	bool		isNull;
-	bool		modifyTargetList;
 	MemoryContext oldcxt;
 	MemoryContext mycxt;
-	List	   *saveInvalItems;
 	inline_error_callback_arg callback_arg;
 	ErrorContextCallback sqlerrcontext;
 	SQLFunctionParseInfoPtr pinfo;
+	TypeFuncClass functypclass;
+	TupleDesc	rettupdesc;
 	List	   *raw_parsetree_list;
 	List	   *querytree_list;
 	Query	   *querytree;
@@ -5030,7 +5037,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 * sharing the snapshot of the calling query.  We also disallow returning
 	 * SETOF VOID, because inlining would result in exposing the actual result
 	 * of the function's last SELECT, which should not happen in that case.
-	 * (Rechecking prokind and proretset is just paranoia.)
+	 * (Rechecking prokind, proretset, and pronargs is just paranoia.)
 	 */
 	if (funcform->prolang != SQLlanguageId ||
 		funcform->prokind != PROKIND_FUNCTION ||
@@ -5039,6 +5046,7 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 		funcform->prorettype == VOIDOID ||
 		funcform->prosecdef ||
 		!funcform->proretset ||
+		list_length(fexpr->args) != funcform->pronargs ||
 		!heap_attisnull(func_tuple, Anum_pg_proc_proconfig, NULL))
 	{
 		ReleaseSysCache(func_tuple);
@@ -5053,16 +5061,6 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 								  "inline_set_returning_function",
 								  ALLOCSET_DEFAULT_SIZES);
 	oldcxt = MemoryContextSwitchTo(mycxt);
-
-	/*
-	 * When we call eval_const_expressions below, it might try to add items to
-	 * root->glob->invalItems.  Since it is running in the temp context, those
-	 * items will be in that context, and will need to be copied out if we're
-	 * successful.  Temporarily reset the list so that we can keep those items
-	 * separate from the pre-existing list contents.
-	 */
-	saveInvalItems = root->glob->invalItems;
-	root->glob->invalItems = NIL;
 
 	/* Fetch the function body */
 	tmp = SysCacheGetAttr(PROCOID,
@@ -5085,49 +5083,75 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	sqlerrcontext.previous = error_context_stack;
 	error_context_stack = &sqlerrcontext;
 
+	/* If we have prosqlbody, pay attention to that not prosrc */
+	tmp = SysCacheGetAttr(PROCOID,
+						  func_tuple,
+						  Anum_pg_proc_prosqlbody,
+						  &isNull);
+	if (!isNull)
+	{
+		Node	   *n;
+
+		n = stringToNode(TextDatumGetCString(tmp));
+		if (IsA(n, List))
+			querytree_list = linitial_node(List, castNode(List, n));
+		else
+			querytree_list = list_make1(n);
+		if (list_length(querytree_list) != 1)
+			goto fail;
+		querytree = linitial(querytree_list);
+
+		/* Acquire necessary locks, then apply rewriter. */
+		AcquireRewriteLocks(querytree, true, false);
+		querytree_list = pg_rewrite_query(querytree);
+		if (list_length(querytree_list) != 1)
+			goto fail;
+		querytree = linitial(querytree_list);
+	}
+	else
+	{
+		/*
+		 * Set up to handle parameters while parsing the function body.  We
+		 * can use the FuncExpr just created as the input for
+		 * prepare_sql_fn_parse_info.
+		 */
+		pinfo = prepare_sql_fn_parse_info(func_tuple,
+										  (Node *) fexpr,
+										  fexpr->inputcollid);
+
+		/*
+		 * Parse, analyze, and rewrite (unlike inline_function(), we can't
+		 * skip rewriting here).  We can fail as soon as we find more than one
+		 * query, though.
+		 */
+		raw_parsetree_list = pg_parse_query(src);
+		if (list_length(raw_parsetree_list) != 1)
+			goto fail;
+
+		querytree_list = pg_analyze_and_rewrite_withcb(linitial(raw_parsetree_list),
+													   src,
+													   (ParserSetupHook) sql_fn_parser_setup,
+													   pinfo, NULL);
+		if (list_length(querytree_list) != 1)
+			goto fail;
+		querytree = linitial(querytree_list);
+	}
+
 	/*
-	 * Run eval_const_expressions on the function call.  This is necessary to
-	 * ensure that named-argument notation is converted to positional notation
-	 * and any default arguments are inserted.  It's a bit of overkill for the
-	 * arguments, since they'll get processed again later, but no harm will be
-	 * done.
+	 * Also resolve the actual function result tupdesc, if composite.  If we
+	 * have a coldeflist, believe that; otherwise use get_expr_result_type.
+	 * (This logic should match ExecInitFunctionScan.)
 	 */
-	fexpr = (FuncExpr *) eval_const_expressions(root, (Node *) fexpr);
-
-	/* It should still be a call of the same function, but let's check */
-	if (!IsA(fexpr, FuncExpr) ||
-		fexpr->funcid != func_oid)
-		goto fail;
-
-	/* Arg list length should now match the function */
-	if (list_length(fexpr->args) != funcform->pronargs)
-		goto fail;
-
-	/*
-	 * Set up to handle parameters while parsing the function body.  We can
-	 * use the FuncExpr just created as the input for
-	 * prepare_sql_fn_parse_info.
-	 */
-	pinfo = prepare_sql_fn_parse_info(func_tuple,
-									  (Node *) fexpr,
-									  fexpr->inputcollid);
-
-	/*
-	 * Parse, analyze, and rewrite (unlike inline_function(), we can't skip
-	 * rewriting here).  We can fail as soon as we find more than one query,
-	 * though.
-	 */
-	raw_parsetree_list = pg_parse_query(src);
-	if (list_length(raw_parsetree_list) != 1)
-		goto fail;
-
-	querytree_list = pg_analyze_and_rewrite_params(linitial(raw_parsetree_list),
-												   src,
-												   (ParserSetupHook) sql_fn_parser_setup,
-												   pinfo, NULL);
-	if (list_length(querytree_list) != 1)
-		goto fail;
-	querytree = linitial(querytree_list);
+	if (rtfunc->funccolnames != NIL)
+	{
+		functypclass = TYPEFUNC_RECORD;
+		rettupdesc = BuildDescFromLists(rtfunc->funccolnames,
+										rtfunc->funccoltypes,
+										rtfunc->funccoltypmods,
+										rtfunc->funccolcollations);
+	}
+	else
+		functypclass = get_expr_result_type((Node *) fexpr, NULL, &rettupdesc);
 
 	/*
 	 * The single command must be a plain SELECT.
@@ -5140,44 +5164,29 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	 * Make sure the function (still) returns what it's declared to.  This
 	 * will raise an error if wrong, but that's okay since the function would
 	 * fail at runtime anyway.  Note that check_sql_fn_retval will also insert
-	 * RelabelType(s) and/or NULL columns if needed to make the tlist
-	 * expression(s) match the declared type of the function.
+	 * coercions if needed to make the tlist expression(s) match the declared
+	 * type of the function.  We also ask it to insert dummy NULL columns for
+	 * any dropped columns in rettupdesc, so that the elements of the modified
+	 * tlist match up to the attribute numbers.
 	 *
 	 * If the function returns a composite type, don't inline unless the check
 	 * shows it's returning a whole tuple result; otherwise what it's
-	 * returning is a single composite column which is not what we need. (Like
-	 * check_sql_fn_retval, we deliberately exclude domains over composite
-	 * here.)
+	 * returning is a single composite column which is not what we need.
 	 */
-	if (!check_sql_fn_retval_ext(func_oid, fexpr->funcresulttype,
+	if (!check_sql_fn_retval_ext(list_make1(querytree_list),
+								 fexpr->funcresulttype, rettupdesc,
 								 funcform->prokind,
-								 querytree_list,
-								 &modifyTargetList, NULL) &&
-		(get_typtype(fexpr->funcresulttype) == TYPTYPE_COMPOSITE ||
-		 fexpr->funcresulttype == RECORDOID))
+								 true, NULL) &&
+		(functypclass == TYPEFUNC_COMPOSITE ||
+		 functypclass == TYPEFUNC_COMPOSITE_DOMAIN ||
+		 functypclass == TYPEFUNC_RECORD))
 		goto fail;				/* reject not-whole-tuple-result cases */
 
 	/*
-	 * If we had to modify the tlist to make it match, and the statement is
-	 * one in which changing the tlist contents could change semantics, we
-	 * have to punt and not inline.
+	 * check_sql_fn_retval might've inserted a projection step, but that's
+	 * fine; just make sure we use the upper Query.
 	 */
-	if (modifyTargetList)
-		goto fail;
-
-	/*
-	 * If it returns RECORD, we have to check against the column type list
-	 * provided in the RTE; check_sql_fn_retval can't do that.  (If no match,
-	 * we just fail to inline, rather than complaining; see notes for
-	 * tlist_matches_coltypelist.)	We don't have to do this for functions
-	 * with declared OUT parameters, even though their funcresulttype is
-	 * RECORDOID, so check get_func_result_type too.
-	 */
-	if (fexpr->funcresulttype == RECORDOID &&
-		get_func_result_type(func_oid, NULL, NULL) == TYPEFUNC_RECORD &&
-		!tlist_matches_coltypelist(querytree->targetList,
-								   rtfunc->funccoltypes))
-		goto fail;
+	querytree = linitial_node(Query, querytree_list);
 
 	/*
 	 * Looks good --- substitute parameters into the query.
@@ -5193,10 +5202,6 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	MemoryContextSwitchTo(oldcxt);
 
 	querytree = copyObject(querytree);
-
-	/* copy up any new invalItems, too */
-	root->glob->invalItems = list_concat(saveInvalItems,
-										 copyObject(root->glob->invalItems));
 
 	MemoryContextDelete(mycxt);
 	error_context_stack = sqlerrcontext.previous;
@@ -5225,7 +5230,6 @@ inline_set_returning_function(PlannerInfo *root, RangeTblEntry *rte)
 	/* Here if func is not inlinable: release temp memory and return NULL */
 fail:
 	MemoryContextSwitchTo(oldcxt);
-	root->glob->invalItems = saveInvalItems;
 	MemoryContextDelete(mycxt);
 	error_context_stack = sqlerrcontext.previous;
 	ReleaseSysCache(func_tuple);
@@ -5296,44 +5300,31 @@ substitute_actual_srf_parameters_mutator(Node *node,
 }
 
 /*
- * Check whether a SELECT targetlist emits the specified column types,
- * to see if it's safe to inline a function returning record.
- *
- * We insist on exact match here.  The executor allows binary-coercible
- * cases too, but we don't have a way to preserve the correct column types
- * in the correct places if we inline the function in such a case.
- *
- * Note that we only check type OIDs not typmods; this agrees with what the
- * executor would do at runtime, and attributing a specific typmod to a
- * function result is largely wishful thinking anyway.
+ * pull_paramids
+ *		Returns a Bitmapset containing the paramids of all Params in 'expr'.
  */
-static bool
-tlist_matches_coltypelist(List *tlist, List *coltypelist)
+Bitmapset *
+pull_paramids(Expr *expr)
 {
-	ListCell   *tlistitem;
-	ListCell   *clistitem;
+	Bitmapset  *result = NULL;
 
-	clistitem = list_head(coltypelist);
-	foreach(tlistitem, tlist)
+	(void) pull_paramids_walker((Node *) expr, &result);
+
+	return result;
+}
+
+static bool
+pull_paramids_walker(Node *node, Bitmapset **context)
+{
+	if (node == NULL)
+		return false;
+	if (IsA(node, Param))
 	{
-		TargetEntry *tle = (TargetEntry *) lfirst(tlistitem);
-		Oid			coltype;
+		Param	   *param = (Param *) node;
 
-		if (tle->resjunk)
-			continue;			/* ignore junk columns */
-
-		if (clistitem == NULL)
-			return false;		/* too many tlist items */
-
-		coltype = lfirst_oid(clistitem);
-		clistitem = lnext(clistitem);
-
-		if (exprType((Node *) tle->expr) != coltype)
-			return false;		/* column type mismatch */
+		*context = bms_add_member(*context, param->paramid);
+		return false;
 	}
-
-	if (clistitem != NULL)
-		return false;			/* too few tlist items */
-
-	return true;
+	return expression_tree_walker(node, pull_paramids_walker,
+								  (void *) context);
 }

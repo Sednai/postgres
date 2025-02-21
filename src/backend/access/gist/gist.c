@@ -4,7 +4,7 @@
  *	  interface routines for the postgres GiST index access method.
  *
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -16,16 +16,17 @@
 
 #include "access/gist_private.h"
 #include "access/gistscan.h"
+#include "access/xloginsert.h"
 #include "catalog/pg_collation.h"
+#include "commands/vacuum.h"
 #include "miscadmin.h"
+#include "nodes/execnodes.h"
 #include "storage/lmgr.h"
 #include "storage/predicate.h"
-#include "nodes/execnodes.h"
 #include "utils/builtins.h"
 #include "utils/index_selfuncs.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
-
 
 /* non-export function prototypes */
 static void gistfixsplit(GISTInsertState *state, GISTSTATE *giststate);
@@ -37,7 +38,7 @@ static bool gistinserttuples(GISTInsertState *state, GISTInsertStack *stack,
 							 Buffer leftchild, Buffer rightchild,
 							 bool unlockbuf, bool unlockleftchild);
 static void gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
-							GISTSTATE *giststate, List *splitinfo, bool releasebuf);
+							GISTSTATE *giststate, List *splitinfo, bool unlockbuf);
 static void gistprunepage(Relation rel, Page page, Buffer buffer,
 						  Relation heapRel);
 
@@ -62,6 +63,7 @@ gisthandler(PG_FUNCTION_ARGS)
 
 	amroutine->amstrategies = 0;
 	amroutine->amsupport = GISTNProcs;
+	amroutine->amoptsprocnum = GIST_OPTIONS_PROC;
 	amroutine->amcanorder = false;
 	amroutine->amcanorderbyop = true;
 	amroutine->amcanbackward = false;
@@ -75,6 +77,9 @@ gisthandler(PG_FUNCTION_ARGS)
 	amroutine->ampredlocks = true;
 	amroutine->amcanparallel = false;
 	amroutine->amcaninclude = true;
+	amroutine->amusemaintenanceworkmem = false;
+	amroutine->amparallelvacuumoptions =
+		VACUUM_OPTION_PARALLEL_BULKDEL | VACUUM_OPTION_PARALLEL_COND_CLEANUP;
 	amroutine->amkeytype = InvalidOid;
 
 	amroutine->ambuild = gistbuild;
@@ -88,6 +93,7 @@ gisthandler(PG_FUNCTION_ARGS)
 	amroutine->amproperty = gistproperty;
 	amroutine->ambuildphasename = NULL;
 	amroutine->amvalidate = gistvalidate;
+	amroutine->amadjustmembers = gistadjustmembers;
 	amroutine->ambeginscan = gistbeginscan;
 	amroutine->amrescan = gistrescan;
 	amroutine->amgettuple = gistgettuple;
@@ -151,6 +157,7 @@ bool
 gistinsert(Relation r, Datum *values, bool *isnull,
 		   ItemPointer ht_ctid, Relation heapRel,
 		   IndexUniqueCheck checkUnique,
+		   bool indexUnchanged,
 		   IndexInfo *indexInfo)
 {
 	GISTSTATE  *giststate = (GISTSTATE *) indexInfo->ii_AmCache;
@@ -822,7 +829,7 @@ gistdoinsert(Relation r, IndexTuple itup, Size freespace,
 			/*
 			 * Leaf page. Insert the new key. We've already updated all the
 			 * parents on the way down, but we might have to split the page if
-			 * it doesn't fit. gistinserthere() will take care of that.
+			 * it doesn't fit. gistinserttuple() will take care of that.
 			 */
 
 			/*
@@ -1184,8 +1191,9 @@ gistfixsplit(GISTInsertState *state, GISTSTATE *giststate)
 	Page		page;
 	List	   *splitinfo = NIL;
 
-	elog(LOG, "fixing incomplete split in index \"%s\", block %u",
-		 RelationGetRelationName(state->r), stack->blkno);
+	ereport(LOG,
+			(errmsg("fixing incomplete split in index \"%s\", block %u",
+					RelationGetRelationName(state->r), stack->blkno)));
 
 	Assert(GistFollowRight(stack->page));
 	Assert(OffsetNumberIsValid(stack->downlinkoffnum));
@@ -1283,7 +1291,7 @@ gistinserttuples(GISTInsertState *state, GISTInsertStack *stack,
 	 * Check for any rw conflicts (in serializable isolation level) just
 	 * before we intend to modify the page
 	 */
-	CheckForSerializableConflictIn(state->r, NULL, stack->buffer);
+	CheckForSerializableConflictIn(state->r, NULL, BufferGetBlockNumber(stack->buffer));
 
 	/* Insert the tuple(s) to the page, splitting the page if necessary */
 	is_split = gistplacetopage(state->r, state->freespace, giststate,
@@ -1333,8 +1341,6 @@ static void
 gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
 				GISTSTATE *giststate, List *splitinfo, bool unlockbuf)
 {
-	ListCell   *lc;
-	List	   *reversed;
 	GISTPageSplitInfo *right;
 	GISTPageSplitInfo *left;
 	IndexTuple	tuples[2];
@@ -1349,24 +1355,16 @@ gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
 	 * left. Finally insert the downlink for the last new page and update the
 	 * downlink for the original page as one operation.
 	 */
-
-	/* for convenience, create a copy of the list in reverse order */
-	reversed = NIL;
-	foreach(lc, splitinfo)
-	{
-		reversed = lcons(lfirst(lc), reversed);
-	}
-
 	LockBuffer(stack->parent->buffer, GIST_EXCLUSIVE);
 
 	/*
 	 * Insert downlinks for the siblings from right to left, until there are
 	 * only two siblings left.
 	 */
-	while (list_length(reversed) > 2)
+	for (int pos = list_length(splitinfo) - 1; pos > 1; pos--)
 	{
-		right = (GISTPageSplitInfo *) linitial(reversed);
-		left = (GISTPageSplitInfo *) lsecond(reversed);
+		right = (GISTPageSplitInfo *) list_nth(splitinfo, pos);
+		left = (GISTPageSplitInfo *) list_nth(splitinfo, pos - 1);
 
 		gistFindCorrectParent(state->r, stack, state->is_build);
 		if (gistinserttuples(state, stack->parent, giststate,
@@ -1375,17 +1373,16 @@ gistfinishsplit(GISTInsertState *state, GISTInsertStack *stack,
 							 left->buf, right->buf, false, false))
 		{
 			/*
-			 * If the parent page was split, the existing downlink might
-			 * have moved.
+			 * If the parent page was split, the existing downlink might have
+			 * moved.
 			 */
 			stack->downlinkoffnum = InvalidOffsetNumber;
 		}
 		/* gistinserttuples() released the lock on right->buf. */
-		reversed = list_delete_first(reversed);
 	}
 
-	right = (GISTPageSplitInfo *) linitial(reversed);
-	left = (GISTPageSplitInfo *) lsecond(reversed);
+	right = (GISTPageSplitInfo *) lsecond(splitinfo);
+	left = (GISTPageSplitInfo *) linitial(splitinfo);
 
 	/*
 	 * Finally insert downlink for the remaining right page and update the
@@ -1669,7 +1666,6 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 	int			ndeletable = 0;
 	OffsetNumber offnum,
 				maxoff;
-	TransactionId latestRemovedXid = InvalidTransactionId;
 
 	Assert(GistPageIsLeaf(page));
 
@@ -1688,13 +1684,15 @@ gistprunepage(Relation rel, Page page, Buffer buffer, Relation heapRel)
 			deletable[ndeletable++] = offnum;
 	}
 
-	if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
-		latestRemovedXid =
-			index_compute_xid_horizon_for_tuples(rel, heapRel, buffer,
-												 deletable, ndeletable);
-
 	if (ndeletable > 0)
 	{
+		TransactionId latestRemovedXid = InvalidTransactionId;
+
+		if (XLogStandbyInfoActive() && RelationNeedsWAL(rel))
+			latestRemovedXid =
+				index_compute_xid_horizon_for_tuples(rel, heapRel, buffer,
+													 deletable, ndeletable);
+
 		START_CRIT_SECTION();
 
 		PageIndexMultiDelete(page, deletable, ndeletable);

@@ -3,7 +3,7 @@
  * nodeHash.c
  *	  Routines to hash relations for hashjoin
  *
- * Portions Copyright (c) 1996-2019, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,10 +39,10 @@
 #include "port/atomics.h"
 #include "port/pg_bitutils.h"
 #include "utils/dynahash.h"
-#include "utils/memutils.h"
+#include "utils/guc.h"
 #include "utils/lsyscache.h"
+#include "utils/memutils.h"
 #include "utils/syscache.h"
-
 
 static void ExecHashIncreaseNumBatches(HashJoinTable hashtable);
 static void ExecHashIncreaseNumBuckets(HashJoinTable hashtable);
@@ -256,7 +256,7 @@ MultiExecParallelHash(HashState *node)
 			 * ExecHashTableCreate(), or someone else is doing that.  Either
 			 * way, wait for everyone to arrive here so we can proceed.
 			 */
-			BarrierArriveAndWait(build_barrier, WAIT_EVENT_HASH_BUILD_ALLOCATING);
+			BarrierArriveAndWait(build_barrier, WAIT_EVENT_HASH_BUILD_ALLOCATE);
 			/* Fall through. */
 
 		case PHJ_BUILD_HASHING_INNER:
@@ -312,7 +312,7 @@ MultiExecParallelHash(HashState *node)
 			 * counters.
 			 */
 			if (BarrierArriveAndWait(build_barrier,
-									 WAIT_EVENT_HASH_BUILD_HASHING_INNER))
+									 WAIT_EVENT_HASH_BUILD_HASH_INNER))
 			{
 				/*
 				 * Elect one backend to disable any further growth.  Batches
@@ -514,7 +514,7 @@ ExecHashTableCreate(HashState *state, List *hashOperators, List *hashCollations,
 	hashtable->spaceAllowed = space_allowed;
 	hashtable->spaceUsedSkew = 0;
 	hashtable->spaceAllowedSkew =
-		hashtable->spaceAllowed * SKEW_WORK_MEM_PERCENT / 100;
+		hashtable->spaceAllowed * SKEW_HASH_MEM_PERCENT / 100;
 	hashtable->chunks = NULL;
 	hashtable->current_chunk = NULL;
 	hashtable->parallel_state = state->parallel_state;
@@ -611,7 +611,7 @@ ExecHashTableCreate(HashState *state, List *hashOperators, List *hashCollations,
 		 * backend will be elected to do that now if necessary.
 		 */
 		if (BarrierPhase(build_barrier) == PHJ_BUILD_ELECTING &&
-			BarrierArriveAndWait(build_barrier, WAIT_EVENT_HASH_BUILD_ELECTING))
+			BarrierArriveAndWait(build_barrier, WAIT_EVENT_HASH_BUILD_ELECT))
 		{
 			pstate->nbatch = nbatch;
 			pstate->space_allowed = space_allowed;
@@ -673,7 +673,7 @@ ExecHashTableCreate(HashState *state, List *hashOperators, List *hashCollations,
 
 void
 ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
-						bool try_combined_work_mem,
+						bool try_combined_hash_mem,
 						int parallel_workers,
 						size_t *space_allowed,
 						int *numbuckets,
@@ -682,11 +682,9 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 {
 	int			tupsize;
 	double		inner_rel_bytes;
-	long		bucket_bytes;
-	long		hash_table_bytes;
-	long		skew_table_bytes;
-	long		max_pointers;
-	long		mppow2;
+	size_t		hash_table_bytes;
+	size_t		bucket_bytes;
+	size_t		max_pointers;
 	int			nbatch = 1;
 	int			nbuckets;
 	double		dbuckets;
@@ -706,17 +704,24 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 	inner_rel_bytes = ntuples * tupsize;
 
 	/*
-	 * Target in-memory hashtable size is work_mem kilobytes.
+	 * Compute in-memory hashtable size limit from GUCs.
 	 */
-	hash_table_bytes = work_mem * 1024L;
+	hash_table_bytes = get_hash_memory_limit();
 
 	/*
-	 * Parallel Hash tries to use the combined work_mem of all workers to
-	 * avoid the need to batch.  If that won't work, it falls back to work_mem
+	 * Parallel Hash tries to use the combined hash_mem of all workers to
+	 * avoid the need to batch.  If that won't work, it falls back to hash_mem
 	 * per worker and tries to process batches in parallel.
 	 */
-	if (try_combined_work_mem)
-		hash_table_bytes += hash_table_bytes * parallel_workers;
+	if (try_combined_hash_mem)
+	{
+		/* Careful, this could overflow size_t */
+		double		newlimit;
+
+		newlimit = (double) hash_table_bytes * (double) (parallel_workers + 1);
+		newlimit = Min(newlimit, (double) SIZE_MAX);
+		hash_table_bytes = (size_t) newlimit;
+	}
 
 	*space_allowed = hash_table_bytes;
 
@@ -736,9 +741,12 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 	 */
 	if (useskew)
 	{
-		skew_table_bytes = hash_table_bytes * SKEW_WORK_MEM_PERCENT / 100;
+		size_t		bytes_per_mcv;
+		size_t		skew_mcvs;
 
 		/*----------
+		 * Compute number of MCVs we could hold in hash_table_bytes
+		 *
 		 * Divisor is:
 		 * size of a hash tuple +
 		 * worst-case size of skewBucket[] per MCV +
@@ -746,12 +754,26 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 		 * size of skew bucket struct itself
 		 *----------
 		 */
-		*num_skew_mcvs = skew_table_bytes / (tupsize +
-											 (8 * sizeof(HashSkewBucket *)) +
-											 sizeof(int) +
-											 SKEW_BUCKET_OVERHEAD);
-		if (*num_skew_mcvs > 0)
-			hash_table_bytes -= skew_table_bytes;
+		bytes_per_mcv = tupsize +
+			(8 * sizeof(HashSkewBucket *)) +
+			sizeof(int) +
+			SKEW_BUCKET_OVERHEAD;
+		skew_mcvs = hash_table_bytes / bytes_per_mcv;
+
+		/*
+		 * Now scale by SKEW_HASH_MEM_PERCENT (we do it in this order so as
+		 * not to worry about size_t overflow in the multiplication)
+		 */
+		skew_mcvs = (skew_mcvs * SKEW_HASH_MEM_PERCENT) / 100;
+
+		/* Now clamp to integer range */
+		skew_mcvs = Min(skew_mcvs, INT_MAX);
+
+		*num_skew_mcvs = (int) skew_mcvs;
+
+		/* Reduce hash_table_bytes by the amount needed for the skew table */
+		if (skew_mcvs > 0)
+			hash_table_bytes -= skew_mcvs * bytes_per_mcv;
 	}
 	else
 		*num_skew_mcvs = 0;
@@ -759,22 +781,20 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 	/*
 	 * Set nbuckets to achieve an average bucket load of NTUP_PER_BUCKET when
 	 * memory is filled, assuming a single batch; but limit the value so that
-	 * the pointer arrays we'll try to allocate do not exceed work_mem nor
-	 * MaxAllocSize.
+	 * the pointer arrays we'll try to allocate do not exceed hash_table_bytes
+	 * nor MaxAllocSize.
 	 *
 	 * Note that both nbuckets and nbatch must be powers of 2 to make
 	 * ExecHashGetBucketAndBatch fast.
 	 */
-	max_pointers = *space_allowed / sizeof(HashJoinTuple);
+	max_pointers = hash_table_bytes / sizeof(HashJoinTuple);
 	max_pointers = Min(max_pointers, MaxAllocSize / sizeof(HashJoinTuple));
 	/* If max_pointers isn't a power of 2, must round it down to one */
-	mppow2 = 1L << my_log2(max_pointers);
-	if (max_pointers != mppow2)
-		max_pointers = mppow2 / 2;
+	max_pointers = pg_prevpower2_size_t(max_pointers);
 
 	/* Also ensure we avoid integer overflow in nbatch and nbuckets */
 	/* (this step is redundant given the current value of MaxAllocSize) */
-	max_pointers = Min(max_pointers, INT_MAX / 2);
+	max_pointers = Min(max_pointers, INT_MAX / 2 + 1);
 
 	dbuckets = ceil(ntuples / NTUP_PER_BUCKET);
 	dbuckets = Min(dbuckets, max_pointers);
@@ -782,7 +802,7 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 	/* don't let nbuckets be really small, though ... */
 	nbuckets = Max(nbuckets, 1024);
 	/* ... and force it to be a power of 2. */
-	nbuckets = 1 << my_log2(nbuckets);
+	nbuckets = pg_nextpower2_32(nbuckets);
 
 	/*
 	 * If there's not enough space to store the projected number of tuples and
@@ -792,16 +812,16 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 	if (inner_rel_bytes + bucket_bytes > hash_table_bytes)
 	{
 		/* We'll need multiple batches */
-		long		lbuckets;
+		size_t		sbuckets;
 		double		dbatch;
 		int			minbatch;
-		long		bucket_size;
+		size_t		bucket_size;
 
 		/*
-		 * If Parallel Hash with combined work_mem would still need multiple
-		 * batches, we'll have to fall back to regular work_mem budget.
+		 * If Parallel Hash with combined hash_mem would still need multiple
+		 * batches, we'll have to fall back to regular hash_mem budget.
 		 */
-		if (try_combined_work_mem)
+		if (try_combined_hash_mem)
 		{
 			ExecChooseHashTableSize(ntuples, tupwidth, useskew,
 									false, parallel_workers,
@@ -813,23 +833,26 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 		}
 
 		/*
-		 * Estimate the number of buckets we'll want to have when work_mem is
+		 * Estimate the number of buckets we'll want to have when hash_mem is
 		 * entirely full.  Each bucket will contain a bucket pointer plus
 		 * NTUP_PER_BUCKET tuples, whose projected size already includes
 		 * overhead for the hash code, pointer to the next tuple, etc.
 		 */
 		bucket_size = (tupsize * NTUP_PER_BUCKET + sizeof(HashJoinTuple));
-		lbuckets = 1L << my_log2(hash_table_bytes / bucket_size);
-		lbuckets = Min(lbuckets, max_pointers);
-		nbuckets = (int) lbuckets;
-		nbuckets = 1 << my_log2(nbuckets);
+		if (hash_table_bytes <= bucket_size)
+			sbuckets = 1;		/* avoid pg_nextpower2_size_t(0) */
+		else
+			sbuckets = pg_nextpower2_size_t(hash_table_bytes / bucket_size);
+		sbuckets = Min(sbuckets, max_pointers);
+		nbuckets = (int) sbuckets;
+		nbuckets = pg_nextpower2_32(nbuckets);
 		bucket_bytes = nbuckets * sizeof(HashJoinTuple);
 
 		/*
 		 * Buckets are simple pointers to hashjoin tuples, while tupsize
 		 * includes the pointer, hash code, and MinimalTupleData.  So buckets
-		 * should never really exceed 25% of work_mem (even for
-		 * NTUP_PER_BUCKET=1); except maybe for work_mem values that are not
+		 * should never really exceed 25% of hash_mem (even for
+		 * NTUP_PER_BUCKET=1); except maybe for hash_mem values that are not
 		 * 2^N bytes, where we might get more because of doubling. So let's
 		 * look for 50% here.
 		 */
@@ -839,9 +862,7 @@ ExecChooseHashTableSize(double ntuples, int tupwidth, bool useskew,
 		dbatch = ceil(inner_rel_bytes / (hash_table_bytes - bucket_bytes));
 		dbatch = Min(dbatch, max_pointers);
 		minbatch = (int) dbatch;
-		nbatch = 2;
-		while (nbatch < minbatch)
-			nbatch <<= 1;
+		nbatch = pg_nextpower2_32(Max(2, minbatch));
 	}
 
 	Assert(nbuckets > 0);
@@ -1086,7 +1107,7 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 			 * tuples.
 			 */
 			if (BarrierArriveAndWait(&pstate->grow_batches_barrier,
-									 WAIT_EVENT_HASH_GROW_BATCHES_ELECTING))
+									 WAIT_EVENT_HASH_GROW_BATCHES_ELECT))
 			{
 				dsa_pointer_atomic *buckets;
 				ParallelHashJoinBatch *old_batch0;
@@ -1108,18 +1129,18 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 					/*
 					 * We are going from single-batch to multi-batch.  We need
 					 * to switch from one large combined memory budget to the
-					 * regular work_mem budget.
+					 * regular hash_mem budget.
 					 */
-					pstate->space_allowed = work_mem * 1024L;
+					pstate->space_allowed = get_hash_memory_limit();
 
 					/*
-					 * The combined work_mem of all participants wasn't
+					 * The combined hash_mem of all participants wasn't
 					 * enough. Therefore one batch per participant would be
 					 * approximately equivalent and would probably also be
 					 * insufficient.  So try two batches per participant,
 					 * rounded up to a power of two.
 					 */
-					new_nbatch = 1 << my_log2(pstate->nparticipants * 2);
+					new_nbatch = pg_nextpower2_32(pstate->nparticipants * 2);
 				}
 				else
 				{
@@ -1161,14 +1182,13 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 					 * maximum number to the previous power of 2 given that
 					 * later we round the number to the next power of 2.
 					 */
-					max_buckets = MaxAllocSize / sizeof(dsa_pointer_atomic);
-					if ((max_buckets & (max_buckets - 1)) != 0)
-						max_buckets = 1 << (my_log2(max_buckets) - 1);
+					max_buckets = pg_prevpower2_32((uint32)
+												   (MaxAllocSize / sizeof(dsa_pointer_atomic)));
 					dbuckets = ceil(dtuples / NTUP_PER_BUCKET);
 					dbuckets = Min(dbuckets, max_buckets);
 					new_nbuckets = (int) dbuckets;
 					new_nbuckets = Max(new_nbuckets, 1024);
-					new_nbuckets = 1 << my_log2(new_nbuckets);
+					new_nbuckets = pg_nextpower2_32(new_nbuckets);
 					dsa_free(hashtable->area, old_batch0->buckets);
 					hashtable->batches[0].shared->buckets =
 						dsa_allocate(hashtable->area,
@@ -1206,7 +1226,7 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 		case PHJ_GROW_BATCHES_ALLOCATING:
 			/* Wait for the above to be finished. */
 			BarrierArriveAndWait(&pstate->grow_batches_barrier,
-								 WAIT_EVENT_HASH_GROW_BATCHES_ALLOCATING);
+								 WAIT_EVENT_HASH_GROW_BATCHES_ALLOCATE);
 			/* Fall through. */
 
 		case PHJ_GROW_BATCHES_REPARTITIONING:
@@ -1219,7 +1239,7 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 			ExecParallelHashMergeCounters(hashtable);
 			/* Wait for the above to be finished. */
 			BarrierArriveAndWait(&pstate->grow_batches_barrier,
-								 WAIT_EVENT_HASH_GROW_BATCHES_REPARTITIONING);
+								 WAIT_EVENT_HASH_GROW_BATCHES_REPARTITION);
 			/* Fall through. */
 
 		case PHJ_GROW_BATCHES_DECIDING:
@@ -1230,8 +1250,9 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 			 * not helping.
 			 */
 			if (BarrierArriveAndWait(&pstate->grow_batches_barrier,
-									 WAIT_EVENT_HASH_GROW_BATCHES_DECIDING))
+									 WAIT_EVENT_HASH_GROW_BATCHES_DECIDE))
 			{
+				ParallelHashJoinBatch *old_batches;
 				bool		space_exhausted = false;
 				bool		extreme_skew_detected = false;
 
@@ -1239,25 +1260,31 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 				ExecParallelHashEnsureBatchAccessors(hashtable);
 				ExecParallelHashTableSetCurrentBatch(hashtable, 0);
 
+				old_batches = dsa_get_address(hashtable->area, pstate->old_batches);
+
 				/* Are any of the new generation of batches exhausted? */
 				for (i = 0; i < hashtable->nbatch; ++i)
 				{
-					ParallelHashJoinBatch *batch = hashtable->batches[i].shared;
+					ParallelHashJoinBatch *batch;
+					ParallelHashJoinBatch *old_batch;
+					int			parent;
 
+					batch = hashtable->batches[i].shared;
 					if (batch->space_exhausted ||
 						batch->estimated_size > pstate->space_allowed)
-					{
-						int			parent;
-
 						space_exhausted = true;
 
+					parent = i % pstate->old_nbatch;
+					old_batch = NthParallelHashJoinBatch(old_batches, parent);
+					if (old_batch->space_exhausted ||
+						batch->estimated_size > pstate->space_allowed)
+					{
 						/*
 						 * Did this batch receive ALL of the tuples from its
 						 * parent batch?  That would indicate that further
 						 * repartitioning isn't going to help (the hash values
 						 * are probably all the same).
 						 */
-						parent = i % pstate->old_nbatch;
 						if (batch->ntuples == hashtable->batches[parent].shared->old_ntuples)
 							extreme_skew_detected = true;
 					}
@@ -1280,7 +1307,7 @@ ExecParallelHashIncreaseNumBatches(HashJoinTable hashtable)
 		case PHJ_GROW_BATCHES_FINISHING:
 			/* Wait for the above to complete. */
 			BarrierArriveAndWait(&pstate->grow_batches_barrier,
-								 WAIT_EVENT_HASH_GROW_BATCHES_FINISHING);
+								 WAIT_EVENT_HASH_GROW_BATCHES_FINISH);
 	}
 }
 
@@ -1529,7 +1556,7 @@ ExecParallelHashIncreaseNumBuckets(HashJoinTable hashtable)
 		case PHJ_GROW_BUCKETS_ELECTING:
 			/* Elect one participant to prepare to increase nbuckets. */
 			if (BarrierArriveAndWait(&pstate->grow_buckets_barrier,
-									 WAIT_EVENT_HASH_GROW_BUCKETS_ELECTING))
+									 WAIT_EVENT_HASH_GROW_BUCKETS_ELECT))
 			{
 				size_t		size;
 				dsa_pointer_atomic *buckets;
@@ -1558,7 +1585,7 @@ ExecParallelHashIncreaseNumBuckets(HashJoinTable hashtable)
 		case PHJ_GROW_BUCKETS_ALLOCATING:
 			/* Wait for the above to complete. */
 			BarrierArriveAndWait(&pstate->grow_buckets_barrier,
-								 WAIT_EVENT_HASH_GROW_BUCKETS_ALLOCATING);
+								 WAIT_EVENT_HASH_GROW_BUCKETS_ALLOCATE);
 			/* Fall through. */
 
 		case PHJ_GROW_BUCKETS_REINSERTING:
@@ -1593,7 +1620,7 @@ ExecParallelHashIncreaseNumBuckets(HashJoinTable hashtable)
 				CHECK_FOR_INTERRUPTS();
 			}
 			BarrierArriveAndWait(&pstate->grow_buckets_barrier,
-								 WAIT_EVENT_HASH_GROW_BUCKETS_REINSERTING);
+								 WAIT_EVENT_HASH_GROW_BUCKETS_REINSERT);
 	}
 }
 
@@ -1839,8 +1866,8 @@ ExecHashGetHashValue(HashJoinTable hashtable,
 		Datum		keyval;
 		bool		isNull;
 
-		/* rotate hashkey left 1 bit at each step */
-		hashkey = (hashkey << 1) | ((hashkey & 0x80000000) ? 1 : 0);
+		/* combine successive hashkeys by rotating */
+		hashkey = pg_rotate_left32(hashkey, 1);
 
 		/*
 		 * Get the join attribute value of the tuple
@@ -2299,9 +2326,7 @@ ExecHashBuildSkewHash(HashJoinTable hashtable, Hash *node, int mcvsToUse)
 		 * MaxAllocSize/sizeof(void *)/8, but that is not currently possible
 		 * since we limit pg_statistic entries to much less than that.
 		 */
-		nbuckets = 2;
-		while (nbuckets <= mcvsToUse)
-			nbuckets <<= 1;
+		nbuckets = pg_nextpower2_32(mcvsToUse + 1);
 		/* use two more bits just to help avoid collisions */
 		nbuckets <<= 2;
 
@@ -2628,7 +2653,10 @@ ExecHashInitializeDSM(HashState *node, ParallelContext *pcxt)
 	size = offsetof(SharedHashInfo, hinstrument) +
 		pcxt->nworkers * sizeof(HashInstrumentation);
 	node->shared_info = (SharedHashInfo *) shm_toc_allocate(pcxt->toc, size);
+
+	/* Each per-worker area must start out as zeroes. */
 	memset(node->shared_info, 0, size);
+
 	node->shared_info->num_workers = pcxt->nworkers;
 	shm_toc_insert(pcxt->toc, node->ps.plan->plan_node_id,
 				   node->shared_info);
@@ -2647,22 +2675,33 @@ ExecHashInitializeWorker(HashState *node, ParallelWorkerContext *pwcxt)
 	if (!node->ps.instrument)
 		return;
 
+	/*
+	 * Find our entry in the shared area, and set up a pointer to it so that
+	 * we'll accumulate stats there when shutting down or rebuilding the hash
+	 * table.
+	 */
 	shared_info = (SharedHashInfo *)
 		shm_toc_lookup(pwcxt->toc, node->ps.plan->plan_node_id, false);
 	node->hinstrument = &shared_info->hinstrument[ParallelWorkerNumber];
 }
 
 /*
- * Copy instrumentation data from this worker's hash table (if it built one)
- * to DSM memory so the leader can retrieve it.  This must be done in an
- * ExecShutdownHash() rather than ExecEndHash() because the latter runs after
- * we've detached from the DSM segment.
+ * Collect EXPLAIN stats if needed, saving them into DSM memory if
+ * ExecHashInitializeWorker was called, or local storage if not.  In the
+ * parallel case, this must be done in ExecShutdownHash() rather than
+ * ExecEndHash() because the latter runs after we've detached from the DSM
+ * segment.
  */
 void
 ExecShutdownHash(HashState *node)
 {
+	/* Allocate save space if EXPLAIN'ing and we didn't do so already */
+	if (node->ps.instrument && !node->hinstrument)
+		node->hinstrument = (HashInstrumentation *)
+			palloc0(sizeof(HashInstrumentation));
+	/* Now accumulate data for the current (final) hash table */
 	if (node->hinstrument && node->hashtable)
-		ExecHashGetInstrumentation(node->hinstrument, node->hashtable);
+		ExecHashAccumInstrumentation(node->hinstrument, node->hashtable);
 }
 
 /*
@@ -2686,18 +2725,34 @@ ExecHashRetrieveInstrumentation(HashState *node)
 }
 
 /*
- * Copy the instrumentation data from 'hashtable' into a HashInstrumentation
- * struct.
+ * Accumulate instrumentation data from 'hashtable' into an
+ * initially-zeroed HashInstrumentation struct.
+ *
+ * This is used to merge information across successive hash table instances
+ * within a single plan node.  We take the maximum values of each interesting
+ * number.  The largest nbuckets and largest nbatch values might have occurred
+ * in different instances, so there's some risk of confusion from reporting
+ * unrelated numbers; but there's a bigger risk of misdiagnosing a performance
+ * issue if we don't report the largest values.  Similarly, we want to report
+ * the largest spacePeak regardless of whether it happened in the same
+ * instance as the largest nbuckets or nbatch.  All the instances should have
+ * the same nbuckets_original and nbatch_original; but there's little value
+ * in depending on that here, so handle them the same way.
  */
 void
-ExecHashGetInstrumentation(HashInstrumentation *instrument,
-						   HashJoinTable hashtable)
+ExecHashAccumInstrumentation(HashInstrumentation *instrument,
+							 HashJoinTable hashtable)
 {
-	instrument->nbuckets = hashtable->nbuckets;
-	instrument->nbuckets_original = hashtable->nbuckets_original;
-	instrument->nbatch = hashtable->nbatch;
-	instrument->nbatch_original = hashtable->nbatch_original;
-	instrument->space_peak = hashtable->spacePeak;
+	instrument->nbuckets = Max(instrument->nbuckets,
+							   hashtable->nbuckets);
+	instrument->nbuckets_original = Max(instrument->nbuckets_original,
+										hashtable->nbuckets_original);
+	instrument->nbatch = Max(instrument->nbatch,
+							 hashtable->nbatch);
+	instrument->nbatch_original = Max(instrument->nbatch_original,
+									  hashtable->nbatch_original);
+	instrument->space_peak = Max(instrument->space_peak,
+								 hashtable->spacePeak);
 }
 
 /*
@@ -2856,7 +2911,7 @@ ExecParallelHashTupleAlloc(HashJoinTable hashtable, size_t size,
 
 		/*
 		 * Check if our space limit would be exceeded.  To avoid choking on
-		 * very large tuples or very low work_mem setting, we'll always allow
+		 * very large tuples or very low hash_mem setting, we'll always allow
 		 * each backend to allocate at least one chunk.
 		 */
 		if (hashtable->batches[0].at_least_one_chunk &&
@@ -3377,4 +3432,27 @@ ExecParallelHashTuplePrealloc(HashJoinTable hashtable, int batchno, size_t size)
 	LWLockRelease(&pstate->lock);
 
 	return true;
+}
+
+/*
+ * Calculate the limit on how much memory can be used by Hash and similar
+ * plan types.  This is work_mem times hash_mem_multiplier, and is
+ * expressed in bytes.
+ *
+ * Exported for use by the planner, as well as other hash-like executor
+ * nodes.  This is a rather random place for this, but there is no better
+ * place.
+ */
+size_t
+get_hash_memory_limit(void)
+{
+	double		mem_limit;
+
+	/* Do initial calculation in double arithmetic */
+	mem_limit = (double) work_mem * hash_mem_multiplier * 1024.0;
+
+	/* Clamp in case it doesn't fit in size_t */
+	mem_limit = Min(mem_limit, (double) SIZE_MAX);
+
+	return (size_t) mem_limit;
 }

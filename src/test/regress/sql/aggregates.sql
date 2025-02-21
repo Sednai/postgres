@@ -2,8 +2,23 @@
 -- AGGREGATES
 --
 
+-- directory paths are passed to us in environment variables
+\getenv abs_srcdir PG_ABS_SRCDIR
+
 -- avoid bit-exact output here because operations may not be bit-exact.
 SET extra_float_digits = 0;
+
+-- prepare some test data
+CREATE TABLE aggtest (
+	a 			int2,
+	b			float4
+);
+
+\set filename :abs_srcdir '/data/agg.data'
+COPY aggtest FROM :'filename';
+
+ANALYZE aggtest;
+
 
 SELECT avg(four) AS avg_1 FROM onek;
 
@@ -53,6 +68,8 @@ SELECT var_pop('nan'::float4), var_samp('nan'::float4);
 SELECT stddev_pop('nan'::float4), stddev_samp('nan'::float4);
 SELECT var_pop(1.0::numeric), var_samp(2.0::numeric);
 SELECT stddev_pop(3.0::numeric), stddev_samp(4.0::numeric);
+SELECT var_pop('inf'::numeric), var_samp('inf'::numeric);
+SELECT stddev_pop('inf'::numeric), stddev_samp('inf'::numeric);
 SELECT var_pop('nan'::numeric), var_samp('nan'::numeric);
 SELECT stddev_pop('nan'::numeric), stddev_samp('nan'::numeric);
 
@@ -69,14 +86,26 @@ select sum('NaN'::numeric) from generate_series(1,3);
 select avg('NaN'::numeric) from generate_series(1,3);
 
 -- verify correct results for infinite inputs
-SELECT avg(x::float8), var_pop(x::float8)
+SELECT sum(x::float8), avg(x::float8), var_pop(x::float8)
 FROM (VALUES ('1'), ('infinity')) v(x);
-SELECT avg(x::float8), var_pop(x::float8)
+SELECT sum(x::float8), avg(x::float8), var_pop(x::float8)
 FROM (VALUES ('infinity'), ('1')) v(x);
-SELECT avg(x::float8), var_pop(x::float8)
+SELECT sum(x::float8), avg(x::float8), var_pop(x::float8)
 FROM (VALUES ('infinity'), ('infinity')) v(x);
-SELECT avg(x::float8), var_pop(x::float8)
+SELECT sum(x::float8), avg(x::float8), var_pop(x::float8)
 FROM (VALUES ('-infinity'), ('infinity')) v(x);
+SELECT sum(x::float8), avg(x::float8), var_pop(x::float8)
+FROM (VALUES ('-infinity'), ('-infinity')) v(x);
+SELECT sum(x::numeric), avg(x::numeric), var_pop(x::numeric)
+FROM (VALUES ('1'), ('infinity')) v(x);
+SELECT sum(x::numeric), avg(x::numeric), var_pop(x::numeric)
+FROM (VALUES ('infinity'), ('1')) v(x);
+SELECT sum(x::numeric), avg(x::numeric), var_pop(x::numeric)
+FROM (VALUES ('infinity'), ('infinity')) v(x);
+SELECT sum(x::numeric), avg(x::numeric), var_pop(x::numeric)
+FROM (VALUES ('-infinity'), ('infinity')) v(x);
+SELECT sum(x::numeric), avg(x::numeric), var_pop(x::numeric)
+FROM (VALUES ('-infinity'), ('-infinity')) v(x);
 
 -- test accuracy with a large input offset
 SELECT avg(x::float8), var_pop(x::float8)
@@ -198,7 +227,8 @@ CREATE TEMPORARY TABLE bitwise_test(
 -- empty case
 SELECT
   BIT_AND(i2) AS "?",
-  BIT_OR(i4)  AS "?"
+  BIT_OR(i4)  AS "?",
+  BIT_XOR(i8) AS "?"
 FROM bitwise_test;
 
 COPY bitwise_test FROM STDIN NULL 'null';
@@ -220,7 +250,14 @@ SELECT
   BIT_OR(i8)  AS "7",
   BIT_OR(i)   AS "?",
   BIT_OR(x)   AS "7",
-  BIT_OR(y)   AS "1101"
+  BIT_OR(y)   AS "1101",
+
+  BIT_XOR(i2) AS "5",
+  BIT_XOR(i4) AS "5",
+  BIT_XOR(i8) AS "5",
+  BIT_XOR(i)  AS "?",
+  BIT_XOR(x)  AS "7",
+  BIT_XOR(y)  AS "1101"
 FROM bitwise_test;
 
 --
@@ -463,6 +500,21 @@ drop table t1 cascade;
 drop table t2;
 drop table t3;
 drop table p_t1;
+
+--
+-- Test GROUP BY matching of join columns that are type-coerced due to USING
+--
+
+create temp table t1(f1 int, f2 bigint);
+create temp table t2(f1 bigint, f22 bigint);
+
+select f1 from t1 left join t2 using (f1) group by f1;
+select f1 from t1 left join t2 using (f1) group by t1.f1;
+select t1.f1 from t1 left join t2 using (f1) group by t1.f1;
+-- only this one should fail:
+select t1.f1 from t1 left join t2 using (f1) group by f1;
+
+drop table t1, t2;
 
 --
 -- Test combinations of DISTINCT and/or ORDER BY
@@ -768,6 +820,10 @@ drop view aggordview1;
 select least_agg(q1,q2) from int8_tbl;
 select least_agg(variadic array[q1,q2]) from int8_tbl;
 
+select cleast_agg(q1,q2) from int8_tbl;
+select cleast_agg(4.5,f1) from int4_tbl;
+select cleast_agg(variadic array[4.5,f1]) from int4_tbl;
+select pg_typeof(cleast_agg(variadic array[4.5,f1])) from int4_tbl;
 
 -- test aggregates with common transition functions share the same states
 begin work;
@@ -985,7 +1041,7 @@ ROLLBACK;
 -- Secondly test the case of a parallel aggregate combiner function
 -- returning NULL. For that use normal transition function, but a
 -- combiner function returning NULL.
-BEGIN ISOLATION LEVEL REPEATABLE READ;
+BEGIN;
 CREATE FUNCTION balkifnull(int8, int8)
 RETURNS int8
 PARALLEL SAFE
@@ -1018,7 +1074,7 @@ SELECT balk(hundred) FROM tenk1;
 ROLLBACK;
 
 -- test coverage for aggregate combine/serial/deserial functions
-BEGIN ISOLATION LEVEL REPEATABLE READ;
+BEGIN;
 
 SET parallel_setup_cost = 0;
 SET parallel_tuple_cost = 0;
@@ -1081,6 +1137,139 @@ select v||'a', case when v||'a' = 'aa' then 1 else 0 end, count(*)
 -- Make sure that generation of HashAggregate for uniqification purposes
 -- does not lead to array overflow due to unexpected duplicate hash keys
 -- see CAFeeJoKKu0u+A_A9R9316djW-YW3-+Gtgvy3ju655qRHR3jtdA@mail.gmail.com
+set enable_memoize to off;
 explain (costs off)
   select 1 from tenk1
    where (hundred, thousand) in (select twothousand, twothousand from onek);
+reset enable_memoize;
+
+--
+-- Hash Aggregation Spill tests
+--
+
+set enable_sort=false;
+set work_mem='64kB';
+
+select unique1, count(*), sum(twothousand) from tenk1
+group by unique1
+having sum(fivethous) > 4975
+order by sum(twothousand);
+
+set work_mem to default;
+set enable_sort to default;
+
+--
+-- Compare results between plans using sorting and plans using hash
+-- aggregation. Force spilling in both cases by setting work_mem low.
+--
+
+set work_mem='64kB';
+
+create table agg_data_2k as
+select g from generate_series(0, 1999) g;
+analyze agg_data_2k;
+
+create table agg_data_20k as
+select g from generate_series(0, 19999) g;
+analyze agg_data_20k;
+
+-- Produce results with sorting.
+
+set enable_hashagg = false;
+
+set jit_above_cost = 0;
+
+explain (costs off)
+select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
+  from agg_data_20k group by g%10000;
+
+create table agg_group_1 as
+select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
+  from agg_data_20k group by g%10000;
+
+create table agg_group_2 as
+select * from
+  (values (100), (300), (500)) as r(a),
+  lateral (
+    select (g/2)::numeric as c1,
+           array_agg(g::numeric) as c2,
+	   count(*) as c3
+    from agg_data_2k
+    where g < r.a
+    group by g/2) as s;
+
+set jit_above_cost to default;
+
+create table agg_group_3 as
+select (g/2)::numeric as c1, sum(7::int4) as c2, count(*) as c3
+  from agg_data_2k group by g/2;
+
+create table agg_group_4 as
+select (g/2)::numeric as c1, array_agg(g::numeric) as c2, count(*) as c3
+  from agg_data_2k group by g/2;
+
+-- Produce results with hash aggregation
+
+set enable_hashagg = true;
+set enable_sort = false;
+
+set jit_above_cost = 0;
+
+explain (costs off)
+select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
+  from agg_data_20k group by g%10000;
+
+create table agg_hash_1 as
+select g%10000 as c1, sum(g::numeric) as c2, count(*) as c3
+  from agg_data_20k group by g%10000;
+
+create table agg_hash_2 as
+select * from
+  (values (100), (300), (500)) as r(a),
+  lateral (
+    select (g/2)::numeric as c1,
+           array_agg(g::numeric) as c2,
+	   count(*) as c3
+    from agg_data_2k
+    where g < r.a
+    group by g/2) as s;
+
+set jit_above_cost to default;
+
+create table agg_hash_3 as
+select (g/2)::numeric as c1, sum(7::int4) as c2, count(*) as c3
+  from agg_data_2k group by g/2;
+
+create table agg_hash_4 as
+select (g/2)::numeric as c1, array_agg(g::numeric) as c2, count(*) as c3
+  from agg_data_2k group by g/2;
+
+set enable_sort = true;
+set work_mem to default;
+
+-- Compare group aggregation results to hash aggregation results
+
+(select * from agg_hash_1 except select * from agg_group_1)
+  union all
+(select * from agg_group_1 except select * from agg_hash_1);
+
+(select * from agg_hash_2 except select * from agg_group_2)
+  union all
+(select * from agg_group_2 except select * from agg_hash_2);
+
+(select * from agg_hash_3 except select * from agg_group_3)
+  union all
+(select * from agg_group_3 except select * from agg_hash_3);
+
+(select * from agg_hash_4 except select * from agg_group_4)
+  union all
+(select * from agg_group_4 except select * from agg_hash_4);
+
+drop table agg_group_1;
+drop table agg_group_2;
+drop table agg_group_3;
+drop table agg_group_4;
+drop table agg_hash_1;
+drop table agg_hash_2;
+drop table agg_hash_3;
+drop table agg_hash_4;
