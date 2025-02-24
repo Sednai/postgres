@@ -60,7 +60,6 @@
 #define FirstNormalFullTransactionId	FullTransactionIdFromEpochAndXid(0, FirstNormalTransactionId)
 #define FullTransactionIdIsNormal(x)	FullTransactionIdFollowsOrEquals(x, FirstNormalFullTransactionId)
 #ifdef PGXC
-#define FullTransactionIdEquals(id1, id2)	((id1).value == (id2).value)
 #define FullTransactionIdPrecedesOrEquals(a, b)	((a).value <= (b).value)
 #define FullTransactionIdFollowsOrEquals(a, b)	((a).value >= (b).value)
 #endif

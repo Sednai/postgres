@@ -86,7 +86,7 @@ typedef struct RunningTransactionsData
 {
 	int			xcnt;			/* # of xact ids in xids[] */
 	int			subxcnt;		/* # of subxact ids in xids[] */
-	subxids_array_status subxid_status;
+	bool		subxid_overflow;	/* snapshot overflowed, subxids missing */
 	TransactionId nextXid;		/* xid from ShmemVariableCache->nextXid */
 	TransactionId oldestRunningXid; /* *not* oldestXmin */
 	TransactionId latestCompletedXid;	/* so we can set xmax */

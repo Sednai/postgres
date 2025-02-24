@@ -150,7 +150,6 @@ typedef enum LockTagType
 	LOCKTAG_OBJECT,				/* non-relation database object */
 	LOCKTAG_USERLOCK,			/* reserved for old contrib/userlock code */
 	LOCKTAG_ADVISORY,			/* advisory user locks */
-	LOCKTAG_DATABASE_FROZEN_IDS	/* pg_database.datfrozenxid */
 } LockTagType;
 
 #define LOCKTAG_LAST_TYPE	LOCKTAG_DATABASE_FROZEN_IDS

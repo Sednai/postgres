@@ -3714,8 +3714,8 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 		save_nestlevel = NewGUCNestLevel();
 
 		/* determine safety of this index for set_indexsafe_procflags */
-		idx->safe = (RelationGetIndexExpressions(indexRel) == NIL &&
-					 RelationGetIndexPredicate(indexRel) == NIL);
+		idx->safe = (indexRel->rd_indexprs == NIL &&
+					 indexRel->rd_indpred == NIL);
 		idx->tableId = RelationGetRelid(heapRel);
 		idx->amId = indexRel->rd_rel->relam;
 
@@ -3944,18 +3944,6 @@ ReindexRelationConcurrently(Oid relationOid, ReindexParams *params)
 		 */
 		snapshot = RegisterSnapshot(GetTransactionSnapshot());
 		PushActiveSnapshot(snapshot);
-
-		
-		/*
-		 * Update progress for the index to build, with the correct parent
-		 * table involved.
-		 */
-		pgstat_progress_start_command(PROGRESS_COMMAND_CREATE_INDEX, heapId);
-		progress_vals[0] = PROGRESS_CREATEIDX_COMMAND_REINDEX_CONCURRENTLY;
-		progress_vals[1] = PROGRESS_CREATEIDX_PHASE_VALIDATE_IDXSCAN;
-		progress_vals[2] = newIndexId;
-		progress_vals[3] = indexam;
-		pgstat_progress_update_multi_param(4, progress_index, progress_vals);
 
 		/*
 		 * Update progress for the index to build, with the correct parent

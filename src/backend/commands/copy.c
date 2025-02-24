@@ -817,13 +817,14 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 }
 
 #ifdef PGXC
+/*
 static RemoteCopyOptions *
 GetRemoteCopyOptions(CopyState cstate)
 {
 	RemoteCopyOptions *res = makeRemoteCopyOptions();
 	Assert(cstate);
 
-	/* Then fill in structure */
+	// Then fill in structure
 	res->rco_binary = cstate->binary;
 	res->rco_csv_mode = cstate->csv_mode;
 	if (cstate->delim)
@@ -841,6 +842,7 @@ GetRemoteCopyOptions(CopyState cstate)
 
 	return res;
 }
+*/
 
 /* Convenience wrapper around DataNodeCopyBegin() */
 extern void

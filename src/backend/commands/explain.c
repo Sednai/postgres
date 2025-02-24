@@ -278,10 +278,10 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 	 * plancache.c.
 	 */
 #ifdef PGXC
-Query *query = castNode(Query, copyObject(stmt->query));
-if (query->commandType == CMD_UTILITY &&
-		IsA(query->utilityStmt, CreateTableAsStmt) &&
-		((CreateTableAsStmt *)query->utilityStmt)->relkind != OBJECT_MATVIEW)
+Query *pquery = castNode(Query, copyObject(stmt->query));
+if (pquery->commandType == CMD_UTILITY &&
+		IsA(pquery->utilityStmt, CreateTableAsStmt) &&
+		((CreateTableAsStmt *)pquery->utilityStmt)->objtype != OBJECT_MATVIEW)
 			rewritten = QueryRewriteCTAS( castNode(Query, copyObject(stmt->query)), es->analyze);
 	else
 #endif

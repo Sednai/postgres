@@ -1002,7 +1002,7 @@ extern void
 pgxc_fill_matview_by_copy(DestReceiver *mv_dest, bool skipdata, int operation,
 							TupleDesc tupdesc)
 {
-	CopyState	cstate;
+	CopyFromState	cstate;
 	Relation	mv_rel = NULL;
 	TupleDesc	tupDesc;
 	Datum		*values;
@@ -1042,7 +1042,7 @@ pgxc_fill_matview_by_copy(DestReceiver *mv_dest, bool skipdata, int operation,
 		 * coordinator through COPY protocol.
 		 */
 		pstate = make_parsestate(NULL);
-		cstate = BeginCopyFrom(pstate, mv_rel, NULL, false, NULL, NULL, NIL);
+		cstate = BeginCopyFrom(pstate, mv_rel, NULL, NULL, false, NULL, NULL, NIL);
 		/* Read the rows one by one and insert into the materialized view */
 		for(;;)
 		{

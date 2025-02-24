@@ -237,19 +237,6 @@ StartupProcExit(int code, Datum arg)
 }
 
 
-/* --------------------------------
- *		signal handler routines
- * --------------------------------
- */
-static void
-StartupProcExit(int code, Datum arg)
-{
-	/* Shutdown the recovery environment */
-	if (standbyState != STANDBY_DISABLED)
-		ShutdownRecoveryTransactionEnvironment();
-}
-
-
 /* ----------------------------------
  *	Startup Process main entry point
  * ----------------------------------

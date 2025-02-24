@@ -335,7 +335,7 @@ ExecCreateTableAs(ParseState *pstate, CreateTableAsStmt *stmt,
 #ifdef PGXC
 	/* The data for materialized view comes from the initialising coordinator */
 	if (IS_PGXC_COORDINATOR &&
-		stmt->relkind == OBJECT_MATVIEW &&
+		stmt->objtype == OBJECT_MATVIEW &&
 		IsConnFromCoord())
 	{
 		/* We need ExecutorStart to build the tuple descriptor only */

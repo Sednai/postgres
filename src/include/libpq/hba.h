@@ -120,8 +120,6 @@ typedef struct HbaLine
 	char	   *radiusidentifiers_s;
 	List	   *radiusports;
 	char	   *radiusports_s;
-	int			addrlen;		/* zero if we don't have a valid addr */
-	int			masklen;		/* zero if we don't have a valid mask */
 } HbaLine;
 
 typedef struct IdentLine

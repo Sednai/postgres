@@ -354,7 +354,7 @@ ExtendSUBTRANS(TransactionId newestXact)
 	if (SubTransCtl->shared->latest_page_number - pageno <= SUBTRANS_WRAP_CHECK_DELTA 
 			&& pageno <= SubTransCtl->shared->latest_page_number)
 	{
-		LWLockRelease(SubtransControlLock);
+		LWLockRelease(SubtransSLRULock);
 		return;
 	}
 #endif

@@ -41,7 +41,6 @@
 #include "utils/date.h"
 #endif
 #include "utils/float.h"
-#include "utils/hashutils.h"
 #include "utils/pg_locale.h"
 
 /*

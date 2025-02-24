@@ -2274,7 +2274,6 @@ movedb_success_callback(Oid db_id, Oid src_tblspcoid)
 								 AccessExclusiveLock);
 	
 	pfree(src_dbpath);
-	pfree(dst_dbpath);
 }
 
 #ifdef PGXC

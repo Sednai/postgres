@@ -146,7 +146,7 @@ GetNewTransactionId(bool isSubXact)
 			 * being handled on GTM side even if the lock is acquired in a different
 			 * order.
 			 */
-			if (IsAutoVacuumWorkerProcess() && (MyPgXact->vacuumFlags & PROC_IN_VACUUM))
+			if (IsAutoVacuumWorkerProcess() && (MyProc->statusFlags & PROC_IN_VACUUM))
 				full_xid = BeginTranAutovacuumGTM();
 				
 			else
@@ -166,26 +166,26 @@ GetNewTransactionId(bool isSubXact)
 			if (FullTransactionIdIsValid(full_xid))
 			{
 				/* Log some information about the new transaction ID obtained */
-				if (IsAutoVacuumWorkerProcess() && (MyPgXact->vacuumFlags & PROC_IN_VACUUM))
+				if (IsAutoVacuumWorkerProcess() && (MyProc->statusFlags & PROC_IN_VACUUM))
 					elog(DEBUG1, "Assigned new FullTransaction ID from GTM for autovacuum = %lu", full_xid.value);
 				else
 					elog(DEBUG1, "Assigned new FullTransaction ID from GTM = %lu", full_xid.value);
 				
-				if (!FullTransactionIdFollowsOrEquals(full_xid, ShmemVariableCache->nextFullXid))
+				if (!FullTransactionIdFollowsOrEquals(full_xid, ShmemVariableCache->nextXid))
 				{
 					increment_xid = false;
 					LWLockRelease(XidGenLock);
 					
 					/* It is a serious issue when xid fall back, so here we write a message to record this */
 					ereport(DEBUG1,
-					   (errmsg("full_xid (%lu) was less than ShmemVariableCache->nextFullXid (%lu), IS_PGXC_COORDINATOR:%d, IS_PGXC_DATANODE:%d, REMOTE_CONN_TYPE:%d, regen now",
-						   full_xid.value, ShmemVariableCache->nextFullXid.value, IS_PGXC_COORDINATOR, IS_PGXC_DATANODE, REMOTE_CONN_TYPE)));
+					   (errmsg("full_xid (%lu) was less than ShmemVariableCache->nextXid (%lu), IS_PGXC_COORDINATOR:%d, IS_PGXC_DATANODE:%d, REMOTE_CONN_TYPE:%d, regen now",
+						   full_xid.value, ShmemVariableCache->nextXid.value, IS_PGXC_COORDINATOR, IS_PGXC_DATANODE, REMOTE_CONN_TYPE)));
 
 					/* here, we get a fallback xid, reget a new one to avoid data corruption */
 					continue;					 
 				}
 				else
-					ShmemVariableCache->nextFullXid = full_xid;
+					ShmemVariableCache->nextXid = full_xid;
 			}
 			else
 			{
@@ -207,7 +207,7 @@ GetNewTransactionId(bool isSubXact)
 				 * from snapshots so use a special function for this purpose.
 				 * For a simple worker get transaction ID like a normal transaction would do.
 				 */
-				if (MyPgXact->vacuumFlags & PROC_IN_VACUUM)
+				if (MyProc->statusFlags & PROC_IN_VACUUM)
 					next_xid = BeginTranAutovacuumGTM();
 				else
 					next_xid = BeginTranGTM(timestamp);
@@ -225,7 +225,7 @@ GetNewTransactionId(bool isSubXact)
 				xid = XidFromFullTransactionId(full_xid);
 				elog(DEBUG1, "TransactionId = %lu", next_xid.value);
 				next_xid = InvalidFullTransactionId; /* reset */
-				if (!FullTransactionIdFollowsOrEquals(full_xid, ShmemVariableCache->nextFullXid))
+				if (!FullTransactionIdFollowsOrEquals(full_xid, ShmemVariableCache->nextXid))
 				{
 					/* This should be ok, due to concurrency from multiple coords
 					 * passing down the xids.
@@ -234,18 +234,18 @@ GetNewTransactionId(bool isSubXact)
 					 */
 					increment_xid = false;
 					elog(DEBUG1, "xid (%lu) does not follow ShmemVariableCache->nextXid (%lu)",
-						full_xid.value, ShmemVariableCache->nextFullXid.value);
+						full_xid.value, ShmemVariableCache->nextXid.value);
 				}
 				else
-					ShmemVariableCache->nextFullXid = full_xid;
+					ShmemVariableCache->nextXid = full_xid;
 			}
 			else
 			{	
 				/* Fallback to default */
 				if (!useLocalXid)
 					elog(ERROR, "Falling back to local Xid. Was = %lu, now is = %lu",
-						next_xid.value, ShmemVariableCache->nextFullXid.value);
-				full_xid = ShmemVariableCache->nextFullXid;
+						next_xid.value, ShmemVariableCache->nextXid.value);
+				full_xid = ShmemVariableCache->nextXid;
 				xid = XidFromFullTransactionId(full_xid);
 			}
 		}
@@ -415,7 +415,7 @@ GetNewTransactionId(bool isSubXact)
 	 */
 	if (increment_xid || !IsPostmasterEnvironment)
 	{
-		ShmemVariableCache->nextFullXid = full_xid;
+		ShmemVariableCache->nextXid = full_xid;
 	}
 #endif
 	FullTransactionIdAdvance(&ShmemVariableCache->nextXid);

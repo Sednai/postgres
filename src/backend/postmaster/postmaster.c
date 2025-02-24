@@ -5448,14 +5448,6 @@ sigusr1_handler(SIGNAL_ARGS)
 	if (StartWorkerNeeded || HaveCrashedWorker)
 		maybe_start_bgworkers();
 
-	if (CheckPostmasterSignal(PMSIGNAL_WAKEN_ARCHIVER) &&
-		PgArchPID != 0)
-	{
-		/* Accept new worker requests only if not stopping. */
-		BackgroundWorkerStateChange(pmState < PM_STOP_BACKENDS);
-		StartWorkerNeeded = true;
-	}
-
 	if (StartWorkerNeeded || HaveCrashedWorker)
 		maybe_start_bgworkers();
 

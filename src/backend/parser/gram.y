@@ -12221,8 +12221,8 @@ CleanConnStmt: CLEAN CONNECTION TO COORDINATOR pgxcnodes CleanConnDbName CleanCo
 				}
 		;
 
-CleanConnDbName: FOR DATABASE database_name		{ $$ = $3; }
-				| FOR database_name				{ $$ = $2; }
+CleanConnDbName: FOR DATABASE name		{ $$ = $3; }
+				| FOR name				{ $$ = $2; }
 				| /* EMPTY */					{ $$ = NULL; }
 		;
 
@@ -17314,10 +17314,10 @@ unreserved_keyword:
 			| NFKC
 			| NFKD
 			| NO
-			| NORMALIZED
 /* PGXC_BEGIN */
 			| NODE
 /* PGXC_END */
+			| NORMALIZED
 			| NOTHING
 			| NOTIFY
 			| NOWAIT

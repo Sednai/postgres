@@ -3250,26 +3250,6 @@ GetVirtualXIDsDelayingChkpt(int *nvxids, int type)
 }
 
 /*
- * GetVirtualXIDsDelayingChkpt - Get the VXIDs of transactions that are
- * delaying the start of a checkpoint.
- */
-VirtualTransactionId *
-GetVirtualXIDsDelayingChkpt(int *nvxids)
-{
-	return GetVirtualXIDsDelayingChkptGuts(nvxids, DELAY_CHKPT_START);
-}
-
-/*
- * GetVirtualXIDsDelayingChkptEnd - Get the VXIDs of transactions that are
- * delaying the end of a checkpoint.
- */
-VirtualTransactionId *
-GetVirtualXIDsDelayingChkptEnd(int *nvxids)
-{
-	return GetVirtualXIDsDelayingChkptGuts(nvxids, DELAY_CHKPT_COMPLETE);
-}
-
-/*
  * HaveVirtualXIDsDelayingChkpt -- Are any of the specified VXIDs delaying?
  *
  * This is used with the results of GetVirtualXIDsDelayingChkpt to see if any

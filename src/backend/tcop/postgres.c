@@ -850,7 +850,7 @@ pg_rewrite_query(Query *query)
 #ifdef PGXC
 	if (query->commandType == CMD_UTILITY &&
 		IsA(query->utilityStmt, CreateTableAsStmt) &&
-		((CreateTableAsStmt *)query->utilityStmt)->relkind != OBJECT_MATVIEW)
+		((CreateTableAsStmt *)query->utilityStmt)->objtype != OBJECT_MATVIEW)
 	{
 		/*
 		 * CREATE TABLE AS SELECT and SELECT INTO are rewritten so that the

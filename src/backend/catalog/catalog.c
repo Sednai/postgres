@@ -54,6 +54,7 @@
 #include "utils/syscache.h"
 #ifdef PGXC
 #include "pgxc/pgxc.h"
+#include "catalog/indexing.h"
 #endif
 
 /*
@@ -157,27 +158,6 @@ IsCatalogRelationOid(Oid relid)
  *
  *		The executor can assume these are not partitions or partitioned and
  *		have no triggers.
- */
-bool
-IsInplaceUpdateRelation(Relation relation)
-{
-	return IsInplaceUpdateOid(RelationGetRelid(relation));
-}
-
-/*
- * IsInplaceUpdateOid
- *		Like the above, but takes an OID as argument.
- */
-bool
-IsInplaceUpdateOid(Oid relid)
-{
-	return (relid == RelationRelationId ||
-			relid == DatabaseRelationId);
-}
-
-/*
- * IsInplaceUpdateRelation
- *		True iff core code performs inplace updates on the relation.
  */
 bool
 IsInplaceUpdateRelation(Relation relation)

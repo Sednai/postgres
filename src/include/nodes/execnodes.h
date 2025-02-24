@@ -981,7 +981,6 @@ typedef struct SubPlanState
 	FmgrInfo   *lhs_hash_funcs; /* hash functions for lefthand datatype(s) */
 	FmgrInfo   *cur_eq_funcs;	/* equality functions for LHS vs. table */
 	ExprState  *cur_eq_comp;	/* equality comparator for LHS vs. table */
-	int			numCols;		/* number of columns being hashed */
 } SubPlanState;
 
 /*
@@ -1875,7 +1874,6 @@ typedef struct ValuesScanState
 	ScanState	ss;				/* its first field is NodeTag */
 	ExprContext *rowcontext;
 	List	  **exprlists;
-	List	  **exprstatelists;
 	int			array_len;
 	int			curr_idx;
 	/* in back branches, put this at the end to avoid ABI break: */

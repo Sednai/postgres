@@ -93,7 +93,6 @@ typedef struct PartitionBoundInfoData
 								 * if there isn't one */
 	int			default_index;	/* Index of the default partition; -1 if there
 								 * isn't one */
-	int			nindexes;		/* Length of the indexes[] array */
 } PartitionBoundInfoData;
 
 #define partition_bound_accepts_nulls(bi) ((bi)->null_index != -1)

@@ -38,7 +38,6 @@
 #include "access/toast_internals.h"
 #include "access/tupdesc.h"
 #include "access/tupmacs.h"
-#include "access/tuptoaster.h"
 #include "utils/datum.h"
 #include "utils/memutils.h"
 

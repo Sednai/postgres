@@ -1654,23 +1654,6 @@ doDeletion(const ObjectAddress *object, int flags)
 			 * OCLASS_ROLE, OCLASS_DATABASE, OCLASS_TBLSPACE intentionally not
 			 * handled here
 			 */
-
-		case OCLASS_FDW:
-			RemoveForeignDataWrapperById(object->objectId);
-			break;
-
-		case OCLASS_FOREIGN_SERVER:
-			RemoveForeignServerById(object->objectId);
-			break;
-
-		case OCLASS_USER_MAPPING:
-			RemoveUserMappingById(object->objectId);
-			break;
-
-		case OCLASS_DEFACL:
-			RemoveDefaultACLById(object->objectId);
-			break;
-
 #ifdef PGXC
 		case OCLASS_PGXC_CLASS:
 			RemovePgxcClass(object->objectId);

@@ -869,8 +869,8 @@ ExtendCLOG(TransactionId newestXact)
 	 * so we repeat the check below. We do it this way instead of 
 	 * grabbing the lock to avoid lock contention.
 	 */
-	if (ClogCtl->shared->latest_page_number - pageno <= CLOG_WRAP_CHECK_DELTA 
-			&& pageno <= ClogCtl->shared->latest_page_number)
+	if ((&XactCtlData)->shared->latest_page_number - pageno <= CLOG_WRAP_CHECK_DELTA 
+			&& pageno <= (&XactCtlData)->shared->latest_page_number)
 		return;
 #else
 	if (TransactionIdToPgIndex(newestXact) != 0 &&
@@ -880,7 +880,7 @@ ExtendCLOG(TransactionId newestXact)
 	pageno = TransactionIdToPage(newestXact);
 #endif
 
-	LWLockAcquire(CLogControlLock, LW_EXCLUSIVE);
+	LWLockAcquire(XactSLRULock, LW_EXCLUSIVE);
 
 #ifdef PGXC
 	/*
@@ -888,10 +888,10 @@ ExtendCLOG(TransactionId newestXact)
 	 * out the page already and advanced the latest_page_number
 	 * while we were waiting for the lock.
 	 */
-	if (ClogCtl->shared->latest_page_number - pageno <= CLOG_WRAP_CHECK_DELTA 
-			&& pageno <= ClogCtl->shared->latest_page_number)
+	if ((&XactCtlData)->shared->latest_page_number - pageno <= CLOG_WRAP_CHECK_DELTA 
+			&& pageno <= (&XactCtlData)->shared->latest_page_number)
 	{
-		LWLockRelease(CLogControlLock);
+		LWLockRelease(XactSLRULock);
 		return;
 	}
 #endif

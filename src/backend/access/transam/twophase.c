@@ -1421,7 +1421,6 @@ XlogReadTwoPhaseData(XLogRecPtr lsn, char **buf, int *len)
 	XLogRecord *record;
 	XLogReaderState *xlogreader;
 	char	   *errormsg;
-	TimeLineID	save_currtli = ThisTimeLineID;
 
 	xlogreader = XLogReaderAllocate(wal_segment_size, NULL,
 									XL_ROUTINE(.page_read = &read_local_xlog_page,

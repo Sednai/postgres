@@ -97,7 +97,6 @@
 #include "storage/proc.h"
 #include "storage/procarray.h"
 #include "storage/reinit.h"
-#include "storage/sinvaladt.h"
 #include "storage/smgr.h"
 #include "storage/spin.h"
 #include "storage/sync.h"
@@ -235,9 +234,7 @@ static bool LocalRecoveryInProgress = true;
  * being numerically the same as bool true and false.
  */
 static int	LocalXLogInsertAllowed = -1;
-#ifdef PGXC
-static char *recoveryTargetBarrierId;
-#endif
+
 /*
  * ProcLastRecPtr points to the start of the last XLOG record inserted by the
  * current backend.  It is updated for all inserts.  XactLastRecEnd points to
@@ -1906,18 +1903,6 @@ AdvanceXLInsertBuffer(XLogRecPtr upto, TimeLineID tli, bool opportunistic)
 			NewPage->xlp_info |= XLP_BKP_REMOVABLE;
 
 		/*
-		 * If a record was found to be broken at the end of recovery, and
-		 * we're going to write on the page where its first contrecord was
-		 * lost, set the XLP_FIRST_IS_OVERWRITE_CONTRECORD flag on the page
-		 * header.  See CreateOverwriteContrecordRecord().
-		 */
-		if (missingContrecPtr == NewPageBeginPtr)
-		{
-			NewPage->xlp_info |= XLP_FIRST_IS_OVERWRITE_CONTRECORD;
-			missingContrecPtr = InvalidXLogRecPtr;
-		}
-
-		/*
 		 * If first page of an XLOG segment file, make it a long header.
 		 */
 		if ((XLogSegmentOffset(NewPage->xlp_pageaddr, wal_segment_size)) == 0)
@@ -3343,11 +3328,14 @@ InstallXLogFileSegment(XLogSegNo *segno, char *tmppath,
 		}
 	}
 
-	Assert(access(path, F_OK) != 0 && errno == ENOENT);
-	if (durable_rename(tmppath, path, LOG) != 0)
+	/*
+	 * Perform the rename using link if available, paranoidly trying to avoid
+	 * overwriting an existing file (there shouldn't be one).
+	 */
+	if (durable_rename_excl(tmppath, path, LOG) != 0)
 	{
 		LWLockRelease(ControlFileLock);
-		/* durable_rename already emitted log message */
+		/* durable_rename_excl already emitted log message */
 		return false;
 	}
 
@@ -5288,9 +5276,6 @@ StartupXLOG(void)
 				RunningTransactionsData running;
 				TransactionId latestCompletedXid;
 
-				/* Update pg_subtrans entries for any prepared transactions */
-				StandbyRecoverPreparedTransactions();
-
 				/*
 				 * Construct a RunningTransactions snapshot representing a
 				 * shut down server, with only prepared transactions still
@@ -5299,7 +5284,7 @@ StartupXLOG(void)
 				 */
 				running.xcnt = nxids;
 				running.subxcnt = 0;
-				running.subxid_status = SUBXIDS_IN_SUBTRANS;
+				running.subxid_overflow = false;
 				running.nextXid = XidFromFullTransactionId(checkPoint.nextXid);
 				running.oldestRunningXid = oldestActiveXID;
 				latestCompletedXid = XidFromFullTransactionId(checkPoint.nextXid);
@@ -5309,6 +5294,8 @@ StartupXLOG(void)
 				running.xids = xids;
 
 				ProcArrayApplyRecoveryInfo(&running);
+
+				StandbyRecoverPreparedTransactions();
 			}
 		}
 
@@ -5529,43 +5516,6 @@ StartupXLOG(void)
 	XLogCtl->LogwrtRqst.Write = EndOfLog;
 	XLogCtl->LogwrtRqst.Flush = EndOfLog;
 
-	LocalSetXLogInsertAllowed();
-
-	/* If necessary, write overwrite-contrecord before doing anything else */
-	if (!XLogRecPtrIsInvalid(abortedRecPtr))
-	{
-		Assert(!XLogRecPtrIsInvalid(missingContrecPtr));
-		CreateOverwriteContrecordRecord(abortedRecPtr);
-		abortedRecPtr = InvalidXLogRecPtr;
-		missingContrecPtr = InvalidXLogRecPtr;
-	}
-
-	/*
-	 * Invalidate all sinval-managed caches before READ WRITE transactions
-	 * begin.  The xl_heap_inplace WAL record doesn't store sufficient data
-	 * for invalidations.  The commit record, if any, has the invalidations.
-	 * However, the inplace update is permanent, whether or not we reach a
-	 * commit record.  Fortunately, read-only transactions tolerate caches not
-	 * reflecting the latest inplace updates.  Read-only transactions
-	 * experience the notable inplace updates as follows:
-	 *
-	 * - relhasindex=true affects readers only after the CREATE INDEX
-	 * transaction commit makes an index fully available to them.
-	 *
-	 * - datconnlimit=DATCONNLIMIT_INVALID_DB affects readers only at
-	 * InitPostgres() time, and that read does not use a cache.
-	 *
-	 * - relfrozenxid, datfrozenxid, relminmxid, and datminmxid have no effect
-	 * on readers.
-	 *
-	 * Hence, hot standby queries (all READ ONLY) function correctly without
-	 * the missing invalidations.  This avoided changing the WAL format in
-	 * back branches.
-	 */
-	SIResetAll();
-
-
-
 	/*
 	 * Preallocate additional log files, if wanted.
 	 */
@@ -5703,34 +5653,23 @@ StartupXLOG(void)
 }
 
 /*
- * Verify that, in non-test mode, ./pg_tblspc doesn't contain any real
- * directories.
- *
- * Replay of database creation XLOG records for databases that were later
- * dropped can create fake directories in pg_tblspc.  By the time consistency
- * is reached these directories should have been removed; here we verify
- * that this did indeed happen.  This is to be called at the point where
- * consistent state is reached.
- *
- * allow_in_place_tablespaces turns the PANIC into a WARNING, which is
- * useful for testing purposes, and also allows for an escape hatch in case
- * things go south.
- * 
+ * Callback from PerformWalRecovery(), called when we switch from crash
+ * recovery to archive recovery mode.  Updates the control file accordingly.
  */
-
-static void
-CheckTablespaceDirectory(void)
+void
+SwitchIntoArchiveRecovery(XLogRecPtr EndRecPtr, TimeLineID replayTLI)
 {
-	XLogRecPtr	lastReplayedEndRecPtr;
-
-	/*
-	 * During crash recovery, we don't reach a consistent state until we've
-	 * replayed all the WAL.
-	 */
-	if (XLogRecPtrIsInvalid(minRecoveryPoint))
-		return;
-
-	Assert(InArchiveRecovery);
+	/* initialize minRecoveryPoint to this record */
+	LWLockAcquire(ControlFileLock, LW_EXCLUSIVE);
+	ControlFile->state = DB_IN_ARCHIVE_RECOVERY;
+	if (ControlFile->minRecoveryPoint < EndRecPtr)
+	{
+		ControlFile->minRecoveryPoint = EndRecPtr;
+		ControlFile->minRecoveryPointTLI = replayTLI;
+	}
+	/* update local copy */
+	LocalMinRecoveryPoint = ControlFile->minRecoveryPoint;
+	LocalMinRecoveryPointTLI = ControlFile->minRecoveryPointTLI;
 
 	/*
 	 * The startup process can update its local copy of minRecoveryPoint from
@@ -6609,12 +6548,6 @@ CreateCheckPoint(int flags)
 	{
 		do
 		{
-			/*
-			 * Keep absorbing fsync requests while we wait. There could even
-			 * be a deadlock if we don't, if the process that prevents the
-			 * checkpoint is trying to add a request to the queue.
-			 */
-			AbsorbSyncRequests();
 			pg_usleep(10000L);	/* wait for 10 msec */
 		} while (HaveVirtualXIDsDelayingChkpt(vxids, nvxids,
 											  DELAY_CHKPT_START));
@@ -6628,7 +6561,6 @@ CreateCheckPoint(int flags)
 	{
 		do
 		{
-			AbsorbSyncRequests();
 			pg_usleep(10000L);	/* wait for 10 msec */
 		} while (HaveVirtualXIDsDelayingChkpt(vxids, nvxids,
 											  DELAY_CHKPT_COMPLETE));
@@ -6918,54 +6850,6 @@ CreateOverwriteContrecordRecord(XLogRecPtr aborted_lsn, XLogRecPtr pagePtr,
 	END_CRIT_SECTION();
 
 	return recptr;
-}
-
-/*
- * Write an OVERWRITE_CONTRECORD message.
- *
- * When on WAL replay we expect a continuation record at the start of a page
- * that is not there, recovery ends and WAL writing resumes at that point.
- * But it's wrong to resume writing new WAL back at the start of the record
- * that was broken, because downstream consumers of that WAL (physical
- * replicas) are not prepared to "rewind".  So the first action after
- * finishing replay of all valid WAL must be to write a record of this type
- * at the point where the contrecord was missing; to support xlogreader
- * detecting the special case, XLP_FIRST_IS_OVERWRITE_CONTRECORD is also added
- * to the page header where the record occurs.  xlogreader has an ad-hoc
- * mechanism to report metadata about the broken record, which is what we
- * use here.
- *
- * At replay time, XLP_FIRST_IS_OVERWRITE_CONTRECORD instructs xlogreader to
- * skip the record it was reading, and pass back the LSN of the skipped
- * record, so that its caller can verify (on "replay" of that record) that the
- * XLOG_OVERWRITE_CONTRECORD matches what was effectively overwritten.
- */
-static XLogRecPtr
-CreateOverwriteContrecordRecord(XLogRecPtr aborted_lsn)
-{
-	xl_overwrite_contrecord xlrec;
-	XLogRecPtr	recptr;
-
-	/* sanity check */
-	if (!RecoveryInProgress())
-		elog(ERROR, "can only be used at end of recovery");
-
-	xlrec.overwritten_lsn = aborted_lsn;
-	xlrec.overwrite_time = GetCurrentTimestamp();
-
-	START_CRIT_SECTION();
-
-	XLogBeginInsert();
-	XLogRegisterData((char *) &xlrec, sizeof(xl_overwrite_contrecord));
-
-	recptr = XLogInsert(RM_XLOG_ID, XLOG_OVERWRITE_CONTRECORD);
-
-	XLogFlush(recptr);
-
-	END_CRIT_SECTION();
-
-	return recptr;
-	
 }
 
 /*
@@ -7687,7 +7571,7 @@ xlog_redo(XLogReaderState *record)
 	 * XLOG_FPI_FOR_HINT records.
 	 */
 	Assert(info == XLOG_FPI || info == XLOG_FPI_FOR_HINT ||
-		   info == XLOG_FPI_MULTI || !XLogRecHasAnyBlockRefs(record));
+		   !XLogRecHasAnyBlockRefs(record));
 
 	if (info == XLOG_NEXTOID)
 	{
@@ -7759,9 +7643,6 @@ xlog_redo(XLogReaderState *record)
 
 			oldestActiveXID = PrescanPreparedTransactions(&xids, &nxids);
 
-			/* Update pg_subtrans entries for any prepared transactions */
-			StandbyRecoverPreparedTransactions();
-
 			/*
 			 * Construct a RunningTransactions snapshot representing a shut
 			 * down server, with only prepared transactions still alive. We're
@@ -7770,7 +7651,7 @@ xlog_redo(XLogReaderState *record)
 			 */
 			running.xcnt = nxids;
 			running.subxcnt = 0;
-			running.subxid_status = SUBXIDS_IN_SUBTRANS;
+			running.subxid_overflow = false;
 			running.nextXid = XidFromFullTransactionId(checkPoint.nextXid);
 			running.oldestRunningXid = oldestActiveXID;
 			latestCompletedXid = XidFromFullTransactionId(checkPoint.nextXid);
@@ -7780,6 +7661,8 @@ xlog_redo(XLogReaderState *record)
 			running.xids = xids;
 
 			ProcArrayApplyRecoveryInfo(&running);
+
+			StandbyRecoverPreparedTransactions();
 		}
 
 		/* ControlFile->checkPointCopy always tracks the latest ckpt XID */
@@ -7865,14 +7748,6 @@ xlog_redo(XLogReaderState *record)
 	else if (info == XLOG_OVERWRITE_CONTRECORD)
 	{
 		/* nothing to do here, handled in xlogrecovery_redo() */
-	}
-	else if (info == XLOG_OVERWRITE_CONTRECORD)
-	{
-		xl_overwrite_contrecord xlrec;
-
-		memcpy(&xlrec, XLogRecGetData(record), sizeof(xl_overwrite_contrecord));
-		VerifyOverwriteContrecord(&xlrec, record);
-
 	}
 	else if (info == XLOG_END_OF_RECOVERY)
 	{
