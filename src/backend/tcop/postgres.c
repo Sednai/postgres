@@ -1604,7 +1604,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 		 * needs to see the unmodified raw parse tree.
 		 */
 #ifdef PGXC
-		psrc = CreateCachedPlan(raw_parse_tree, query_string, stmt_name, commandTag);
+		psrc = CreateCachedPlan(raw_parse_tree, query_string, stmt_name, CreateCommandTag(raw_parse_tree->stmt));
 #else
 		psrc = CreateCachedPlan(raw_parse_tree, query_string,
 								CreateCommandTag(raw_parse_tree->stmt));
@@ -1653,7 +1653,7 @@ exec_parse_message(const char *query_string,	/* string to execute */
 		/* Empty input string.  This is legal. */
 		raw_parse_tree = NULL;
 #ifdef PGXC
-		psrc = CreateCachedPlan(raw_parse_tree, query_string, stmt_name, commandTag);
+		psrc = CreateCachedPlan(raw_parse_tree, query_string, stmt_name, CMDTAG_UNKNOWN);
 #else
 		psrc = CreateCachedPlan(raw_parse_tree, query_string,
 								CMDTAG_UNKNOWN);
@@ -4389,6 +4389,19 @@ PostgresMain(const char *dbname, const char *username)
 	volatile bool send_ready_for_query = true;
 	volatile bool idle_in_transaction_timeout_enabled = false;
 	volatile bool idle_session_timeout_enabled = false;
+
+#ifdef PGXC /* PGXC_DATANODE */
+	/* Snapshot info */
+	int 			xmin;
+	int 			xmax;
+	int			xcnt;
+	int 			*xip;
+	/* Timestamp info */
+	TimestampTz		timestamp;
+	PoolHandle		*pool_handle;
+
+	remoteConnType = REMOTE_CONN_APP;
+#endif
 
 	AssertArg(dbname != NULL);
 	AssertArg(username != NULL);

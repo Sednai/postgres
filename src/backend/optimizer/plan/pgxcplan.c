@@ -1423,7 +1423,8 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 									resultRelationIndex);
 
 		/* Get the plan that is supposed to supply source data to this plan */
-		sourceDataPlan = list_nth(mt->plans, relcount);
+		//sourceDataPlan = list_nth(mt->plans, relcount);
+		sourceDataPlan = &mt->plan;
 
 		pgxc_build_dml_statement(root, cmdtyp, resultRelationIndex, fstep,
 									sourceDataPlan->targetlist);
@@ -2234,7 +2235,7 @@ get_plan_combine_type(CmdType commandType, char baselocatortype)
 static Oid
 get_fn_oid(char *fn_name, Oid *p_rettype)
 {
-	Value		*fn_nm;
+	String		*fn_nm;
 	List		*fn_name_list;
 	FuncDetailCode	fdc;
 	bool		retset;
@@ -2253,6 +2254,7 @@ get_fn_oid(char *fn_name, Oid *p_rettype)
 				NULL,			/* argument types */
 				false,			/* expand variable number or args */
 				false,			/* expand defaults */
+				false,			/* include out arguments */
 				&func_oid,		/* oid of the function - returned detail*/
 				p_rettype,		/* function return type - returned detail */
 				&retset,		/*  - returned detail*/
@@ -2396,7 +2398,7 @@ pgxc_planner(Query *query, int cursorOptions, ParamListInfo boundParams)
 		return result;
 
 	/* we need Coordinator for evaluation, invoke standard planner */
-	result = standard_planner(query, cursorOptions, boundParams);
+	result = standard_planner(query, query->sql_statement, cursorOptions, boundParams);
 	return result;
 }
 

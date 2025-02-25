@@ -79,6 +79,7 @@
 #include "catalog/pgxc_class.h"
 #include "catalog/pgxc_node.h"
 #include "catalog/pgxc_group.h"
+#include "catalog/indexing.h"
 #endif
 #include "lib/qunique.h"
 #include "miscadmin.h"

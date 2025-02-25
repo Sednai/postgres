@@ -75,7 +75,7 @@ typedef void (*ProcessUtility_hook_type) (PlannedStmt *pstmt,
 										  ParamListInfo params,
 										  QueryEnvironment *queryEnv,
 #ifdef PGXC
-			   DestReceiver *dest, bool sentToRemote, char *completionTag);
+			   DestReceiver *dest, bool sentToRemote, QueryCompletion *qc);
 #else
 			   DestReceiver *dest, QueryCompletion *qc);
 #endif										  
@@ -86,7 +86,7 @@ extern void ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 			   ProcessUtilityContext context, ParamListInfo params,
 			   QueryEnvironment *queryEnv,
 #ifdef PGXC
-			   DestReceiver *dest, bool sentToRemote, char *completionTag);
+			   DestReceiver *dest, bool sentToRemote, QueryCompletion *qc);
 #else
 			   DestReceiver *dest, QueryCompletion *qc);
 #endif
@@ -95,7 +95,7 @@ extern void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 						ProcessUtilityContext context, ParamListInfo params,
 						QueryEnvironment *queryEnv,
 #ifdef PGXC
-						DestReceiver *dest, bool sentToRemote, char *completionTag);
+						DestReceiver *dest, bool sentToRemote, QueryCompletion *qc);
 #else
 						DestReceiver *dest, QueryCompletion *qc);
 

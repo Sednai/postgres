@@ -805,11 +805,11 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				if (splan->base_tlist)
 					set_remote_references(root, splan, rtoffset);
 				splan->scan.plan.targetlist =
-					fix_scan_list(root, splan->scan.plan.qual, rtoffset);
+					fix_scan_list(root, splan->scan.plan.qual, rtoffset, NUM_EXEC_TLIST(plan));
 				splan->scan.plan.qual =
-					fix_scan_list(root, splan->scan.plan.qual, rtoffset);
+					fix_scan_list(root, splan->scan.plan.qual, rtoffset, NUM_EXEC_QUAL(plan));
 				splan->base_tlist =
-					fix_scan_list(root, splan->base_tlist, rtoffset);
+					fix_scan_list(root, splan->base_tlist, rtoffset, NUM_EXEC_TLIST(plan));
 				splan->scan.scanrelid += rtoffset;
 				
 			}
@@ -1277,11 +1277,11 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 							set_remote_references(root, rq, rtoffset);
 						rq->scan.plan.targetlist = fix_scan_list(root,
 													rq->scan.plan.targetlist,
-													rtoffset);
+													rtoffset, NUM_EXEC_TLIST(&rq->scan.plan));
 						rq->scan.plan.qual = fix_scan_list(root,
 															rq->scan.plan.qual,
-															rtoffset);
-						rq->base_tlist = fix_scan_list(root, rq->base_tlist, rtoffset);
+															rtoffset, NUM_EXEC_QUAL(&rq->scan.plan));
+						rq->base_tlist = fix_scan_list(root, rq->base_tlist, rtoffset, NUM_EXEC_TLIST(&rq->scan.plan));
 						rq->scan.scanrelid += rtoffset;
 					}
 				}

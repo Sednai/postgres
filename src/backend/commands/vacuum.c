@@ -15,7 +15,7 @@
  * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
- * 
+ *
  *
  * IDENTIFICATION
  *	  src/backend/commands/vacuum.c
@@ -35,7 +35,6 @@
 #include "access/tableam.h"
 #include "access/transam.h"
 #include "access/xact.h"
-#include "catalog/indexing.h"
 #include "catalog/namespace.h"
 #include "catalog/index.h"
 #include "catalog/pg_database.h"
@@ -977,7 +976,6 @@ vacuum_set_xid_limits(Relation rel,
 	int			effective_multixact_freeze_max_age;
 	TransactionId limit;
 	TransactionId safeLimit;
-	MultiXactId oldestMxact;
 	MultiXactId mxactLimit;
 	MultiXactId safeMxactLimit;
 	int			freezetable;
@@ -1332,9 +1330,7 @@ vac_update_relstats(Relation relation,
 {
 	Oid			relid = RelationGetRelid(relation);
 	Relation	rd;
-	ScanKeyData key[1];
 	HeapTuple	ctup;
-	void	   *inplace_state;
 	Form_pg_class pgcform;
 	bool		dirty,
 				futurexid,
@@ -1345,12 +1341,7 @@ vac_update_relstats(Relation relation,
 	rd = table_open(RelationRelationId, RowExclusiveLock);
 
 	/* Fetch a copy of the tuple to scribble on */
-	ScanKeyInit(&key[0],
-				Anum_pg_class_oid,
-				BTEqualStrategyNumber, F_OIDEQ,
-				ObjectIdGetDatum(relid));
-	systable_inplace_update_begin(rd, ClassOidIndexId, true,
-								  NULL, 1, key, &ctup, &inplace_state);
+	ctup = SearchSysCacheCopy1(RELOID, ObjectIdGetDatum(relid));
 	if (!HeapTupleIsValid(ctup))
 		elog(ERROR, "pg_class entry for relid %u vanished during vacuuming",
 			 relid);
@@ -1421,9 +1412,6 @@ vac_update_relstats(Relation relation,
 
 		if (TransactionIdPrecedes(oldfrozenxid, frozenxid))
 			update = true;
-#ifdef PGXC
-		    !IsPostmasterEnvironment ||
-#endif
 		else if (TransactionIdPrecedes(ReadNextTransactionId(), oldfrozenxid))
 			futurexid = update = true;
 
@@ -1461,9 +1449,7 @@ vac_update_relstats(Relation relation,
 
 	/* If anything changed, write out the tuple. */
 	if (dirty)
-		systable_inplace_update_finish(inplace_state, ctup);
-	else
-		systable_inplace_update_cancel(inplace_state);
+		heap_inplace_update(rd, ctup);
 
 	table_close(rd, RowExclusiveLock);
 
@@ -1515,7 +1501,6 @@ vac_update_datfrozenxid(void)
 	bool		bogus = false;
 	bool		dirty = false;
 	ScanKeyData key[1];
-	void	   *inplace_state;
 
 	/*
 	 * Restrict this task to one backend per database.  This avoids race
@@ -1639,18 +1624,20 @@ vac_update_datfrozenxid(void)
 	relation = table_open(DatabaseRelationId, RowExclusiveLock);
 
 	/*
-	 * Fetch a copy of the tuple to scribble on.  We could check the syscache
-	 * tuple first.  If that concluded !dirty, we'd avoid waiting on
-	 * concurrent heap_update() and would avoid exclusive-locking the buffer.
-	 * For now, don't optimize that.
+	 * Get the pg_database tuple to scribble on.  Note that this does not
+	 * directly rely on the syscache to avoid issues with flattened toast
+	 * values for the in-place update.
 	 */
 	ScanKeyInit(&key[0],
 				Anum_pg_database_oid,
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(MyDatabaseId));
 
-	systable_inplace_update_begin(relation, DatabaseOidIndexId, true,
-								  NULL, 1, key, &tuple, &inplace_state);
+	scan = systable_beginscan(relation, DatabaseOidIndexId, true,
+							  NULL, 1, key);
+	tuple = systable_getnext(scan);
+	tuple = heap_copytuple(tuple);
+	systable_endscan(scan);
 
 	if (!HeapTupleIsValid(tuple))
 		elog(ERROR, "could not find tuple for database %u", MyDatabaseId);
@@ -1687,9 +1674,7 @@ vac_update_datfrozenxid(void)
 		newMinMulti = dbform->datminmxid;
 
 	if (dirty)
-		systable_inplace_update_finish(inplace_state, tuple);
-	else
-		systable_inplace_update_cancel(inplace_state);
+		heap_inplace_update(relation, tuple);
 
 	heap_freetuple(tuple);
 	table_close(relation, RowExclusiveLock);
@@ -1838,7 +1823,6 @@ vac_truncate_clog(TransactionId frozenXID,
 		return;
 	}
 
-
 	/* chicken out if data is bogus in any other way */
 	if (bogus)
 	{
@@ -1913,14 +1897,6 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	/* Begin a transaction for vacuuming this relation */
 	StartTransactionCommand();
 
-	/*
-	 * Functions in indexes may want a snapshot set.  Also, setting a snapshot
-	 * ensures that RecentGlobalXmin is kept truly recent.
-	 */
-#ifndef PGXC
-	PushActiveSnapshot(GetTransactionSnapshot());
-#endif
-
 	if (!(params->options & VACOPT_FULL))
 	{
 		/*
@@ -1958,15 +1934,23 @@ vacuum_rel(Oid relid, RangeVar *relation, VacuumParams *params)
 	 * cutoff xids in local memory wrapping around, and to have updated xmin
 	 * horizons.
 	 */
+#ifndef PGXC
 	PushActiveSnapshot(GetTransactionSnapshot());
+#endif
 
-	/*
-	 * Need to acquire a snapshot to prevent pg_subtrans from being truncated,
-	 * cutoff xids in local memory wrapping around, and to have updated xmin
-	 * horizons.
-	 */
+#ifdef PGXC
+	if (params->is_wraparound)
+		elog(DEBUG1, "Starting wraparound autovacuum");
+	else
+		elog(DEBUG1, "Starting autovacuum");
+
+	/* Now that flags have been set, we can take a snapshot correctly */
 	PushActiveSnapshot(GetTransactionSnapshot());
-
+	if (params->is_wraparound)
+		elog(DEBUG1, "Started wraparound autovacuum");
+	else
+		elog(DEBUG1, "Started autovacuum");
+#endif
 	/*
 	 * Check for user-requested abort.  Note we want this to be inside a
 	 * transaction, so xact.c doesn't issue useless WARNING.

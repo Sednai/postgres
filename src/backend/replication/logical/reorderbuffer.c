@@ -329,20 +329,15 @@ ReorderBufferAllocate(void)
 											sizeof(ReorderBufferTXN));
 
 	/*
-	 * To minimize memory fragmentation caused by long-running transactions
-	 * with changes spanning multiple memory blocks, we use a single
-	 * fixed-size memory block for decoded tuple storage. The performance
-	 * testing showed that the default memory block size maintains logical
-	 * decoding performance without causing fragmentation due to concurrent
-	 * transactions. One might think that we can use the max size as
-	 * SLAB_LARGE_BLOCK_SIZE but the test also showed it doesn't help resolve
-	 * the memory fragmentation.
+	 * XXX the allocation sizes used below pre-date generation context's block
+	 * growing code.  These values should likely be benchmarked and set to
+	 * more suitable values.
 	 */
 	buffer->tup_context = GenerationContextCreate(new_ctx,
 												  "Tuples",
-												  SLAB_DEFAULT_BLOCK_SIZE,
-												  SLAB_DEFAULT_BLOCK_SIZE,
-												  SLAB_DEFAULT_BLOCK_SIZE);
+												  SLAB_LARGE_BLOCK_SIZE,
+												  SLAB_LARGE_BLOCK_SIZE,
+												  SLAB_LARGE_BLOCK_SIZE);
 
 	hash_ctl.keysize = sizeof(TransactionId);
 	hash_ctl.entrysize = sizeof(ReorderBufferTXNByIdEnt);
@@ -2361,32 +2356,6 @@ ReorderBufferProcessTXN(ReorderBuffer *rb, ReorderBufferTXN *txn,
 
 						break;
 					}
-
-				case REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT:
-
-					/*
-					 * Abort for speculative insertion arrived. So cleanup the
-					 * specinsert tuple and toast hash.
-					 *
-					 * Note that we get the spec abort change for each toast
-					 * entry but we need to perform the cleanup only the first
-					 * time we get it for the main table.
-					 */
-					if (specinsert != NULL)
-					{
-						/*
-						 * We must clean the toast hash before processing a
-						 * completely new tuple to avoid confusion about the
-						 * previous tuple's toast chunks.
-						 */
-						Assert(change->data.tp.clear_toast_afterwards);
-						ReorderBufferToastReset(rb, txn);
-
-						/* We don't need this record anymore. */
-						ReorderBufferReturnChange(rb, specinsert);
-						specinsert = NULL;
-					}
-					break;
 
 				case REORDER_BUFFER_CHANGE_MESSAGE:
 					ReorderBufferApplyMessage(rb, txn, change, streaming);

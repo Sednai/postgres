@@ -1477,7 +1477,7 @@ pgxc_lock_for_utility_stmt(Node *parsetree)
 	if (!lockAcquired)
 		ereport(ERROR,
 				(errcode(ERRCODE_READ_ONLY_SQL_TRANSACTION),
-				errmsg("cannot execute %s in a locked cluster",
+				errmsg("cannot execute %u in a locked cluster",
 						CreateCommandTag(parsetree))));
 
 	return lockAcquired;

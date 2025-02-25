@@ -36,12 +36,6 @@
 #include "utils/selfuncs.h"
 
 
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-#undef make_simple_restrictinfo
-#define make_simple_restrictinfo(root, clause)  \
-	make_restrictinfo_new(root, clause, true, false, false, 0, NULL, NULL, NULL)
-
 /* XXX see PartCollMatchesExprColl */
 #define IndexCollMatchesExprColl(idxcollation, exprcollation) \
 	((idxcollation) == InvalidOid || (idxcollation) == (exprcollation))
@@ -3813,12 +3807,6 @@ match_index_to_operand(Node *operand,
  */
 bool
 is_pseudo_constant_for_index(PlannerInfo *root, Node *expr, IndexOptInfo *index)
-{
-	return is_pseudo_constant_for_index_new(NULL, expr, index);
-}
-
-bool
-is_pseudo_constant_for_index_new(PlannerInfo *root, Node *expr, IndexOptInfo *index)
 {
 	/* pull_varnos is cheaper than volatility check, so do that first */
 	if (bms_is_member(index->rel->relid, pull_varnos(root, expr)))

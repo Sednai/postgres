@@ -3455,6 +3455,9 @@ ExecARUpdateTriggers(EState *estate, ResultRelInfo *relinfo,
 							  ExecGetAllUpdatedCols(relinfo, estate),
 							  transition_capture,
 							  is_crosspart_update);
+#ifdef PGXC
+		}
+#endif
 	}
 }
 

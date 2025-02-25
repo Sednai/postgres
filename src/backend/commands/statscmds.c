@@ -731,8 +731,8 @@ RemoveStatisticsDataById(Oid statsOid, bool inh)
 /*
  * Guts of statistics object deletion.
  */
-static void
-RemoveStatisticsDataById(Oid statsOid)
+void
+RemoveStatisticsById(Oid statsOid)
 {
 	Relation	relation;
 	Relation	rel;

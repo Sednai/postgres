@@ -1870,12 +1870,10 @@ PlannedStmtRequiresSnapshot(PlannedStmt *pstmt)
 		IsA(utilityStmt, NotifyStmt) ||
 		IsA(utilityStmt, UnlistenStmt) ||
 #ifdef PGXC
-		  (IsA(utilityStmt, CheckPointStmt) && IS_PGXC_DATANODE))
+		(IsA(utilityStmt, CheckPointStmt) && IS_PGXC_DATANODE)))
 #else
-		  IsA(utilityStmt, CheckPointStmt))
-#endif
-
 		IsA(utilityStmt, CheckPointStmt))
+#endif
 		return false;
 
 	return true;

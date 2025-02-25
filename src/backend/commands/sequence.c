@@ -173,7 +173,14 @@ DefineSequence(ParseState *pstate, CreateSeqStmt *seq)
 	Datum		pgs_values[Natts_pg_sequence];
 	bool		pgs_nulls[Natts_pg_sequence];
 	int			i;
-
+#ifdef PGXC /* PGXC_COORD */
+	GTM_Sequence	start_value = 1;
+	GTM_Sequence	min_value = 1;
+	GTM_Sequence	max_value = InvalidSequenceValue;
+	GTM_Sequence	increment = 1;
+	bool		cycle = false;
+	bool		is_restart;
+#endif
 	/*
 	 * If if_not_exists was given and a relation with the same name already
 	 * exists, bail out. (Note: we needn't check this when not if_not_exists,

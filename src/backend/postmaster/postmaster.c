@@ -5552,29 +5552,6 @@ process_startup_packet_die(SIGNAL_ARGS)
 }
 
 /*
- * SIGQUIT while processing startup packet.
- *
- * Some backend has bought the farm,
- * so we need to stop what we're doing and exit.
- */
-static void
-process_startup_packet_quickdie(SIGNAL_ARGS)
-{
-	/*
-	 * We DO NOT want to run proc_exit() or atexit() callbacks; they wouldn't
-	 * be safe to run from a signal handler.  Just nail the windows shut and
-	 * get out of town.
-	 *
-	 * Note we do _exit(2) not _exit(1).  This is to force the postmaster into
-	 * a system reset cycle if someone sends a manual SIGQUIT to a random
-	 * backend.  (While it might be safe to do _exit(1), since this session
-	 * shouldn't have touched shared memory yet, there seems little point in
-	 * taking any risks.)
-	 */
-	_exit(2);
-}
-
-/*
  * Dummy signal handler
  *
  * We use this for signals that we don't actually use in the postmaster,

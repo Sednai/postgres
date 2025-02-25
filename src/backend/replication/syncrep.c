@@ -773,7 +773,6 @@ SyncRepGetCandidateStandbys(SyncRepStandbyData **standbys)
 		if (XLogRecPtrIsInvalid(stby->flush))
 			continue;
 
-		
 		/* OK, it's a candidate */
 		stby->walsnd_index = i;
 		stby->is_me = (walsnd == MyWalSnd);
@@ -817,113 +816,6 @@ standby_priority_comparator(const void *a, const void *b)
 	 * order dependent, but there are regression tests that rely on it.)
 	 */
 	return sa->walsnd_index - sb->walsnd_index;
-}
-
-
-/*
- * Return the list of sync standbys, or NIL if no sync standby is connected.
- *
- * The caller must hold SyncRepLock.
- *
- * On return, *am_sync is set to true if this walsender is connecting to
- * sync standby. Otherwise it's set to false.
- */
-List *
-SyncRepGetSyncStandbys(bool *am_sync)
-{
-	int			i;
-	int			n;
-
-	/* Create result array */
-	*standbys = (SyncRepStandbyData *)
-		palloc(max_wal_senders * sizeof(SyncRepStandbyData));
-
-	/* Quick exit if sync replication is not requested */
-	if (SyncRepConfig == NULL)
-		return 0;
-
-	/* Collect raw data from shared memory */
-	n = 0;
-	for (i = 0; i < max_wal_senders; i++)
-	{
-		volatile WalSnd *walsnd;	/* Use volatile pointer to prevent code
-									 * rearrangement */
-		SyncRepStandbyData *stby;
-		WalSndState state;		/* not included in SyncRepStandbyData */
-
-		walsnd = &WalSndCtl->walsnds[i];
-		stby = *standbys + n;
-
-		SpinLockAcquire(&walsnd->mutex);
-		stby->pid = walsnd->pid;
-		state = walsnd->state;
-		stby->write = walsnd->write;
-		stby->flush = walsnd->flush;
-		stby->apply = walsnd->apply;
-		stby->sync_standby_priority = walsnd->sync_standby_priority;
-		SpinLockRelease(&walsnd->mutex);
-
-		/* Must be active */
-		if (stby->pid == 0)
-			continue;
-
-		/* Must be streaming or stopping */
-		if (state != WALSNDSTATE_STREAMING &&
-			state != WALSNDSTATE_STOPPING)
-			continue;
-
-		/* Must be synchronous */
-		if (stby->sync_standby_priority == 0)
-			continue;
-
-		/* Must have a valid flush position */
-		if (XLogRecPtrIsInvalid(stby->flush))
-			continue;
-
-		/* OK, it's a candidate */
-		stby->walsnd_index = i;
-		stby->is_me = (walsnd == MyWalSnd);
-		n++;
-	}
-
-	/*
-	 * In quorum mode, we return all the candidates.  In priority mode, if we
-	 * have too many candidates then return only the num_sync ones of highest
-	 * priority.
-	 */
-	if (SyncRepConfig->syncrep_method == SYNC_REP_PRIORITY &&
-		n > SyncRepConfig->num_sync)
-	{
-		/* Sort by priority ... */
-		qsort(*standbys, n, sizeof(SyncRepStandbyData),
-			  standby_priority_comparator);
-		/* ... then report just the first num_sync ones */
-		n = SyncRepConfig->num_sync;
-	}
-
-	return n;
-}
-
-/*
- * qsort comparator to sort SyncRepStandbyData entries by priority
- */
-static int
-standby_priority_comparator(const void *a, const void *b)
-{
-	const SyncRepStandbyData *sa = (const SyncRepStandbyData *) a;
-	const SyncRepStandbyData *sb = (const SyncRepStandbyData *) b;
-
-	/* First, sort by increasing priority value */
-	if (sa->sync_standby_priority != sb->sync_standby_priority)
-		return sa->sync_standby_priority - sb->sync_standby_priority;
-
-	/*
-	 * We might have equal priority values; arbitrarily break ties by position
-	 * in the WALSnd array.  (This is utterly bogus, since that is arrival
-	 * order dependent, but there are regression tests that rely on it.)
-	 */
-	return sa->walsnd_index - sb->walsnd_index;
-
 }
 
 

@@ -321,11 +321,11 @@ GetRoundRobinNode(Oid relid)
 	ret_node = lfirst_int(rel->rd_locator_info->roundRobinNode);
 
 	/* Move round robin indicator to next node */
-	if (rel->rd_locator_info->roundRobinNode->next != NULL)
-		rel->rd_locator_info->roundRobinNode = rel->rd_locator_info->roundRobinNode->next;
+	if ( lnext(rel->rd_locator_info->nodeList, rel->rd_locator_info->roundRobinNode) != NULL)
+		rel->rd_locator_info->roundRobinNode = lnext(rel->rd_locator_info->nodeList, rel->rd_locator_info->roundRobinNode);
 	else
 		/* reset to first one */
-		rel->rd_locator_info->roundRobinNode = rel->rd_locator_info->nodeList->head;
+		rel->rd_locator_info->roundRobinNode = list_head(rel->rd_locator_info->nodeList);
 
 	relation_close(rel, AccessShareLock);
 
@@ -722,9 +722,9 @@ RelationBuildLocator(Relation rel)
 		offset = compute_modulo(abs(rand()), list_length(relationLocInfo->nodeList));
 
 		srand(time(NULL));
-		relationLocInfo->roundRobinNode = relationLocInfo->nodeList->head; /* initialize */
-		for (j = 0; j < offset && relationLocInfo->roundRobinNode->next != NULL; j++)
-			relationLocInfo->roundRobinNode = relationLocInfo->roundRobinNode->next;
+		relationLocInfo->roundRobinNode = list_head(relationLocInfo->nodeList); /* initialize */
+		for (j = 0; j < offset && lnext( relationLocInfo->nodeList, relationLocInfo->roundRobinNode) != NULL; j++)
+			relationLocInfo->roundRobinNode = lnext( relationLocInfo->nodeList, relationLocInfo->roundRobinNode);
 	}
 
 	systable_endscan(pcscan);

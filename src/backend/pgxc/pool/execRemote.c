@@ -4225,7 +4225,7 @@ ExecProcNodeDMLInXC(EState *estate,
 	                TupleTableSlot *sourceDataSlot,
 	                TupleTableSlot *newDataSlot)
 {
-	ResultRelInfo *resultRelInfo = estate->es_result_relation_info;
+	ResultRelInfo *resultRelInfo = estate->es_result_relations;
 	RemoteQueryState *resultRemoteRel = (RemoteQueryState *) estate->es_result_remoterel;
 	ExprContext	*econtext = resultRemoteRel->ss.ps.ps_ExprContext;
 	TupleTableSlot	*returningResultSlot = NULL;	/* RETURNING clause result */

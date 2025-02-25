@@ -642,7 +642,7 @@ SPI_execute_direct(const char *remote_sql, char *nodename)
 	_SPI_pgxc_prepare_plan(execdirect.data, list_make1(rawstmt), &plan);
 
 	res = _SPI_execute_plan(&plan, NULL,
-							InvalidSnapshot, InvalidSnapshot, false, true, 0);
+							InvalidSnapshot, InvalidSnapshot, true);
 
 	_SPI_end_call(true);
 	return res;

@@ -421,7 +421,7 @@ static void make_ruledef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 static void make_viewdef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 						 int prettyFlags, int wrapColumn);
 static void get_query_def(Query *query, StringInfo buf, List *parentnamespace,
-						  TupleDesc resultDesc, bool colNamesVisible, bool colNamesVisible,
+						  TupleDesc resultDesc, bool colNamesVisible,
 			  int prettyFlags, int wrapColumn, int startIndent
 #ifdef PGXC
 			  , bool finalise_aggregates, bool sortgroup_colno
@@ -5681,7 +5681,7 @@ deparse_query(Query *query, StringInfo buf, List *parentnamespace,
  */
 static void
 get_query_def(Query *query, StringInfo buf, List *parentnamespace,
-			  TupleDesc resultDesc, bool colNamesVisible, bool colNamesVisible,
+			  TupleDesc resultDesc, bool colNamesVisible,
 			  int prettyFlags, int wrapColumn, int startIndent
 #ifdef PGXC
 				, bool finalise_aggs, bool sortgroup_colno
@@ -7705,7 +7705,7 @@ get_utility_query_def(Query *query, deparse_context *context)
 					foreach(cell, stmt->subcluster->members)
 					{
 						appendStringInfo(buf, " %s", strVal(lfirst(cell)));
-						if (cell->next)
+						if(lnext(stmt->subcluster->members,cell))
 							appendStringInfo(buf, ",");
 					}
 					appendStringInfo(buf, ")");
@@ -7719,7 +7719,7 @@ get_utility_query_def(Query *query, deparse_context *context)
 					foreach(cell, stmt->subcluster->members)
 					{
 						appendStringInfo(buf, " %s", strVal(lfirst(cell)));
-						if (cell->next)
+						if(lnext(stmt->subcluster->members,cell))
 							appendStringInfo(buf, ",");
 					}
 					break;

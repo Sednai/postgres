@@ -486,7 +486,7 @@ char *session_options(void)
 		{
 			char *value = (char *) lfirst(l);
 			appendStringInfoString(&options, value);
-			if (lnext(l))
+			if (lnext(value_list, l))
 				appendStringInfoChar(&options, ',');
 		}
 	}

@@ -944,14 +944,6 @@ LockAcquireExtendedXC(const LOCKTAG *locktag,
 		else
 			return LOCKACQUIRE_ALREADY_HELD;
 	}
-
-	/*
-	 * We don't acquire any other heavyweight lock while holding the relation
-	 * extension lock.  We do allow to acquire the same relation extension
-	 * lock more than once but that case won't reach here.
-	 */
-	Assert(!IsRelationExtensionLockHeld);
-
 #ifdef PGXC
 	else if (only_increment)
 	{
@@ -959,6 +951,13 @@ LockAcquireExtendedXC(const LOCKTAG *locktag,
 		return LOCKACQUIRE_NOT_AVAIL;
 	}
 #endif
+
+	/*
+	 * We don't acquire any other heavyweight lock while holding the relation
+	 * extension lock.  We do allow to acquire the same relation extension
+	 * lock more than once but that case won't reach here.
+	 */
+	Assert(!IsRelationExtensionLockHeld);
 
 	/*
 	 * Prepare to emit a WAL record if acquisition of this lock needs to be

@@ -4821,12 +4821,6 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 			ATSimpleRecursion(wqueue, rel, cmd, recurse, lockmode, context);
 			/* No command-specific prep needed */
 			pass = cmd->def ? AT_PASS_ADD_OTHERCONSTR : AT_PASS_DROP;
-
-			break;
-		case AT_AddIdentity:
-			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE | ATT_VIEW | ATT_FOREIGN_TABLE);
-			/* This command never recurses */
-			pass = AT_PASS_ADD_OTHERCONSTR;
 			break;
 			case AT_CookedColumnDefault:	/* add a pre-cooked default */
 			/* This is currently used only in CREATE TABLE */
@@ -4834,11 +4828,6 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE | ATT_FOREIGN_TABLE);
 			/* This command never recurses */
 			pass = AT_PASS_ADD_OTHERCONSTR;
-		case AT_SetIdentity:
-			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE | ATT_VIEW | ATT_FOREIGN_TABLE);
-			/* This command never recurses */
-			/* This should run after AddIdentity, so do it in MISC pass */
-			pass = AT_PASS_MISC;
 			break;
 		case AT_AddIdentity:
 			ATSimplePermissions(cmd->subtype, rel, ATT_TABLE | ATT_VIEW | ATT_FOREIGN_TABLE);
@@ -5125,7 +5114,7 @@ ATPrepCmd(List **wqueue, Relation rel, AlterTableCmd *cmd,
 		case AT_SubCluster:
 		case AT_AddNodeList:
 		case AT_DeleteNodeList:
-			ATSimplePermissions(rel, ATT_TABLE);
+			ATSimplePermissions(cmd->subtype,rel, ATT_TABLE);
 			/* No command-specific prep needed */
 			pass = AT_PASS_DISTRIB;
 			break;

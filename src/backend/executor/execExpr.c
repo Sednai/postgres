@@ -359,32 +359,6 @@ ExecBuildProjectionInfo(List *targetList,
 						PlanState *parent,
 						TupleDesc inputDesc)
 {
-	return ExecBuildProjectionInfoExt(targetList,
-									  econtext,
-									  slot,
-									  true,
-									  parent,
-									  inputDesc);
-}
-
-/*
- *		ExecBuildProjectionInfoExt
- *
- * As above, with one additional option.
- *
- * If assignJunkEntries is true (the usual case), resjunk entries in the tlist
- * are not handled specially: they are evaluated and assigned to the proper
- * column of the result slot.  If assignJunkEntries is false, resjunk entries
- * are evaluated, but their result is discarded without assignment.
- */
-ProjectionInfo *
-ExecBuildProjectionInfoExt(List *targetList,
-						   ExprContext *econtext,
-						   TupleTableSlot *slot,
-						   bool assignJunkEntries,
-						   PlanState *parent,
-						   TupleDesc inputDesc)
-{
 	ProjectionInfo *projInfo = makeNode(ProjectionInfo);
 	ExprState  *state;
 	ExprEvalStep scratch = {0};
@@ -421,8 +395,7 @@ ExecBuildProjectionInfoExt(List *targetList,
 		 */
 		if (tle->expr != NULL &&
 			IsA(tle->expr, Var) &&
-			((Var *) tle->expr)->varattno > 0 &&
-			(assignJunkEntries || !tle->resjunk))
+			((Var *) tle->expr)->varattno > 0)
 		{
 			/* Non-system Var, but how safe is it? */
 			variable = (Var *) tle->expr;
@@ -485,10 +458,6 @@ ExecBuildProjectionInfoExt(List *targetList,
 			 */
 			ExecInitExprRec(tle->expr, state,
 							&state->resvalue, &state->resnull);
-
-			/* This makes it easy to discard resjunk results when told to. */
-			if (!assignJunkEntries && tle->resjunk)
-				continue;
 
 			/*
 			 * Column might be referenced multiple times in upper nodes, so
@@ -1199,14 +1168,6 @@ ExecInitExprRec(Expr *node, ExprState *state,
 				ExecInitFunc(&scratch, node,
 							 op->args, op->opfuncid, op->inputcollid,
 							 state);
-
-				/*
-				 * If first argument is of varlena type, we'll need to ensure
-				 * that the value passed to the comparison function is a
-				 * read-only pointer.
-				 */
-				scratch.d.func.make_ro =
-					(get_typlen(exprType((Node *) linitial(op->args))) == -1);
 
 				/*
 				 * Change opcode of call instruction to EEOP_NULLIF.

@@ -34,8 +34,6 @@ typedef struct LogicalRepRelMapEntry
 
 	/* Sync state. */
 	char		state;
-	/* Validity flag ... inserted here to avoid ABI break in back branches. */
-	bool		localrelvalid;
 	XLogRecPtr	statelsn;
 } LogicalRepRelMapEntry;
 

@@ -4512,7 +4512,7 @@ QueryRewriteCTAS(Query *parsetree, bool execute)
 		if (lc)
 		{
 			coldef->colname = strVal(lfirst(lc));
-			lc = lnext(lc);
+			lc = lnext(tlist,lc);
 		}
 		else
 			coldef->colname = pstrdup(tle->resname);
@@ -4586,7 +4586,7 @@ QueryRewriteCTAS(Query *parsetree, bool execute)
 
 	/* Finally, fire off the query to run the DDL */
 	if(execute)
-		ProcessUtility(wrapper, cquery.data, PROCESS_UTILITY_TOPLEVEL, NULL, NULL, NULL,  /* Tentative fix.  Nedd a review.  K.Suzuki */
+		ProcessUtility(wrapper, cquery.data, false, PROCESS_UTILITY_TOPLEVEL, NULL, NULL, NULL,  /* Tentative fix.  Nedd a review.  K.Suzuki */
 						false,
 						NULL);
 	

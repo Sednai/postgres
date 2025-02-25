@@ -409,8 +409,6 @@ static int *gxip = NULL;
 
 static VirtualTransactionId *GetVirtualXIDsDelayingChkptGuts(int *nvxids,
 															 int type);
-static bool HaveVirtualXIDsDelayingChkptGuts(VirtualTransactionId *vxids,
-											 int nvxids, int type);
 
 /* Primitives for KnownAssignedXids array handling for standby */
 static void KnownAssignedXidsCompress(KAXCompressReason reason, bool haveLock);
@@ -1178,7 +1176,7 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 		 * If the snapshot isn't overflowed or if its empty we can reset our
 		 * pending state and use this snapshot instead.
 		 */
-		if (running->subxid_status != SUBXIDS_MISSING || running->xcnt == 0)
+		if (!running->subxid_overflow || running->xcnt == 0)
 		{
 			/*
 			 * If we have already collected known assigned xids, we need to
@@ -1330,7 +1328,7 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 	 * missing, so conservatively assume the last one is latestObservedXid.
 	 * ----------
 	 */
-	if (running->subxid_status == SUBXIDS_MISSING)
+	if (running->subxid_overflow)
 	{
 		standbyState = STANDBY_SNAPSHOT_PENDING;
 
@@ -1342,18 +1340,6 @@ ProcArrayApplyRecoveryInfo(RunningTransactions running)
 		standbyState = STANDBY_SNAPSHOT_READY;
 
 		standbySnapshotPendingXmin = InvalidTransactionId;
-
-		/*
-		 * If the 'xids' array didn't include all subtransactions, we have to
-		 * mark any snapshots taken as overflowed.
-		 */
-		if (running->subxid_status == SUBXIDS_IN_SUBTRANS)
-			procArray->lastOverflowedXid = latestObservedXid;
-		else
-		{
-			Assert(running->subxid_status == SUBXIDS_IN_ARRAY);
-			procArray->lastOverflowedXid = InvalidTransactionId;
-		}
 	}
 
 	/*
@@ -1819,14 +1805,10 @@ TransactionIdIsActive(TransactionId xid)
 static void
 ComputeXidHorizons(ComputeXidHorizonsResult *h)
 {
-
 	ProcArrayStruct *arrayP = procArray;
-	TransactionId result;
-	int			index;
-	bool		allDbs;
-
-	TransactionId replication_slot_xmin = InvalidTransactionId;
-	TransactionId replication_slot_catalog_xmin = InvalidTransactionId;
+	TransactionId kaxmin;
+	bool		in_recovery = RecoveryInProgress();
+	TransactionId *other_xids = ProcGlobal->xids;
 
 	/* inferred after ProcArrayLock is released */
 	h->catalog_oldest_nonremovable = InvalidTransactionId;
@@ -2694,8 +2676,7 @@ GetSnapshotData(Snapshot snapshot)
 
 #ifdef PGXC
 	if (!RecoveryInProgress())
-		elog(DEBUG1, "Local snapshot is built, xmin: %d, xmax: %d, xcnt: %d, RecentGlobalXmin: %d",
-			 xmin, xmax, count, globalxmin);
+		elog(DEBUG1, "Local snapshot is built, xmin: %d, xmax: %d, xcnt: %d", xmin, xmax, count);
 #endif
 
 	/*
@@ -3019,7 +3000,7 @@ GetRunningTransactionData(void)
 
 	CurrentRunningXacts->xcnt = count - subcount;
 	CurrentRunningXacts->subxcnt = subcount;
-	CurrentRunningXacts->subxid_status = suboverflowed ? SUBXIDS_IN_SUBTRANS : SUBXIDS_IN_ARRAY;
+	CurrentRunningXacts->subxid_overflow = suboverflowed;
 	CurrentRunningXacts->nextXid = XidFromFullTransactionId(ShmemVariableCache->nextXid);
 	CurrentRunningXacts->oldestRunningXid = oldestRunningXid;
 	CurrentRunningXacts->latestCompletedXid = latestCompletedXid;
@@ -3298,28 +3279,6 @@ HaveVirtualXIDsDelayingChkpt(VirtualTransactionId *vxids, int nvxids, int type)
 	LWLockRelease(ProcArrayLock);
 
 	return result;
-}
-
-/*
- * HaveVirtualXIDsDelayingChkpt -- Are any of the specified VXIDs delaying
- * the start of a checkpoint?
- */
-bool
-HaveVirtualXIDsDelayingChkpt(VirtualTransactionId *vxids, int nvxids)
-{
-	return HaveVirtualXIDsDelayingChkptGuts(vxids, nvxids,
-											DELAY_CHKPT_START);
-}
-
-/*
- * HaveVirtualXIDsDelayingChkptEnd -- Are any of the specified VXIDs delaying
- * the end of a checkpoint?
- */
-bool
-HaveVirtualXIDsDelayingChkptEnd(VirtualTransactionId *vxids, int nvxids)
-{
-	return HaveVirtualXIDsDelayingChkptGuts(vxids, nvxids,
-											DELAY_CHKPT_COMPLETE);
 }
 
 /*
@@ -3972,7 +3931,6 @@ ReloadConnInfoOnBackends(void)
 	{
 		int			pgprocno = arrayP->pgprocnos[index];
 		volatile PGPROC *proc = &allProcs[pgprocno];
-		volatile PGXACT *pgxact = &allPgXact[pgprocno];
 		VirtualTransactionId vxid;
 		GET_VXID_FROM_PGPROC(vxid, *proc);
 
@@ -3984,7 +3942,7 @@ ReloadConnInfoOnBackends(void)
 			continue;			/* useless on prepared xacts */
 		if (!OidIsValid(proc->databaseId))
 			continue;			/* ignore backends not connected to a database */
-		if (pgxact->vacuumFlags & PROC_IN_VACUUM)
+		if (proc->statusFlags & PROC_IN_VACUUM)
 			continue;			/* ignore vacuum processes */
 
 		pid = proc->pid;
@@ -4367,8 +4325,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 		memcpy(snapshot->xip, gxip, gxcnt * sizeof(TransactionId));
 		snapshot->curcid = GetCurrentCommandId(false);
 
-		if (!TransactionIdIsValid(MyPgXact->xmin))
-			MyPgXact->xmin = TransactionXmin = gxmin;
+		if (!TransactionIdIsValid(MyProc->xmin))
+			MyProc->xmin = TransactionXmin = gxmin;
 
 		/*
 		 * We should update RecentXmin here. But we have recently seen some
@@ -4403,8 +4361,7 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 		{
 			int			pgprocno = arrayP->pgprocnos[index];
 			volatile PGPROC *proc = &allProcs[pgprocno];
-			volatile PGXACT *pgxact = &allPgXact[pgprocno];
-
+		
 			/* Do that only for an autovacuum process */
 			if (pgxact->vacuumFlags & PROC_IS_AUTOVACUUM)
 			{
@@ -4445,8 +4402,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 			}
 		}
 
-		if (!TransactionIdIsValid(MyPgXact->xmin))
-			MyPgXact->xmin = snapshot->xmin;
+		if (!TransactionIdIsValid(MyProc->xmin))
+			MyProc->xmin = snapshot->xmin;
 
 		LWLockRelease(ProcArrayLock);
 		/* End handling of local analyze XID in snapshots */
@@ -4513,8 +4470,8 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 		memcpy(snapshot->xip, gtm_snapshot->sn_xip, gtm_snapshot->sn_xcnt * sizeof(TransactionId));
 		snapshot->curcid = GetCurrentCommandId(false);
 
-		if (!TransactionIdIsValid(MyPgXact->xmin))
-			MyPgXact->xmin = TransactionXmin = snapshot->xmin;
+		if (!TransactionIdIsValid(MyProc->xmin))
+			MyProc->xmin = TransactionXmin = snapshot->xmin;
 
 		/*
 		 * We should update RecentXmin here. But we have recently seen some
@@ -5119,8 +5076,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 		memcpy(snapshot->xip, gxip, gxcnt * sizeof(TransactionId));
 		snapshot->curcid = GetCurrentCommandId(false);
 
-		if (!TransactionIdIsValid(MyPgXact->xmin))
-			MyPgXact->xmin = TransactionXmin = gxmin;
+		if (!TransactionIdIsValid(MyProc->xmin))
+			MyProc->xmin = TransactionXmin = gxmin;
 
 		/*
 		 * We should update RecentXmin here. But we have recently seen some
@@ -5155,22 +5112,21 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 		{
 			int			pgprocno = arrayP->pgprocnos[index];
 			volatile PGPROC *proc = &allProcs[pgprocno];
-			volatile PGXACT *pgxact = &allPgXact[pgprocno];
-
+		
 			/* Do that only for an autovacuum process */
-			if (pgxact->vacuumFlags & PROC_IS_AUTOVACUUM)
+			if (proc->statusFlags & PROC_IS_AUTOVACUUM)
 			{
 				TransactionId xid;
 
 				/* Update globalxmin to be the smallest valid xmin */
-				xid = pgxact->xmin;		/* fetch just once */
+				xid = proc->xmin;		/* fetch just once */
 
 				if (TransactionIdIsNormal(xid) &&
 					TransactionIdPrecedes(xid, RecentGlobalXmin))
 					RecentGlobalXmin = xid;
 
 				/* Fetch xid just once - see GetNewTransactionId */
-				xid = pgxact->xid;
+				xid = proc->xid;
 
 				/*
 				 * If the transaction has been assigned an xid < xmax we add it to the
@@ -5189,7 +5145,7 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 					{
 						resizeXip(snapshot, snapshot->xcnt+1);
 						snapshot->xip[snapshot->xcnt++] = xid;
-						elog(DEBUG1, "Adding Analyze for xid %d to snapshot", pgxact->xid);
+						elog(DEBUG1, "Adding Analyze for xid %d to snapshot", proc->xid);
 					}
 					if (TransactionIdPrecedes(xid, snapshot->xmin))
 						snapshot->xmin = xid;
@@ -5197,8 +5153,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 			}
 		}
 
-		if (!TransactionIdIsValid(MyPgXact->xmin))
-			MyPgXact->xmin = snapshot->xmin;
+		if (!TransactionIdIsValid(MyProc->xmin))
+			MyProc->xmin = snapshot->xmin;
 
 		LWLockRelease(ProcArrayLock);
 		/* End handling of local analyze XID in snapshots */
@@ -5265,8 +5221,8 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 		memcpy(snapshot->xip, gtm_snapshot->sn_xip, gtm_snapshot->sn_xcnt * sizeof(TransactionId));
 		snapshot->curcid = GetCurrentCommandId(false);
 
-		if (!TransactionIdIsValid(MyPgXact->xmin))
-			MyPgXact->xmin = TransactionXmin = snapshot->xmin;
+		if (!TransactionIdIsValid(MyProc->xmin))
+			MyProc->xmin = TransactionXmin = snapshot->xmin;
 
 		/*
 		 * We should update RecentXmin here. But we have recently seen some

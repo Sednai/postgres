@@ -753,7 +753,6 @@ AlterSubscription_refresh(Subscription *sub, bool copy_data,
 	List	   *subrel_states;
 	Oid		   *subrel_local_oids;
 	Oid		   *pubrel_local_oids;
-	WalReceiverConn *wrconn;
 	ListCell   *lc;
 	int			off;
 	int			remove_rel_len;

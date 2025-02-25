@@ -128,8 +128,6 @@ extern void UnregisterSnapshot(Snapshot snapshot);
 extern Snapshot RegisterSnapshotOnOwner(Snapshot snapshot, ResourceOwner owner);
 extern void UnregisterSnapshotFromOwner(Snapshot snapshot, ResourceOwner owner);
 
-extern FullTransactionId GetFullRecentGlobalXmin(void);
-
 extern void AtSubCommit_Snapshot(int level);
 extern void AtSubAbort_Snapshot(int level);
 extern void AtEOXact_Snapshot(bool isCommit, bool resetXmin);

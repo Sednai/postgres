@@ -488,8 +488,9 @@ SetRemoteStatementName(Plan *plan, const char *stmt_name, int num_params,
 	}
 	else if (IsA(plan, ModifyTable))
 	{
+		/*
 		ModifyTable	*mt_plan = (ModifyTable *)plan;
-		/* For ModifyTable plan recurse into each of the plans underneath */
+		//  For ModifyTable plan recurse into each of the plans underneath 
 		ListCell	*l;
 		foreach(l, mt_plan->plans)
 		{
@@ -497,6 +498,7 @@ SetRemoteStatementName(Plan *plan, const char *stmt_name, int num_params,
 			n = SetRemoteStatementName(plan, stmt_name, num_params,
 										param_types, n);
 		}
+		*/
 	}
 
 	if (innerPlan(plan))

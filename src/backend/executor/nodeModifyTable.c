@@ -79,6 +79,15 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 
+#ifdef PGXC
+static TupleTableSlot *fill_slot_with_oldvals(TupleTableSlot *slot, HeapTupleHeader oldtuphd, Bitmapset *modifiedCols);
+
+/* Copied from trigger.c */
+#define GetUpdatedColumns(relinfo, estate) \
+	(rt_fetch((*relinfo)->ri_RangeTableIndex, (estate)->es_range_table)->updatedCols)
+/* Copied from tid.c */
+#define DatumGetItemPointer(X)	 ((ItemPointer) DatumGetPointer(X))
+#endif
 
 typedef struct MTTargetRelLookup
 {
@@ -253,14 +262,9 @@ ExecCheckPlanOutput(Relation resultRel, List *targetList)
 /*
  * ExecProcessReturning --- evaluate a RETURNING list
  *
- * projectReturning: the projection to evaluate
- * resultRelOid: result relation's OID
+ * resultRelInfo: current result rel
  * tupleSlot: slot holding tuple actually inserted/updated/deleted
  * planSlot: slot holding tuple returned by top subplan node
- *
- * In cross-partition UPDATE cases, projectReturning and planSlot are as
- * for the source partition, and tupleSlot must conform to that.  But
- * resultRelOid is for the destination partition.
  *
  * Note: If tupleSlot is NULL, the FDW should have already provided econtext's
  * scan tuple.
@@ -268,25 +272,24 @@ ExecCheckPlanOutput(Relation resultRel, List *targetList)
  * Returns a slot holding the result tuple
  */
 static TupleTableSlot *
-ExecProcessReturning(ProjectionInfo *projectReturning,
-					 Oid resultRelOid,
+ExecProcessReturning(ResultRelInfo *resultRelInfo,
 					 TupleTableSlot *tupleSlot,
 					 TupleTableSlot *planSlot)
 {
+	ProjectionInfo *projectReturning = resultRelInfo->ri_projectReturning;
 	ExprContext *econtext = projectReturning->pi_exprContext;
 
 	/* Make tuple and any needed join variables available to ExecProject */
 	if (tupleSlot)
 		econtext->ecxt_scantuple = tupleSlot;
-	else
-		Assert(econtext->ecxt_scantuple);
 	econtext->ecxt_outertuple = planSlot;
 
 	/*
-	 * RETURNING expressions might reference the tableoid column, so be sure
-	 * we expose the desired OID, ie that of the real target relation.
+	 * RETURNING expressions might reference the tableoid column, so
+	 * reinitialize tts_tableOid before evaluating them.
 	 */
-	econtext->ecxt_scantuple->tts_tableOid = resultRelOid;
+	econtext->ecxt_scantuple->tts_tableOid =
+		RelationGetRelid(resultRelInfo->ri_RelationDesc);
 
 	/* Compute the RETURNING expressions */
 	return ExecProject(projectReturning);
@@ -1162,11 +1165,9 @@ ExecInsert(ModifyTableContext *context,
 			/* PGXC: tts_id not set currently */
 		else {
 			(estate->es_processed)++;
-			setLastTid(&slot->tts_tid);
 		}
 #else
 		(estate->es_processed)++;
-		setLastTid(&slot->tts_tid);
 #endif
 	}
 		(estate->es_processed)++;
@@ -1541,7 +1542,7 @@ ldelete:;
 			 * delete from t2 where a = 1;
 			 * ERROR:  operator does not exist: tid = integer
 			 */
-			slot = ExecProcNodeDMLInXC(estate, planSlot, pslot);
+			slot = ExecProcNodeDMLInXC(estate, context->planSlot, pslot);
 		}
 		else
 		{
@@ -1868,8 +1869,12 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 			   false,			/* processReturning */
 			   true,			/* changingPart */
 			   false,			/* canSetTag */
+#ifndef PGXC
 			   tmresult, &tuple_deleted, &epqslot);
+#else
+			   tmresult, &tuple_deleted, &epqslot, slot);
 
+#endif
 	/*
 	 * For some reason if DELETE didn't happen (e.g. trigger prevented it, or
 	 * it was already deleted by self, or it was concurrently deleted by
@@ -2339,12 +2344,31 @@ ExecUpdate(ModifyTableContext *context, ResultRelInfo *resultRelInfo,
 	Relation	resultRelationDesc = resultRelInfo->ri_RelationDesc;
 	UpdateContext updateCxt = {0};
 	TM_Result	result;
+#ifdef PGXC
+	RemoteQueryState  *resultRemoteRel = NULL;
+#endif
 
 	/*
 	 * abort the operation if not running transactions
 	 */
 	if (IsBootstrapProcessingMode())
 		elog(ERROR, "cannot UPDATE during bootstrap");
+
+#ifdef PGXC
+	resultRemoteRel = (RemoteQueryState *) estate->es_result_remoterel;
+
+	/*
+	 * For remote tables, the plan slot does not have all NEW tuple values in
+	 * the plan slot. If oldtuple is supplied, we would also need a complete
+	 * NEW tuple. Currently for remote tables, triggers are the only case where
+	 * oldtuple is passed. Craft the NEW tuple using OLD tuple and updated
+	 * values from NEW tuple slot, and store the NEW tuple back into the NEW
+	 * tuple slot.
+	 */
+	if (IS_PGXC_COORDINATOR && resultRemoteRel && oldtuple != NULL)
+		slot = fill_slot_with_oldvals(slot, oldtuple->t_data,
+				GetUpdatedColumns(estate->es_result_relations, estate));
+#endif
 
 	/*
 	 * Prepare for the update.  This includes BEFORE ROW triggers, so we're
@@ -2566,7 +2590,9 @@ redo_act:
 		else
 #endif
 		(estate->es_processed)++;
-
+#ifdef PGXC
+	}
+#endif
 	ExecUpdateEpilogue(context, &updateCxt, resultRelInfo, tupleid, oldtuple,
 					   slot);
 
@@ -4026,7 +4052,12 @@ ExecModifyTable(PlanState *pstate)
 
 			case CMD_DELETE:
 				slot = ExecDelete(&context, resultRelInfo, tupleid, oldtuple,
-								  true, false, node->canSetTag, NULL, NULL, NULL);
+								  true, false, node->canSetTag, 
+#ifndef PGXC
+								  false /* changingPart */ , NULL, NULL);
+#else
+								  false /* changingPart */ , NULL, NULL, slot);
+#endif
 				break;
 
 			case CMD_MERGE:
@@ -4133,7 +4164,9 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	ListCell   *l;
 	int			i;
 	Relation	rel;
-
+#ifdef PGXC
+	PlanState  *saved_remoteRelInfo;
+#endif
 	/* check for unsupported flags */
 	Assert(!(eflags & (EXEC_FLAG_BACKWARD | EXEC_FLAG_MARK)));
 
@@ -4156,7 +4189,9 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	mtstate->mt_merge_inserted = 0;
 	mtstate->mt_merge_updated = 0;
 	mtstate->mt_merge_deleted = 0;
-
+#ifdef PGXC		
+	mtstate->mt_remoterels = (PlanState **) palloc0(sizeof(PlanState *) * nrels);
+#endif	
 	/*----------
 	 * Resolve the target relation. This is the same as:
 	 *
@@ -4196,6 +4231,10 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	 */
 	if (!(eflags & EXEC_FLAG_EXPLAIN_ONLY))
 		ExecSetupTransitionCaptureState(mtstate, estate);
+
+#ifdef PGXC
+	saved_remoteRelInfo = estate->es_result_remoterel;
+#endif
 
 	/*
 	 * Open all the result relations and initialize the ResultRelInfo structs.
@@ -4245,7 +4284,16 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	 */
 	for (i = 0; i < nrels; i++)
 	{
+#ifdef PGXC			
+		Plan *remoteplan = NULL;
+#endif		
+
 		resultRelInfo = &mtstate->resultRelInfo[i];
+
+#ifdef PGXC	
+		if (node->remote_plans)
+			remoteplan = list_nth(node->remote_plans, i);
+#endif		
 
 		/* Let FDWs init themselves for foreign-table result rels */
 		if (!resultRelInfo->ri_usesFdwDirectModify &&

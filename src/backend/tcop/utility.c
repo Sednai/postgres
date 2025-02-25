@@ -973,31 +973,6 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 			AlterDatabaseRefreshColl((AlterDatabaseRefreshCollStmt *) parsetree);
 			break;
 
-		case T_AlterDatabaseRefreshCollStmt:
-			/* no event triggers for global objects */
-			AlterDatabaseRefreshColl((AlterDatabaseRefreshCollStmt *) parsetree);
-			break;
-
-		case T_AlterDatabaseRefreshCollStmt:
-			/* no event triggers for global objects */
-			AlterDatabaseRefreshColl((AlterDatabaseRefreshCollStmt *) parsetree);
-			break;
-
-		case T_AlterDatabaseRefreshCollStmt:
-			/* no event triggers for global objects */
-			AlterDatabaseRefreshColl((AlterDatabaseRefreshCollStmt *) parsetree);
-			break;
-
-		case T_AlterDatabaseRefreshCollStmt:
-			/* no event triggers for global objects */
-			AlterDatabaseRefreshColl((AlterDatabaseRefreshCollStmt *) parsetree);
-			break;
-
-		case T_AlterDatabaseRefreshCollStmt:
-			/* no event triggers for global objects */
-			AlterDatabaseRefreshColl((AlterDatabaseRefreshCollStmt *) parsetree);
-			break;
-
 		case T_AlterDatabaseSetStmt:
 			/* no event triggers for global objects */
 			AlterDatabaseSet((AlterDatabaseSetStmt *) parsetree);
@@ -1010,6 +985,8 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 		case T_DropdbStmt:
 			{
 #ifdef PGXC
+				DropdbStmt *stmt = (DropdbStmt *) parsetree;
+				
 				/* Clean connections before dropping a database on local node */
 				if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
 				{
@@ -1759,6 +1736,80 @@ ProcessUtilitySlow(ParseState *pstate,
 					stmts = transformCreateStmt((CreateStmt *) parsetree,
 												queryString);
 
+
+#ifdef PGXC
+					ListCell   *l;
+					bool		is_temp = false;
+					bool		is_local = false;
+
+					if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+					{
+						/*
+						 * Scan the list of objects.
+						 * Temporary tables are created on Datanodes only.
+						 * Non-temporary objects are created on all nodes.
+						 * In case temporary and non-temporary objects are mized return an error.
+						 */
+						bool	is_first = true;
+
+						foreach(l, stmts)
+						{
+							Node       *stmt = (Node *) lfirst(l);
+
+							if (IsA(stmt, CreateStmt))
+							{
+								CreateStmt *stmt_loc = (CreateStmt *) stmt;
+								bool is_object_temp = stmt_loc->relation->relpersistence == RELPERSISTENCE_TEMP;
+								bool is_object_local = stmt_loc->islocal; 
+								if (is_first)
+								{
+									is_first = false;
+									if (is_object_temp)
+										is_temp = true;
+									if(is_object_local) 
+										is_local = true;
+								}
+								else
+								{
+									if (is_object_temp != is_temp)
+										ereport(ERROR,
+												(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+												 errmsg("CREATE not supported for TEMP and non-TEMP objects"),
+												 errdetail("You should separate TEMP and non-TEMP objects")));
+									
+									if (is_object_local != is_local)
+										ereport(ERROR,
+												(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+												 errmsg("CREATE not supported for LOCAL and non-LOCAL objects"),
+												 errdetail("You should separate LOCAL and non-LOCAL objects")));							
+								}
+							}
+							else if (IsA(stmt, CreateForeignTableStmt))
+							{
+								/* There are no temporary foreign tables */
+								if (is_first)
+								{
+									is_first = false;
+								}
+								else
+								{
+									if (!is_temp)
+										ereport(ERROR,
+												(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+												 errmsg("CREATE not supported for TEMP and non-TEMP objects"),
+												 errdetail("You should separate TEMP and non-TEMP objects")));
+								}
+							}
+						}
+					}
+
+					/*
+					 * Add a RemoteQuery node for a query at top level on a remote
+					 * Coordinator, if not already done so
+					 */
+					if (!sentToRemote)
+						stmts = AddRemoteQueryNode(stmts, queryString, is_local ? EXEC_ON_NONE : EXEC_ON_ALL_NODES, is_temp);
+#endif
 					/*
 					 * ... and do it.  We can't use foreach() because we may
 					 * modify the list midway through, so pick off the
@@ -4285,27 +4336,25 @@ CreateCommandTag(Node *parsetree)
 			break;
 
 #ifdef PGXC
-
 		case T_AlterNodeStmt:
-			tag = "ALTER NODE";
+			tag = CMDTAG_ALTER_NODE; 
 			break;
 		
 		case T_CreateNodeStmt:
-			tag = "CREATE NODE";
+			tag = CMDTAG_CREATE_NODE; 
 			break;
 		
 		case T_DropNodeStmt:
-			tag = "DROP NODE";
+			tag = CMDTAG_DROP_NODE;
 			break;
 
 		case T_CreateGroupStmt:
-			tag = "CREATE NODE GROUP";
+			tag = CMDTAG_CREATE_NODE_GROUP;
 			break;
 
 		case T_DropGroupStmt:
-			tag = "DROP NODE GROUP";
+			tag = CMDTAG_DROP_NODE_GROUP;
 			break;
-
 #endif
 
 		case T_ReindexStmt:
@@ -4539,10 +4588,10 @@ CreateCommandTag(Node *parsetree)
 
 #ifdef PGXC
 		case T_ExecDirectStmt:
-			tag = "EXECUTE DIRECT";
+			tag = CMDTAG_EXECUTE_DIRECT;
 			break;
 		case T_CleanConnStmt:
-			tag = "CLEAN CONNECTION";
+			tag = CMDTAG_CLEAN_CONNECTION;
 			break;
 #endif	
 	
