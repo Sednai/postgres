@@ -516,16 +516,30 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 	join_expr->rarg = (Node *)right_rtr;
 	join_expr->quals = (Node *)make_ands_explicit(join_clauses);
 
+	/* PG15 TOFIX */
+	ParseNamespaceColumn* pncol;
+
+
+
 	/* Build the RTE for JOIN query being created and add it to the rtable */
 	/* We need to construct joinaliasvars from the joining RTEs */
 	expandRTE(left_rte, left_rtr->rtindex, 0, -1, false, NULL, &left_colvars);
 	expandRTE(right_rte, right_rtr->rtindex, 0, -1, false, NULL, &right_colvars);
+
+	elog(ERROR,"PG15-XC JOINS CURRENTLY DEACTIVATED");
+	/*
 	join_rte = addRangeTableEntryForJoin(NULL,
 										list_concat(copyObject(left_colnames),
 													copyObject(right_colnames)),
+										pncol,
 										rqpath->jointype,
 										list_concat(left_colvars, right_colvars),
-										NULL, false);
+										NULL, 
+
+										rqpath->join_using_alias,
+										rqpath->alias,
+										false);
+	*/
 	rtable = lappend(rtable, join_rte);
 	/* Put the index of this RTE in Join expression */
 	join_expr->rtindex = list_length(rtable);

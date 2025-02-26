@@ -4279,7 +4279,7 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 			gxmin = gtm_snapshot->sn_xmin;
 			gxmax = gtm_snapshot->sn_xmax;
 			gxcnt = gtm_snapshot->sn_xcnt;
-			RecentGlobalXmin = gtm_snapshot->sn_recent_global_xmin;
+			//RecentGlobalXmin = gtm_snapshot->sn_recent_global_xmin;
 			if (gxip)
 				free(gxip);
 			if (gxcnt > 0)
@@ -4295,8 +4295,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 			}
 			else
 				gxip = NULL;
-			elog(DEBUG1, "for autovacuum from GTM: xmin = %d, xmax = %d, xcnt = %d, RecGlobXmin = %d",
-				gxmin, gxmax, gxcnt, RecentGlobalXmin);
+			elog(DEBUG1, "for autovacuum from GTM: xmin = %d, xmax = %d, xcnt = %d",
+				gxmin, gxmax, gxcnt);
 		}
 	}
 
@@ -4370,10 +4370,11 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 				/* Update globalxmin to be the smallest valid xmin */
 				xid = pgxact->xmin;		/* fetch just once */
 
+				/* PG 15 REMOVED
 				if (TransactionIdIsNormal(xid) &&
 					TransactionIdPrecedes(xid, RecentGlobalXmin))
 					RecentGlobalXmin = xid;
-
+				*/
 				/* Fetch xid just once - see GetNewTransactionId */
 				xid = pgxact->xid;
 
@@ -4447,9 +4448,11 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 		snapshot->xmin = gtm_snapshot->sn_xmin;
 		snapshot->xmax = gtm_snapshot->sn_xmax;
 		snapshot->xcnt = gtm_snapshot->sn_xcnt;
+		/* REMOVED PG15
 		RecentGlobalXmin = gtm_snapshot->sn_recent_global_xmin;
-		elog(DEBUG1, "from GTM: xmin = %d, xmax = %d, xcnt = %d, RecGlobXmin = %d",
-			snapshot->xmin, snapshot->xmax, snapshot->xcnt, gtm_snapshot->sn_recent_global_xmin);
+		*/
+		elog(DEBUG1, "from GTM: xmin = %d, xmax = %d, xcnt = %d",
+			snapshot->xmin, snapshot->xmax, snapshot->xcnt);
 		/*
 		 * Allocating space for maxProcs xids is usually overkill; numProcs would
 		 * be sufficient.  But it seems better to do the malloc while not holding
@@ -5030,7 +5033,7 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 			gxmin = gtm_snapshot->sn_xmin;
 			gxmax = gtm_snapshot->sn_xmax;
 			gxcnt = gtm_snapshot->sn_xcnt;
-			RecentGlobalXmin = gtm_snapshot->sn_recent_global_xmin;
+			//RecentGlobalXmin = gtm_snapshot->sn_recent_global_xmin;
 			if (gxip)
 				free(gxip);
 			if (gxcnt > 0)
@@ -5046,8 +5049,8 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 			}
 			else
 				gxip = NULL;
-			elog(DEBUG1, "for autovacuum from GTM: xmin = %d, xmax = %d, xcnt = %d, RecGlobXmin = %d",
-				gxmin, gxmax, gxcnt, RecentGlobalXmin);
+			elog(DEBUG1, "for autovacuum from GTM: xmin = %d, xmax = %d, xcnt = %d",
+				gxmin, gxmax, gxcnt);
 		}
 	}
 
@@ -5121,9 +5124,11 @@ GetSnapshotDataDataNode(Snapshot snapshot)
 				/* Update globalxmin to be the smallest valid xmin */
 				xid = proc->xmin;		/* fetch just once */
 
+				/* REMOVED PG15
 				if (TransactionIdIsNormal(xid) &&
 					TransactionIdPrecedes(xid, RecentGlobalXmin))
 					RecentGlobalXmin = xid;
+				*/
 
 				/* Fetch xid just once - see GetNewTransactionId */
 				xid = proc->xid;
@@ -5198,9 +5203,9 @@ GetSnapshotDataCoordinator(Snapshot snapshot)
 		snapshot->xmin = gtm_snapshot->sn_xmin;
 		snapshot->xmax = gtm_snapshot->sn_xmax;
 		snapshot->xcnt = gtm_snapshot->sn_xcnt;
-		RecentGlobalXmin = gtm_snapshot->sn_recent_global_xmin;
-		elog(DEBUG1, "from GTM: xmin = %d, xmax = %d, xcnt = %d, RecGlobXmin = %d",
-			snapshot->xmin, snapshot->xmax, snapshot->xcnt, gtm_snapshot->sn_recent_global_xmin);
+		//RecentGlobalXmin = gtm_snapshot->sn_recent_global_xmin;
+		elog(DEBUG1, "from GTM: xmin = %d, xmax = %d, xcnt = %d",
+			snapshot->xmin, snapshot->xmax, snapshot->xcnt);
 		/*
 		 * Allocating space for maxProcs xids is usually overkill; numProcs would
 		 * be sufficient.  But it seems better to do the malloc while not holding

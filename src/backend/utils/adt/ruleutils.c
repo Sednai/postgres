@@ -406,7 +406,7 @@ static void set_deparse_plan(deparse_namespace *dpns, Plan *plan);
 static Plan *find_recursive_union(deparse_namespace *dpns,
 								  WorkTableScan *wtscan);
 #ifdef PGXC
-static void set_deparse_plan(deparse_namespace *dpns, Plan *plan);
+static void pgxc_set_deparse_plan(deparse_namespace *dpns, Plan *plan);
 #endif
 static void push_child_plan(deparse_namespace *dpns, Plan *plan,
 							deparse_namespace *save_dpns);
@@ -1591,7 +1591,11 @@ pg_get_querydef(Query *query, bool pretty)
 	initStringInfo(&buf);
 
 	get_query_def(query, &buf, NIL, NULL, true,
-				  prettyFlags, WRAP_COLUMN_DEFAULT, 0);
+				  prettyFlags, WRAP_COLUMN_DEFAULT, 0,
+#ifdef PGXC
+						false, false
+#endif /* PGXC */
+				  );
 
 	return buf.data;
 }
@@ -3595,7 +3599,11 @@ print_function_sqlbody(StringInfo buf, HeapTuple proctup)
 			/* It seems advisable to get at least AccessShareLock on rels */
 			AcquireRewriteLocks(query, false, false);
 			get_query_def(query, buf, list_make1(&dpns), NULL, false,
+#ifndef PGXC
 						  PRETTYFLAG_INDENT, WRAP_COLUMN_DEFAULT, 1);
+#else
+						  PRETTYFLAG_INDENT, WRAP_COLUMN_DEFAULT, 1, false, false);
+#endif
 			appendStringInfoChar(buf, ';');
 			appendStringInfoChar(buf, '\n');
 		}
@@ -3609,7 +3617,11 @@ print_function_sqlbody(StringInfo buf, HeapTuple proctup)
 		/* It seems advisable to get at least AccessShareLock on rels */
 		AcquireRewriteLocks(query, false, false);
 		get_query_def(query, buf, list_make1(&dpns), NULL, false,
+#ifndef PGXC
 					  0, WRAP_COLUMN_DEFAULT, 0);
+#else
+					  0, WRAP_COLUMN_DEFAULT, 0, false, false);
+#endif
 	}
 }
 
@@ -5128,104 +5140,6 @@ find_recursive_union(deparse_namespace *dpns, WorkTableScan *wtscan)
 	return NULL;
 }
 
-
-#ifdef PGXC
-/*
- * This is a special case deparse context to be used at the planning time to
- * generate query strings and expressions for remote shipping.
- *
- * XXX We should be careful while using this since the support is quite
- * limited. The only supported use case at this point is for remote join
- * reduction and some simple plan trees rooted by Agg node having a single
- * RemoteQuery node as leftree.
- */
-List *
-deparse_context_for_plan(Node *plan, List *ancestors,
-							  List *rtable)
-{
-	deparse_namespace *dpns;
-
-	dpns = (deparse_namespace *) palloc0(sizeof(deparse_namespace));
-
-	/* Initialize fields that stay the same across the whole plan tree */
-	dpns->rtable = rtable;
-	dpns->ctes = NIL;
-	dpns->remotequery = false;
-
-	/* Set our attention on the specific plan node passed in */
-	set_deparse_plan(dpns, (Plan *) plan);
-	dpns->ancestors = ancestors;
-
-	/* Return a one-deep namespace stack */
-	return list_make1(dpns);
-}
-
-/*
- * Set deparse context for Plan. Only those plan nodes which are immediate (or
- * through simple nodes) parents of RemoteQuery nodes are supported right now.
- *
- * This is a kind of work-around since the new deparse interface (since 9.1)
- * expects a PlanState node. But planstates are instantiated only at execution
- * time when InitPlan is called. But we are required to deparse the query
- * during planning time, so we hand-cook these dummy PlanState nodes instead of
- * init-ing the plan. Another approach could have been to delay the query
- * generation to the execution time, but we are not yet sure if this can be
- * safely done, especially for remote join reduction.
- */
-static void
-set_deparse_plan(deparse_namespace *dpns, Plan *plan)
-{
-
-	if (IsA(plan, NestLoop))
-	{
-		NestLoop *nestloop = (NestLoop *) plan;
-
-		dpns->planstate = (PlanState *) makeNode(NestLoopState);
-		dpns->planstate->plan = plan;
-
-		dpns->outer_planstate = (PlanState *) makeNode(PlanState);
-		dpns->outer_planstate->plan = nestloop->join.plan.lefttree;
-
-		dpns->inner_planstate = (PlanState *) makeNode(PlanState);
-		dpns->inner_planstate->plan = nestloop->join.plan.righttree;
-	}
-	else if (IsA(plan, RemoteQuery))
-	{
-		dpns->planstate = (PlanState *) makeNode(PlanState);
-		dpns->planstate->plan = plan;
-	}
-	else if (IsA(plan, Agg) || IsA(plan, Group))
-	{
-		/*
-		 * We expect plan tree as Group/Agg->Sort->Result->Material->RemoteQuery,
-		 * Result, Material nodes are optional. Sort is compulsory for Group but not
-		 * for Agg.
-		 * anything else is not handled right now.
-		 */
-		Plan *temp_plan = plan->lefttree;
-		Plan *remote_scan = NULL;
-
-		if (temp_plan && IsA(temp_plan, Sort))
-			temp_plan = temp_plan->lefttree;
-		if (temp_plan && IsA(temp_plan, Result))
-			temp_plan = temp_plan->lefttree;
-		if (temp_plan && IsA(temp_plan, Material))
-			temp_plan = temp_plan->lefttree;
-		if (temp_plan && IsA(temp_plan, RemoteQuery))
-			remote_scan = temp_plan;
-
-		if (!remote_scan)
-			elog(ERROR, "Deparse of this query at planning is not supported yet");
-
-		dpns->planstate = (PlanState *) makeNode(PlanState);
-		dpns->planstate->plan = plan;
-	}
-	else
-		elog(ERROR, "Deparse of this query at planning not supported yet");
-}
-
-#endif
-
 /*
  * push_child_plan: temporarily transfer deparsing attention to a child plan
  *
@@ -5486,7 +5400,7 @@ make_ruledef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 		foreach(action, actions)
 		{
 			query = (Query *) lfirst(action);
-			get_query_def(query, buf, NIL, viewResultDesc, true, true,
+			get_query_def(query, buf, NIL, viewResultDesc, true,
 						  prettyFlags, WRAP_COLUMN_DEFAULT, 0
 #ifdef PGXC
 						  , false, false
@@ -5504,7 +5418,7 @@ make_ruledef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 		Query	   *query;
 
 		query = (Query *) linitial(actions);
-		get_query_def(query, buf, NIL, viewResultDesc, true, true,
+		get_query_def(query, buf, NIL, viewResultDesc, true, 
 					  prettyFlags, WRAP_COLUMN_DEFAULT, 0
 #ifdef PGXC
 						  , false, false
@@ -5583,7 +5497,7 @@ make_viewdef(StringInfo buf, HeapTuple ruletup, TupleDesc rulettc,
 
 	ev_relation = table_open(ev_class, AccessShareLock);
 
-	get_query_def(query, buf, NIL, RelationGetDescr(ev_relation), true, true,
+	get_query_def(query, buf, NIL, RelationGetDescr(ev_relation), true,
 				  prettyFlags, wrapColumn, 0
 #ifdef PGXC
 						  , false, false
@@ -7638,7 +7552,7 @@ get_utility_query_def(Query *query, deparse_context *context)
 				Datum   sep, txt;
 				/* Below is inspired from flatten_reloptions() */
 				sep = CStringGetTextDatum(", ");
-				txt = OidFunctionCall2(F_ARRAY_TO_TEXT, reloptions, sep);
+				txt = OidFunctionCall2(F_ARRAY_TO_STRING_ANYARRAY_TEXT, reloptions, sep);
 				appendStringInfo(buf, " WITH (%s)", TextDatumGetCString(txt));
 			}
 		}
@@ -7914,18 +7828,18 @@ get_variable(Var *var, int levelsup, bool istoplevel, deparse_context *context)
 #ifdef PGXC
 	if (rte->rtekind == RTE_REMOTE_DUMMY &&
 		attnum > list_length(rte->eref->colnames) &&
-		dpns->planstate)
+		dpns->plan)
 	{
 		TargetEntry *tle;
 		RemoteQuery *rqplan;
-		Assert(IsA(dpns->planstate, RemoteQueryState));
+		Assert(IsA(dpns->plan, RemoteQueryPlan));
 		Assert(netlevelsup == 0);
 
 		/*
 		 * Get the expression representing the given Var from base_tlist of the
 		 * RemoteQuery
 		 */
-		rqplan = (RemoteQuery *)dpns->planstate->plan;
+		rqplan = (RemoteQuery *)dpns->plan;
 		Assert(IsA(rqplan, RemoteQuery));
 		tle = get_tle_by_resno(rqplan->base_tlist, var->varattno);
 		if (!tle)

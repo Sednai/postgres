@@ -1709,10 +1709,11 @@ pgxc_node_send_snapshot(PGXCNodeHandle *handle, Snapshot snapshot)
 	memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
 	handle->outEnd += 4;
 
+/* REMOVED FOR PG15
 	nval = htonl(RecentGlobalXmin);
 	memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
 	handle->outEnd += 4;
-
+*/
 	nval = htonl(snapshot->xcnt);
 	memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
 	handle->outEnd += 4;

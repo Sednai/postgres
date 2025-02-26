@@ -167,7 +167,7 @@ extern void ExecRemoteUtility(RemoteQuery *node);
 
 extern int handle_response(PGXCNodeHandle * conn, RemoteQueryState *combiner);
 extern bool	is_data_node_ready(PGXCNodeHandle * conn);
-extern void HandleCmdComplete(CmdType commandType, CombineTag *combine, const char *msg_body, size_t len);
+extern void HandleCmdComplete(CmdType commandType, CombineTag *combine, QueryCompletion* sqc);
 extern bool FetchTuple(RemoteQueryState *combiner, TupleTableSlot *slot);
 extern void BufferConnection(PGXCNodeHandle *conn);
 

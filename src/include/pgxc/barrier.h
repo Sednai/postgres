@@ -18,6 +18,7 @@
 
 #include "access/xlog.h"
 #include "access/xlogdefs.h"
+#include "tcop/cmdtag.h"
 
 #define CREATE_BARRIER_PREPARE	'P'
 #define CREATE_BARRIER_EXECUTE	'X'
@@ -37,7 +38,7 @@ extern void ProcessCreateBarrierPrepare(const char *id);
 extern void ProcessCreateBarrierEnd(const char *id);
 extern void ProcessCreateBarrierExecute(const char *id);
 
-extern void RequestBarrier(const char *id, char *completionTag);
+extern void RequestBarrier(const char *id, QueryCompletion* qc);
 extern void barrier_redo(XLogReaderState *record);
 extern void barrier_desc(StringInfo buf, XLogReaderState *record);
 extern const char *barrier_identify(uint8 info);

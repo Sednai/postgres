@@ -46,10 +46,6 @@ extern List *deparse_context_for_plan_tree(struct PlannedStmt *pstmt,
 										   List *rtable_names);
 extern List *set_deparse_context_plan(List *dpcontext,
 									  struct Plan *plan, List *ancestors);
-#ifdef PGXC
-extern List *deparse_context_for_plan(Node *plan, List *ancestors,
-							  List *rtable);
-#endif
 extern List *select_rtable_names_for_explain(List *rtable,
 											 Bitmapset *rels_used);
 extern char *generate_collation_name(Oid collid);

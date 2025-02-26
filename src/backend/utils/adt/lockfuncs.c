@@ -45,7 +45,6 @@ const char *const LockTagTypeNames[] = {
 	"object",
 	"userlock",
 	"advisory",
-	"frozenid"
 };
 
 StaticAssertDecl(lengthof(LockTagTypeNames) == (LOCKTAG_ADVISORY + 1),

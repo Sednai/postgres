@@ -5231,7 +5231,9 @@ PostgresMain(const char *dbname, const char *username)
 				/* Set the snapshot we were passed down */
 				xmin = pq_getmsgint(&input_message, 4);
 				xmax = pq_getmsgint(&input_message, 4);
+				/* REMOVED PG15
 				RecentGlobalXmin = pq_getmsgint(&input_message, 4);
+				*/
 				xcnt = pq_getmsgint(&input_message, 4);
 				if (xcnt > 0)
 				{

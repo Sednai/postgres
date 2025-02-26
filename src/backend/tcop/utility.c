@@ -575,7 +575,7 @@ ProcessUtility(PlannedStmt *pstmt,
 		(*ProcessUtility_hook) (pstmt, queryString, readOnlyTree,
 								context, params, queryEnv,
 #ifdef PGXC
-								dest, sentToRemote, completionTag);
+								dest, sentToRemote, qc);
 #else
 								dest, qc);
 #endif
@@ -583,7 +583,7 @@ ProcessUtility(PlannedStmt *pstmt,
 		standard_ProcessUtility(pstmt, queryString, readOnlyTree,
 								context, params, queryEnv,
 #ifdef PGXC
-								dest, sentToRemote, completionTag);
+								dest, sentToRemote, qc);
 #else
 								dest, qc);
 #endif
@@ -1093,6 +1093,8 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 				 * vacuum() pops active snapshot and we can not send it to nodes
 				 */
 				if (IS_PGXC_COORDINATOR) {
+					VacuumStmt *stmt = (VacuumStmt *) parsetree;
+
 					bool has_local;
 
 					ListCell   *cell;
@@ -1326,7 +1328,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 
 #ifdef PGXC
 		case T_BarrierStmt:
-			RequestBarrier(((BarrierStmt *) parsetree)->id, completionTag);
+			RequestBarrier(((BarrierStmt *) parsetree)->id, qc);
 			break;
 
 		/*
@@ -1358,9 +1360,11 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 		case T_ReindexStmt:
 			ExecReindex(pstate, (ReindexStmt *) parsetree, isTopLevel);
 #ifdef PGXC
-				if (IS_PGXC_COORDINATOR)
-					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote,
-										   stmt->kind == OBJECT_DATABASE, EXEC_ON_ALL_NODES, false);
+			ReindexStmt *stmt = (ReindexStmt *) parsetree;
+
+			if (IS_PGXC_COORDINATOR)
+				ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote,
+										stmt->kind == OBJECT_DATABASE, EXEC_ON_ALL_NODES, false);
 #endif
 			break;
 
@@ -2007,11 +2011,11 @@ ProcessUtilitySlow(ParseState *pstate,
 
 							if (OidIsValid(relid))
 							{
-								exec_type = ExecUtilityFindNodes(atstmt->relkind,
+								exec_type = ExecUtilityFindNodes(atstmt->objtype,
 																 relid,
 																 &is_temp);
 
-								stmts = AddRemoteQueryNode(stmts, queryString, exec_type, is_temp);
+								atstmt = AddRemoteQueryNode(atstmt, queryString, exec_type, is_temp);
 							}
 						}
 #endif
@@ -2968,6 +2972,9 @@ ProcessUtilityForAlterTable(Node *stmt, AlterTableUtilityContext *context)
 				   context->params,
 				   context->queryEnv,
 				   None_Receiver,
+#ifdef PGXC
+				   true,
+#endif /* PGXC */
 				   NULL);
 
 	EventTriggerAlterTableStart(context->pstmt->utilityStmt);

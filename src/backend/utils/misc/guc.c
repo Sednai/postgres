@@ -908,14 +908,17 @@ const char *const config_group_names[] =
 	/* XC_HOUSEKEEPING_OPTIONS */
 	gettext_noop("XC Housekeeping Options"),
 #endif
-
 	/* help_config wants this array to be null-terminated */
 	NULL
 };
 
+#ifndef PGXC
 StaticAssertDecl(lengthof(config_group_names) == (DEVELOPER_OPTIONS + 2),
 				 "array length mismatch");
-
+#else
+StaticAssertDecl(lengthof(config_group_names) == (XC_HOUSEKEEPING_OPTIONS + 2),
+				 "array length mismatch");
+#endif
 /*
  * Displayable names for GUC variable types (enum config_type)
  *
@@ -2118,7 +2121,6 @@ static struct config_bool ConfigureNamesBool[] =
 		NULL, NULL, NULL
 	},
 #ifdef PGXC
-
 	{
 		{"persistent_datanode_connections", PGC_BACKEND, DEVELOPER_OPTIONS,
 			gettext_noop("Session never releases acquired connections."),
@@ -2154,14 +2156,7 @@ static struct config_bool ConfigureNamesBool[] =
 			gettext_noop("Allows tablespaces directly inside pg_tblspc, for testing."),
 			NULL,
 			GUC_NOT_IN_SAMPLE
-		},
-		&allow_in_place_tablespaces,
-		false,
-		NULL, NULL, NULL
-	},
-
-	{
-		
+		},	
 		&allow_in_place_tablespaces,
 		false,
 		NULL, NULL, NULL

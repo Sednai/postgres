@@ -746,25 +746,28 @@ HandleError(RemoteQueryState *combiner, char *msg_body, size_t len)
  *	commandType is dml command type
  *	combineTag is used to combine the completion result
  *	msg_body is execution result needed to combine
- *	len is msg_body size
+ *	len is msg_body sizes
  */
+
+// PG15 TOFIX
 void
-HandleCmdComplete(CmdType commandType, CombineTag *combine,
-						const char *msg_body, size_t len)
+HandleCmdComplete(CmdType commandType, CombineTag *combine, QueryCompletion *qc)
 {
 	int	digits = 0;
 	uint64	originrowcount = 0;
 	uint64	rowcount = 0;
 	uint64	total = 0;
 
-	if (msg_body == NULL)
+	if (qc == NULL)
 		return;
 
 	/* if there's nothing in combine, just copy the msg_body */
 	if (strlen(combine->data) == 0)
 	{
-		strcpy(combine->data, msg_body);
+		/* PG15 DEACTIVATD 
+		strcpy(combine->data, qc->);
 		combine->cmdType = commandType;
+		*/
 		return;
 	}
 	else
@@ -774,7 +777,7 @@ HandleCmdComplete(CmdType commandType, CombineTag *combine,
 			return;
 
 		/* get the processed row number from msg_body */
-		digits = parse_row_count(msg_body, len + 1, &rowcount);
+		digits = qc->nprocessed;
 		elog(DEBUG1, "digits is %d\n", digits);
 		Assert(digits >= 0);
 
@@ -786,7 +789,6 @@ HandleCmdComplete(CmdType commandType, CombineTag *combine,
 		parse_row_count(combine->data, strlen(combine->data) + 1, &originrowcount);
 		elog(DEBUG1, "originrowcount is %lu, rowcount is %lu\n", originrowcount, rowcount);
 		total = originrowcount + rowcount;
-
 	}
 
 	/* output command completion tag */
@@ -4252,8 +4254,12 @@ ExecProcNodeDMLInXC(EState *estate,
 	 * Use data row returned by the previous step as parameter for
 	 * the DML to be executed in this step.
 	 */
+	/* PG15 DEACTIVATED FOR NOW 
+	
 	SetDataRowForIntParams(resultRelInfo->ri_junkFilter,
-	                       sourceDataSlot, newDataSlot, resultRemoteRel);
+	                       sourceDataSlot, newDataSlot, resultRemoteRel);	
+	*/
+	elog(ERROR,"PG15-XC NEEDS JUNKFILTER FIX !");
 
 	/*
 	 * do_query calls get_exec_connections to determine target nodes
@@ -4990,6 +4996,8 @@ SetDataRowForIntParams(JunkFilter *junkfilter,
 	StringInfoData	buf;
 	uint16			numparams = 0;
 	RemoteQuery		*step = (RemoteQuery *) rq_state->ss.ps.plan;
+	
+	AttrNumber junkAttNo = InvalidAttrNumber;
 
 	Assert(sourceSlot);
 
@@ -5001,7 +5009,9 @@ SetDataRowForIntParams(JunkFilter *junkfilter,
 	/* Add number of junk attributes */
 	if (junkfilter)
 	{
-		if (junkfilter->jf_junkAttNo)
+		junkAttNo = ExecFindJunkAttribute(junkfilter, "ctid");
+
+		if ( junkAttNo )
 			numparams++;
 		if (junkfilter->jf_xc_node_id)
 			numparams++;
@@ -5047,7 +5057,7 @@ SetDataRowForIntParams(JunkFilter *junkfilter,
 		if (junkfilter) /* Param types for specific junk attributes if present */
 		{
 			/* jf_junkAttNo always contains ctid */
-			if (AttributeNumberIsValid(junkfilter->jf_junkAttNo))
+			if (AttributeNumberIsValid( junkAttNo ))
 				rq_state->rqs_param_types[attindex] = TIDOID;
 
 			if (AttributeNumberIsValid(junkfilter->jf_xc_node_id))
@@ -5120,7 +5130,7 @@ SetDataRowForIntParams(JunkFilter *junkfilter,
 	if (junkfilter)
 	{
 		/* First one - jf_junkAttNo - always reprsents ctid */
-		pgxc_append_param_junkval(sourceSlot, junkfilter->jf_junkAttNo,
+		pgxc_append_param_junkval(sourceSlot, junkAttNo,
 								  TIDOID, &buf);
 		pgxc_append_param_junkval(sourceSlot, junkfilter->jf_xc_node_id,
 								  INT4OID, &buf);

@@ -435,7 +435,7 @@ EndBarrier(PGXCNodeAllHandles *prepared_handles, const char *id)
 }
 
 void
-RequestBarrier(const char *id, char *completionTag)
+RequestBarrier(const char *id, QueryCompletion* qc)
 {
 	PGXCNodeAllHandles *prepared_handles;
 	const char *barrier_id;
@@ -483,6 +483,6 @@ RequestBarrier(const char *id, char *completionTag)
 	/* Free the handles */
 	pfree_pgxc_all_handles(prepared_handles);
 
-	if (completionTag)
-		snprintf(completionTag, COMPLETION_TAG_BUFSIZE, "BARRIER %s", barrier_id);
+	if (qc)
+		SetQueryCompletion(qc, CMDTAG_CREATE_BARRIER, 1);
 }

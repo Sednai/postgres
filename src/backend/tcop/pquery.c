@@ -1384,8 +1384,7 @@ PortalRunMulti(Portal portal,
 				/* it's special for INSERT */
 				if (IS_PGXC_COORDINATOR &&
 					pstmt->commandType == CMD_INSERT)
-					HandleCmdComplete(pstmt->commandType, &combine,
-							completionTag, strlen(completionTag));
+					HandleCmdComplete(pstmt->commandType, &combine, qc);
 #endif
 			}
 			else
@@ -1474,10 +1473,12 @@ PortalRunMulti(Portal portal,
 	 * e.g.  an INSERT that does an UPDATE instead should not print "0 1" if
 	 * one row was updated.  See QueryRewrite(), step 3, for details.
 	 */
+/* PG15 DEACTIVATED
 #ifdef PGXC
 	if (IS_PGXC_COORDINATOR && combine.data[0] != '\0')
 		strcpy(completionTag, combine.data);
 #endif
+*/
 	if (qc && qc->commandTag == CMDTAG_UNKNOWN)
 	{
 		if (portal->qc.commandTag != CMDTAG_UNKNOWN)
@@ -1870,7 +1871,7 @@ PlannedStmtRequiresSnapshot(PlannedStmt *pstmt)
 		IsA(utilityStmt, NotifyStmt) ||
 		IsA(utilityStmt, UnlistenStmt) ||
 #ifdef PGXC
-		(IsA(utilityStmt, CheckPointStmt) && IS_PGXC_DATANODE)))
+		(IsA(utilityStmt, CheckPointStmt) && IS_PGXC_DATANODE))
 #else
 		IsA(utilityStmt, CheckPointStmt))
 #endif
