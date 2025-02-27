@@ -528,7 +528,7 @@ performRename(const ObjectAddress *object, const char *oldname, const char *newn
 	 * And rename object dependent if necessary
 	 */
 
-	depRel = heap_open(DependRelationId, RowExclusiveLock);
+	depRel = table_open(DependRelationId, RowExclusiveLock);
 
 	targetObjects = new_object_addresses();
 
@@ -550,7 +550,7 @@ performRename(const ObjectAddress *object, const char *oldname, const char *newn
 	/* And clean up */
 	free_object_addresses(targetObjects);
 
-	heap_close(depRel, RowExclusiveLock);
+	table_close(depRel, RowExclusiveLock);
 }
 #endif
 

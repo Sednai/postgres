@@ -3538,7 +3538,7 @@ ExecEndRemoteQuery(RemoteQueryState *node)
 	}
 
 	if (node->ss.ss_currentRelation)
-		heap_close(node->ss.ss_currentRelation, NoLock);
+		table_close(node->ss.ss_currentRelation, NoLock);
 	
 	CloseCombiner(node);
 }

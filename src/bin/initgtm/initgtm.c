@@ -37,6 +37,7 @@
 #include "miscadmin.h"
 
 #include "postgres.h"
+#include "pwd.h"
 
 /*
  * these values are passed in by makefile defines

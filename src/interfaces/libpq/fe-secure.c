@@ -269,11 +269,6 @@ pqsecure_raw_read(PGconn *conn, void *ptr, size_t len)
 				n = 0;
 				break;
 
-			case 0:
-				/* If errno didn't get set, treat it as regular EOF */
-				n = 0;
-				break;
-
 			default:
 				appendPQExpBuffer(&conn->errorMessage,
 								  libpq_gettext("could not receive data from server: %s\n"),

@@ -76,7 +76,7 @@ PgxcClassCreate(Oid pcrelid,
 	values[Anum_pgxc_class_nodes - 1] = PointerGetDatum(nodes_array);
 
 	/* Open the relation for insertion */
-	pgxcclassrel = heap_open(PgxcClassRelationId, RowExclusiveLock);
+	pgxcclassrel = table_open(PgxcClassRelationId, RowExclusiveLock);
 
 	htup = heap_form_tuple(pgxcclassrel->rd_att, values, nulls);
 
@@ -88,7 +88,7 @@ PgxcClassCreate(Oid pcrelid,
 	CatalogIndexInsert(indstate, htup);
 	CatalogCloseIndexes(indstate);
 	
-	heap_close(pgxcclassrel, RowExclusiveLock);
+	table_close(pgxcclassrel, RowExclusiveLock);
 }
 
 
@@ -115,7 +115,7 @@ PgxcClassAlter(Oid pcrelid,
 
 	Assert(OidIsValid(pcrelid));
 
-	rel = heap_open(PgxcClassRelationId, RowExclusiveLock);
+	rel = table_open(PgxcClassRelationId, RowExclusiveLock);
 	oldtup = SearchSysCacheCopy1(PGXCCLASSRELID,
 								 ObjectIdGetDatum(pcrelid));
 
@@ -188,7 +188,7 @@ PgxcClassAlter(Oid pcrelid,
 	indstate = CatalogOpenIndexes(rel);
 	CatalogIndexInsert(indstate, newtup);
 	CatalogCloseIndexes(indstate);
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 /*
@@ -204,7 +204,7 @@ RemovePgxcClass(Oid pcrelid)
 	/*
 	 * Delete the pgxc_class tuple.
 	 */
-	relation = heap_open(PgxcClassRelationId, RowExclusiveLock);
+	relation = table_open(PgxcClassRelationId, RowExclusiveLock);
 	tup = SearchSysCache(PGXCCLASSRELID,
 						 ObjectIdGetDatum(pcrelid),
 						 0, 0, 0);
@@ -216,5 +216,5 @@ RemovePgxcClass(Oid pcrelid)
 
 	ReleaseSysCache(tup);
 
-	heap_close(relation, RowExclusiveLock);
+	table_close(relation, RowExclusiveLock);
 }

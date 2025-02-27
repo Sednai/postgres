@@ -4615,7 +4615,7 @@ QueryRewriteCTAS(Query *parsetree, bool execute)
 		appendStringInfo(&cquery, " %s", selectstr);
 
 		raw_parsetree_list = pg_parse_query(cquery.data);
-		return pg_analyze_and_rewrite(linitial(raw_parsetree_list), cquery.data,
+		return pg_analyze_and_rewrite_fixedparams(linitial(raw_parsetree_list), cquery.data,
 				NULL, 0, NULL);
 	} else {
 		return NIL;

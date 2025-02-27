@@ -41,10 +41,6 @@
 #include "pgxc/pgxc.h"
 #endif
 
-
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-
 typedef struct convert_testexpr_context
 {
 	PlannerInfo *root;

@@ -14,7 +14,9 @@
 #ifndef PGXC_H
 #define PGXC_H
 
+#ifndef FRONTEND
 #include "storage/lwlock.h"
+#endif
 #include "postgres.h"
 
 extern bool isPGXCCoordinator;

@@ -26,9 +26,6 @@
 #include "utils/lsyscache.h"
 #include "utils/selfuncs.h"
 
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define NumRelids(a,b) NumRelids_new(a,b)
-
 /*
  * Data structure for accumulating info about possible range-query
  * clause pairs in clauselist_selectivity.

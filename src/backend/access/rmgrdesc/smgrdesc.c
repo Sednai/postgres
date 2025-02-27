@@ -26,22 +26,14 @@ smgr_desc(StringInfo buf, XLogReaderState *record)
 	if (info == XLOG_SMGR_CREATE)
 	{
 		xl_smgr_create *xlrec = (xl_smgr_create *) rec;
-#ifdef PGXC
-		char	   *path = relpathperm_client(xlrec->rnode, xlrec->forkNum,"");
-#else
 		char	   *path = relpathperm(xlrec->rnode, xlrec->forkNum);
-#endif
 		appendStringInfoString(buf, path);
 		pfree(path);
 	}
 	else if (info == XLOG_SMGR_TRUNCATE)
 	{
 		xl_smgr_truncate *xlrec = (xl_smgr_truncate *) rec;
-#ifdef PGXC
-		char	   *path = relpathperm_client(xlrec->rnode, MAIN_FORKNUM,"");
-#else
 		char	   *path = relpathperm(xlrec->rnode, MAIN_FORKNUM);
-#endif
 		appendStringInfo(buf, "%s to %u blocks flags %d", path,
 						 xlrec->blkno, xlrec->flags);
 		pfree(path);

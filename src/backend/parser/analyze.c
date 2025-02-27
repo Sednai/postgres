@@ -3450,7 +3450,7 @@ is_rel_child_of_rel(RangeTblEntry *child_rte, RangeTblEntry *parent_rte)
 	res = false;
 
 	/* Scan pg_inherits and get all the subclass OIDs one by one. */
-	relation = heap_open(InheritsRelationId, AccessShareLock);
+	relation = table_open(InheritsRelationId, AccessShareLock);
 	ScanKeyInit(&key[0], Anum_pg_inherits_inhparent, BTEqualStrategyNumber, F_OIDEQ, ObjectIdGetDatum(parentOID));
 	scan = systable_beginscan(relation, InheritsParentIndexId, true, SnapshotSelf, 1, key);
 
@@ -3467,7 +3467,7 @@ is_rel_child_of_rel(RangeTblEntry *child_rte, RangeTblEntry *parent_rte)
 	}
 
 	systable_endscan(scan);
-	heap_close(relation, AccessShareLock);
+	table_close(relation, AccessShareLock);
 	return res;
 }
 

@@ -325,7 +325,7 @@ PgxcNodeListAndCount(void)
 	 * 2) Then extract the node Oid
 	 * 3) Complete primary/preferred node information
 	 */
-	rel = heap_open(PgxcNodeRelationId, AccessShareLock);
+	rel = table_open(PgxcNodeRelationId, AccessShareLock);
 	scan = heap_beginscan(rel, SnapshotSelf, 0, NULL, NULL, NULL);
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
@@ -353,7 +353,7 @@ PgxcNodeListAndCount(void)
 		node->nodeispreferred = nodeForm->nodeis_preferred;
 	}
 	heap_endscan(scan);
-	heap_close(rel, AccessShareLock);
+	table_close(rel, AccessShareLock);
 
 	/* Finally sort the lists */
 	if (*shmemNumCoords > 1)
@@ -628,7 +628,7 @@ PgxcNodeAlter(AlterNodeStmt *stmt)
 				 errmsg("must be superuser to change cluster nodes")));
 
 	/* Look at the node tuple, and take exclusive lock on it */
-	rel = heap_open(PgxcNodeRelationId, RowExclusiveLock);
+	rel = table_open(PgxcNodeRelationId, RowExclusiveLock);
 
 	/* Check that node exists */
 	if (!OidIsValid(nodeOid))
@@ -735,7 +735,7 @@ PgxcNodeAlter(AlterNodeStmt *stmt)
 	if (OidIsValid(new_primary))
 		primary_data_node = new_primary;
 	/* Release lock at Commit */
-	heap_close(rel, NoLock);
+	table_close(rel, NoLock);
 }
 
 
@@ -782,7 +782,7 @@ PgxcNodeRemove(DropNodeStmt *stmt)
 	 */
 
 	/* Delete the pgxc_node tuple */
-	relation = heap_open(PgxcNodeRelationId, RowExclusiveLock);
+	relation = table_open(PgxcNodeRelationId, RowExclusiveLock);
 	tup = SearchSysCache1(PGXCNODEOID, ObjectIdGetDatum(noid));
 	is_primary = is_pgxc_nodeprimary(noid);
 	if (!HeapTupleIsValid(tup)) /* should not happen */
@@ -797,5 +797,5 @@ PgxcNodeRemove(DropNodeStmt *stmt)
 
 	if (is_primary)
 		primary_data_node = InvalidOid;
-	heap_close(relation, RowExclusiveLock);
+	table_close(relation, RowExclusiveLock);
 }

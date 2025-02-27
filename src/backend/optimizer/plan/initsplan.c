@@ -35,10 +35,6 @@
 #include "utils/lsyscache.h"
 #include "utils/typcache.h"
 
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-#define make_restrictinfo(a,b,c,d,e,f,g,h,i) make_restrictinfo_new(a,b,c,d,e,f,g,h,i)
-
 /* These parameters are set by GUC */
 int			from_collapse_limit;
 int			join_collapse_limit;
@@ -454,7 +450,6 @@ void
 create_lateral_join_info(PlannerInfo *root)
 {
 	bool		found_laterals = false;
-	Relids		prev_parents PG_USED_FOR_ASSERTS_ONLY = NULL;
 	Index		rti;
 	ListCell   *lc;
 

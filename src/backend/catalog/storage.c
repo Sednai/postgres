@@ -34,6 +34,9 @@
 #include "utils/hsearch.h"
 #include "utils/memutils.h"
 #include "utils/rel.h"
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#endif
 
 /* GUC variables */
 int			wal_skip_threshold = 2048;	/* in kilobytes */
@@ -525,7 +528,6 @@ RelationCopyStorage(SMgrRelation src, SMgrRelation dst,
 			char	   *relpath = relpathbackend(src->smgr_rnode.node,
 												 src->smgr_rnode.backend,
 												 forkNum);
-
 			ereport(ERROR,
 					(errcode(ERRCODE_DATA_CORRUPTED),
 					 errmsg("invalid page in block %u of relation %s",

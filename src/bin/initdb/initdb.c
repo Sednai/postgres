@@ -1556,7 +1556,7 @@ setup_nodeself(void)
 
 	PG_CMD_OPEN;
 
-	PG_CMD_PRINTF1("CREATE NODE %s WITH (type = 'coordinator');\n",
+	PG_CMD_PRINTF("CREATE NODE %s WITH (type = 'coordinator');\n",
 				   nodename);
 
 	PG_CMD_CLOSE;
@@ -3290,6 +3290,7 @@ main(int argc, char *argv[])
 		/* add suggested -l switch and "start" command */
 		/* translator: This is a placeholder in a shell command. */
 		appendPQExpBuffer(start_db_cmd, " -l %s start", _("logfile"));
+	}
 
 #ifdef PGXC
 	printf(_("\nSuccess.\n You can now start the database server of the Postgres-XC coordinator using:\n\n"

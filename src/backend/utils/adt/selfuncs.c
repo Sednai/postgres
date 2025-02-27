@@ -139,11 +139,6 @@
 #include "utils/timestamp.h"
 #include "utils/typcache.h"
 
-
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-#define NumRelids(a,b) NumRelids_new(a,b)
-
 /* Hooks for plugins to get control when we ask for stats */
 get_relation_stats_hook_type get_relation_stats_hook = NULL;
 get_index_stats_hook_type get_index_stats_hook = NULL;

@@ -102,7 +102,7 @@ PgxcGroupCreate(CreateGroupStmt *stmt)
 	values[Anum_pgxc_group_members - 1] = PointerGetDatum(nodes_array);
 
 	/* Open the relation for insertion */
-	rel = heap_open(PgxcGroupRelationId, RowExclusiveLock);
+	rel = table_open(PgxcGroupRelationId, RowExclusiveLock);
 	tup = heap_form_tuple(rel->rd_att, values, nulls);
 
 	/* Do the insertion */
@@ -115,7 +115,7 @@ PgxcGroupCreate(CreateGroupStmt *stmt)
 	CatalogIndexInsert(indstate, tup);
 	CatalogCloseIndexes(indstate);
 
-	heap_close(rel, RowExclusiveLock);
+	table_close(rel, RowExclusiveLock);
 }
 
 
@@ -146,7 +146,7 @@ PgxcGroupRemove(DropGroupStmt *stmt)
 						group_name)));
 
 	/* Delete the pgxc_group tuple */
-	relation = heap_open(PgxcGroupRelationId, RowExclusiveLock);
+	relation = table_open(PgxcGroupRelationId, RowExclusiveLock);
 	tup = SearchSysCache(PGXCGROUPOID, ObjectIdGetDatum(group_oid), 0, 0, 0);
 
 	if (!HeapTupleIsValid(tup)) /* should not happen */
@@ -156,5 +156,5 @@ PgxcGroupRemove(DropGroupStmt *stmt)
 
 	ReleaseSysCache(tup);
 
-	heap_close(relation, RowExclusiveLock);
+	table_close(relation, RowExclusiveLock);
 }

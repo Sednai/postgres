@@ -48,9 +48,6 @@
 #include "optimizer/paths.h"
 #include "optimizer/restrictinfo.h"
 
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-
 
 /*
  * Does this Var represent the CTID column of the specified baserel?

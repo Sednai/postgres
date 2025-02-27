@@ -23,9 +23,6 @@
 #include "optimizer/planmain.h"
 #include "utils/lsyscache.h"
 
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-
 /* Local functions */
 static void find_placeholders_recurse(PlannerInfo *root, Node *jtnode);
 static void find_placeholders_in_expr(PlannerInfo *root, Node *expr);

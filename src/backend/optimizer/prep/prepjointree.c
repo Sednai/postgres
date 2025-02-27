@@ -40,11 +40,6 @@
 #include "parser/parsetree.h"
 #include "rewrite/rewriteManip.h"
 
-
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define pull_varnos(a,b) pull_varnos_new(a,b)
-#define pull_varnos_of_level(a,b,c) pull_varnos_of_level_new(a,b,c)
-
 typedef struct pullup_replace_vars_context
 {
 	PlannerInfo *root;

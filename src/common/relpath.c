@@ -22,9 +22,7 @@
 #include "common/relpath.h"
 #include "storage/backendid.h"
 #ifdef PGXC
-#ifndef FRONTEND
 #include "pgxc/pgxc.h"
-#endif
 #endif
 /*
  * Lookup table of fork name by fork number.
@@ -148,7 +146,6 @@ GetDatabasePath(Oid dbNode, Oid spcNode)
  * the trouble considering BackendId is just int anyway.
  */
 
-#ifndef PGXC
 char *
 GetRelationPath(Oid dbNode, Oid spcNode, Oid relNode,
 				int backendId, ForkNumber forkNumber)
@@ -220,20 +217,9 @@ GetRelationPath(Oid dbNode, Oid spcNode, Oid relNode,
 	}
 	return path;
 }
-#else
-
-#ifndef FRONTEND
-char *
-GetRelationPath(Oid dbNode, Oid spcNode, Oid relNode,
-                int backendId, ForkNumber forkNumber)
-{
-    return GetRelationPath_client(dbNode, spcNode, relNode, backendId,
-            forkNumber, PGXCNodeName);
-}
-#endif
 
 char *
-GetRelationPath_client(Oid dbNode, Oid spcNode, Oid relNode,
+GetRelationPath_pgxc(Oid dbNode, Oid spcNode, Oid relNode,
                 int backendId, ForkNumber forkNumber,
                 const char *nodename)
 {
@@ -308,4 +294,3 @@ GetRelationPath_client(Oid dbNode, Oid spcNode, Oid relNode,
 	}
 	return path;
 }
-#endif

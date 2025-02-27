@@ -3754,3 +3754,204 @@ isQueryUsingTempRelation_walker(Node *node, void *context)
 								  isQueryUsingTempRelation_walker,
 								  context);
 }
+
+#ifdef PGXC
+
+/*
+ * get_rte_attribute_type
+ *		Get attribute type/typmod/collation information from a RangeTblEntry
+ */
+void
+get_rte_attribute_type(RangeTblEntry *rte, AttrNumber attnum,
+					   Oid *vartype, int32 *vartypmod, Oid *varcollid)
+{
+	switch (rte->rtekind)
+	{
+		case RTE_RELATION:
+			{
+				/* Plain relation RTE --- get the attribute's type info */
+				HeapTuple	tp;
+				Form_pg_attribute att_tup;
+
+				tp = SearchSysCache2(ATTNUM,
+									 ObjectIdGetDatum(rte->relid),
+									 Int16GetDatum(attnum));
+				if (!HeapTupleIsValid(tp))	/* shouldn't happen */
+					elog(ERROR, "cache lookup failed for attribute %d of relation %u",
+						 attnum, rte->relid);
+				att_tup = (Form_pg_attribute) GETSTRUCT(tp);
+
+				/*
+				 * If dropped column, pretend it ain't there.  See notes in
+				 * scanRTEForColumn.
+				 */
+				if (att_tup->attisdropped)
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_COLUMN),
+							 errmsg("column \"%s\" of relation \"%s\" does not exist",
+									NameStr(att_tup->attname),
+									get_rel_name(rte->relid))));
+				*vartype = att_tup->atttypid;
+				*vartypmod = att_tup->atttypmod;
+				*varcollid = att_tup->attcollation;
+				ReleaseSysCache(tp);
+			}
+			break;
+		case RTE_SUBQUERY:
+			{
+				/* Subselect RTE --- get type info from subselect's tlist */
+				TargetEntry *te = get_tle_by_resno(rte->subquery->targetList,
+												   attnum);
+
+				if (te == NULL || te->resjunk)
+					elog(ERROR, "subquery %s does not have attribute %d",
+						 rte->eref->aliasname, attnum);
+				*vartype = exprType((Node *) te->expr);
+				*vartypmod = exprTypmod((Node *) te->expr);
+				*varcollid = exprCollation((Node *) te->expr);
+			}
+			break;
+		case RTE_FUNCTION:
+			{
+				/* Function RTE */
+				ListCell   *lc;
+				int			atts_done = 0;
+
+				/* Identify which function covers the requested column */
+				foreach(lc, rte->functions)
+				{
+					RangeTblFunction *rtfunc = (RangeTblFunction *) lfirst(lc);
+
+					if (attnum > atts_done &&
+						attnum <= atts_done + rtfunc->funccolcount)
+					{
+						TypeFuncClass functypclass;
+						Oid			funcrettype;
+						TupleDesc	tupdesc;
+
+						attnum -= atts_done;	/* now relative to this func */
+						functypclass = get_expr_result_type(rtfunc->funcexpr,
+															&funcrettype,
+															&tupdesc);
+
+						if (functypclass == TYPEFUNC_COMPOSITE ||
+							functypclass == TYPEFUNC_COMPOSITE_DOMAIN)
+						{
+							/* Composite data type, e.g. a table's row type */
+							Form_pg_attribute att_tup;
+
+							Assert(tupdesc);
+							Assert(attnum <= tupdesc->natts);
+							att_tup = TupleDescAttr(tupdesc, attnum - 1);
+
+							/*
+							 * If dropped column, pretend it ain't there.  See
+							 * notes in scanRTEForColumn.
+							 */
+							if (att_tup->attisdropped)
+								ereport(ERROR,
+										(errcode(ERRCODE_UNDEFINED_COLUMN),
+										 errmsg("column \"%s\" of relation \"%s\" does not exist",
+												NameStr(att_tup->attname),
+												rte->eref->aliasname)));
+							*vartype = att_tup->atttypid;
+							*vartypmod = att_tup->atttypmod;
+							*varcollid = att_tup->attcollation;
+						}
+						else if (functypclass == TYPEFUNC_SCALAR)
+						{
+							/* Base data type, i.e. scalar */
+							*vartype = funcrettype;
+							*vartypmod = -1;
+							*varcollid = exprCollation(rtfunc->funcexpr);
+						}
+						else if (functypclass == TYPEFUNC_RECORD)
+						{
+							*vartype = list_nth_oid(rtfunc->funccoltypes,
+													attnum - 1);
+							*vartypmod = list_nth_int(rtfunc->funccoltypmods,
+													  attnum - 1);
+							*varcollid = list_nth_oid(rtfunc->funccolcollations,
+													  attnum - 1);
+						}
+						else
+						{
+							/*
+							 * addRangeTableEntryForFunction should've caught
+							 * this
+							 */
+							elog(ERROR, "function in FROM has unsupported return type");
+						}
+						return;
+					}
+					atts_done += rtfunc->funccolcount;
+				}
+
+				/* If we get here, must be looking for the ordinality column */
+				if (rte->funcordinality && attnum == atts_done + 1)
+				{
+					*vartype = INT8OID;
+					*vartypmod = -1;
+					*varcollid = InvalidOid;
+					return;
+				}
+
+				/* this probably can't happen ... */
+				ereport(ERROR,
+						(errcode(ERRCODE_UNDEFINED_COLUMN),
+						 errmsg("column %d of relation \"%s\" does not exist",
+								attnum,
+								rte->eref->aliasname)));
+			}
+			break;
+		case RTE_JOIN:
+			{
+				/*
+				 * Join RTE --- get type info from join RTE's alias variable
+				 */
+				Node	   *aliasvar;
+
+				Assert(attnum > 0 && attnum <= list_length(rte->joinaliasvars));
+				aliasvar = (Node *) list_nth(rte->joinaliasvars, attnum - 1);
+				Assert(aliasvar != NULL);
+				*vartype = exprType(aliasvar);
+				*vartypmod = exprTypmod(aliasvar);
+				*varcollid = exprCollation(aliasvar);
+			}
+			break;
+		case RTE_TABLEFUNC:
+		case RTE_VALUES:
+		case RTE_CTE:
+		case RTE_NAMEDTUPLESTORE:
+			{
+				/*
+				 * tablefunc, VALUES, CTE, or ENR RTE --- get type info from
+				 * lists in the RTE
+				 */
+				Assert(attnum > 0 && attnum <= list_length(rte->coltypes));
+				*vartype = list_nth_oid(rte->coltypes, attnum - 1);
+				*vartypmod = list_nth_int(rte->coltypmods, attnum - 1);
+				*varcollid = list_nth_oid(rte->colcollations, attnum - 1);
+
+				/* For ENR, better check for dropped column */
+				if (!OidIsValid(*vartype))
+					ereport(ERROR,
+							(errcode(ERRCODE_UNDEFINED_COLUMN),
+							 errmsg("column %d of relation \"%s\" does not exist",
+									attnum,
+									rte->eref->aliasname)));
+			}
+			break;
+		case RTE_RESULT:
+			/* this probably can't happen ... */
+			ereport(ERROR,
+					(errcode(ERRCODE_UNDEFINED_COLUMN),
+					 errmsg("column %d of relation \"%s\" does not exist",
+							attnum,
+							rte->eref->aliasname)));
+			break;
+		default:
+			elog(ERROR, "unrecognized RTE kind: %d", (int) rte->rtekind);
+	}
+}
+#endif

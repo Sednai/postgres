@@ -13,6 +13,9 @@
 #ifndef RELPATH_H
 #define RELPATH_H
 
+#ifdef PGXC
+#include "pgxc/pgxc.h"
+#endif
 /*
  *	'pgrminclude ignore' needed here because CppAsString2() does not throw
  *	an error if the symbol is not defined.
@@ -69,7 +72,7 @@ extern char *GetDatabasePath(Oid dbNode, Oid spcNode);
 extern char *GetRelationPath(Oid dbNode, Oid spcNode, Oid relNode,
 				int backendId, ForkNumber forkNumber);
 #ifdef PGXC
-extern char *GetRelationPath_client(Oid dbNode, Oid spcNode, Oid relNode,
+extern char *GetRelationPath_pgxc(Oid dbNode, Oid spcNode, Oid relNode,
                 int backendId, ForkNumber forkNumber,
                 const char *nodename);
 #endif
@@ -80,14 +83,20 @@ extern char *GetRelationPath_client(Oid dbNode, Oid spcNode, Oid relNode,
  */
 
 /* First argument is a RelFileNode */
+#ifndef PGXC
 #define relpathbackend(rnode, backend, forknum) \
 	GetRelationPath((rnode).dbNode, (rnode).spcNode, (rnode).relNode, \
 					backend, forknum)
+#else
+#define relpathbackend(rnode, backend, forknum) \
+    GetRelationPath_pgxc((rnode).dbNode, (rnode).spcNode, (rnode).relNode, \
+                    backend, forknum, PGXCNodeName)
+#endif
 
 #ifdef PGXC
-#define relpathbackend_client(rnode, backend, forknum, nodename) \
-    GetRelationPath_client((rnode).dbNode, (rnode).spcNode, (rnode).relNode, \
-                    backend, forknum, nodename)
+#define relpathbackend_client(rnode, backend, forknum) \
+    GetRelationPath_pgxc((rnode).dbNode, (rnode).spcNode, (rnode).relNode, \
+                    backend, forknum, "")
 #endif
 
 /* First argument is a RelFileNode */
@@ -95,16 +104,13 @@ extern char *GetRelationPath_client(Oid dbNode, Oid spcNode, Oid relNode,
 	relpathbackend(rnode, InvalidBackendId, forknum)
 
 #ifdef PGXC
-#define relpathperm_client(rnode, forknum, nodename) \
-    relpathbackend_client(rnode, InvalidBackendId, forknum, nodename)
+#define relpathperm_client(rnode, forknum) \
+	relpathbackend_client(rnode, InvalidBackendId, forknum)
 #endif
 
 /* First argument is a RelFileNodeBackend */
-#ifdef PGXC
 #define relpath(rnode, forknum) \
-    relpathbackend((rnode).node, InvalidBackendId, forknum)
-#else
-#define relpath(rnode, forknum) \
-    relpathbackend((rnode).node, (rnode).backend, forknum)
-#endif
+	relpathbackend((rnode).node, (rnode).backend, forknum)
+
+
 #endif							/* RELPATH_H */

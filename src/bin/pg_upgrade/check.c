@@ -494,7 +494,6 @@ check_databases_are_compatible(void)
 	}
 }
 
-
 /*
  * A previous run of pg_upgrade might have failed and the new cluster
  * directory recreated, but they might have forgotten to remove
@@ -1157,8 +1156,10 @@ check_for_incompatible_polymorphics(ClusterInfo *cluster)
 static void
 check_for_tables_with_oids(ClusterInfo *cluster)
 {
+	int			dbnum;
+	FILE	   *script = NULL;
+	bool		found = false;
 	char		output_path[MAXPGPATH];
-	char		typename[NAMEDATALEN];
 
 	prep_status("Checking for tables WITH OIDS");
 

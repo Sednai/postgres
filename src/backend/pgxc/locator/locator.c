@@ -674,7 +674,7 @@ RelationBuildLocator(Relation rel)
 				BTEqualStrategyNumber, F_OIDEQ,
 				ObjectIdGetDatum(RelationGetRelid(rel)));
 
-	pcrel = heap_open(PgxcClassRelationId, AccessShareLock);
+	pcrel = table_open(PgxcClassRelationId, AccessShareLock);
 	pcscan = systable_beginscan(pcrel, PgxcClassPgxcRelIdIndexId, true,
 								SnapshotSelf, 1, &skey);
 	htup = systable_getnext(pcscan);
@@ -684,7 +684,7 @@ RelationBuildLocator(Relation rel)
 		/* Assume local relation only */
 		rel->rd_locator_info = NULL;
 		systable_endscan(pcscan);
-		heap_close(pcrel, AccessShareLock);
+		table_close(pcrel, AccessShareLock);
 		return;
 	}
 
@@ -728,7 +728,7 @@ RelationBuildLocator(Relation rel)
 	}
 
 	systable_endscan(pcscan);
-	heap_close(pcrel, AccessShareLock);
+	table_close(pcrel, AccessShareLock);
 
 	MemoryContextSwitchTo(oldContext);
 }

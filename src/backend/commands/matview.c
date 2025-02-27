@@ -1127,7 +1127,7 @@ pgxc_send_matview_data(RangeVar *matview_rv, const char *query_string)
 	matviewOid = RangeVarGetRelidExtended(matview_rv,
 										  AccessShareLock, 0,
 										  RangeVarCallbackOwnsTable, NULL);
-	matviewRel = heap_open(matviewOid, NoLock);
+	matviewRel = table_open(matviewOid, NoLock);
 	tupdesc = RelationGetDescr(matviewRel);
 	values = (Datum *) palloc(tupdesc->natts * sizeof(Datum));
 	nulls = (bool *) palloc(tupdesc->natts * sizeof(bool));

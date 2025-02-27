@@ -658,7 +658,7 @@ datasegpath(RelFileNode rnode, ForkNumber forknum, BlockNumber segno)
 
 #ifdef PGXC
 	// Note: Node name missing <- to be fixed ?
-	path = relpathperm_client(rnode, forknum, "");
+	path = relpathperm_client(rnode, forknum);
 #else
 	path = relpathperm(rnode, forknum);
 #endif
