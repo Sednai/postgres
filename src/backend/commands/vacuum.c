@@ -1410,7 +1410,11 @@ vac_update_relstats(Relation relation,
 	{
 		bool		update = false;
 
-		if (TransactionIdPrecedes(oldfrozenxid, frozenxid))
+		if (TransactionIdPrecedes(oldfrozenxid, frozenxid) 
+#ifdef PGXC
+		|| !IsPostmasterEnvironment
+#endif
+		)
 			update = true;
 		else if (TransactionIdPrecedes(ReadNextTransactionId(), oldfrozenxid))
 			futurexid = update = true;

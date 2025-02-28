@@ -1113,7 +1113,9 @@ PostmasterMain(int argc, char *argv[])
 	 * Register the apply launcher.  It's probably a good idea to call this
 	 * before any modules had a chance to take the background worker slots.
 	 */
+#ifndef PGXC
 	ApplyLauncherRegister();
+#endif
 
 	/*
 	 * process any libraries that should be preloaded at postmaster start

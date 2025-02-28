@@ -340,6 +340,9 @@ typedef enum BackendType
 	B_WAL_WRITER,
 	B_ARCHIVER,
 	B_LOGGER,
+#ifdef PGXC
+	B_POOLER
+#endif
 } BackendType;
 
 extern PGDLLIMPORT BackendType MyBackendType;
