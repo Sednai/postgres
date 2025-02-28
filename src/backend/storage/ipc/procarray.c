@@ -2343,7 +2343,10 @@ GetSnapshotData(Snapshot snapshot)
 	 * The codes below run when GetPGXCSnapshotData() couldn't get snapshot from
 	 * GTM.  So no data in snapshot will be used.
 	 */
-	cleanSnapshot(snapshot);
+	
+	/* PG15-XC deactivated */
+	//cleanSnapshot(snapshot);
+
 #endif
 	/*
 	 * Allocating space for maxProcs xids is usually overkill; numProcs would

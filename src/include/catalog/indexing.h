@@ -54,26 +54,6 @@ extern void CatalogTupleDelete(Relation heapRel, ItemPointer tid);
 
 #ifdef PGXC
 extern void CatalogIndexInsert(CatalogIndexState indstate, HeapTuple heapTuple);
-
-#define PgxcClassPgxcRelIdIndexId 	9002
-DECLARE_UNIQUE_INDEX(pgxc_class_pcrelid_index, 9002, PgxcClassPgxcRelIdIndexId, on pgxc_class using btree(pcrelid oid_ops));
-
-#define PgxcNodeOidIndexId			9010
-DECLARE_UNIQUE_INDEX(pgxc_node_oid_index, 9010, PgxcNodeOidIndexId, on pgxc_node using btree(oid oid_ops));
-
-#define PgxcNodeNodeNameIndexId 	9011
-DECLARE_UNIQUE_INDEX(pgxc_node_name_index, 9011, PgxcNodeNodeNameIndexId, on pgxc_node using btree(node_name name_ops));
-
-#define PgxcGroupGroupNameIndexId 	9012
-DECLARE_UNIQUE_INDEX(pgxc_group_name_index, 9012, PgxcGroupGroupNameIndexId, on pgxc_group using btree(group_name name_ops));
-
-#define PgxcGroupOidIndexId			9013
-DECLARE_UNIQUE_INDEX(pgxc_group_oid, 9013, PgxcGroupOidIndexId, on pgxc_group using btree(oid oid_ops));
-
-#define PgxcNodeNodeIdIndexId 	9003
-DECLARE_UNIQUE_INDEX(pgxc_node_id_index, 9003, PgxcNodeNodeIdIndexId, on pgxc_node using btree(node_id int4_ops));
-
-
 #endif
 
 #endif							/* INDEXING_H */

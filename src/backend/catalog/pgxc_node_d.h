@@ -19,6 +19,12 @@
 #define PGXC_NODE_D_H
 
 #define PgxcNodeRelationId 9015
+#define PgxcClassPgxcRelIdIndexId 9002
+#define PgxcNodeOidIndexId 9010
+#define PgxcNodeNodeNameIndexId 9011
+#define PgxcGroupGroupNameIndexId 9012
+#define PgxcGroupOidIndexId 9013
+#define PgxcNodeNodeIdIndexId 9003
 
 #define Anum_pgxc_node_oid 1
 #define Anum_pgxc_node_node_name 2

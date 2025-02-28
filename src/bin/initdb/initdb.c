@@ -2949,7 +2949,7 @@ main(int argc, char *argv[])
 		{"locale-provider", required_argument, NULL, 15},
 		{"icu-locale", required_argument, NULL, 16},
 #ifdef PGXC
-		{"nodename", required_argument, NULL, 13},
+		{"nodename", required_argument, NULL, 17},
 #endif
 		{NULL, 0, NULL, 0}
 	};

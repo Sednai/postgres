@@ -264,6 +264,15 @@ ClassifyUtilityCommandAsReadOnly(Node *parsetree)
 		case T_SecLabelStmt:
 		case T_TruncateStmt:
 		case T_ViewStmt:
+#ifdef PGXC
+	/*
+	 * TAGS FOR PGXC NODES
+	 * (planner.h, locator.h, nodemgr.h, groupmgr.h)
+	 */
+		case T_CreateNodeStmt:
+
+#endif
+
 			{
 				/* DDL is not read-only, and neither is TRUNCATE. */
 				return COMMAND_IS_NOT_READ_ONLY;

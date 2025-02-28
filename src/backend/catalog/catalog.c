@@ -599,10 +599,7 @@ GetNewRelFileNode(Oid reltablespace, Relation pg_class, char relpersistence)
 			rnode.node.relNode = GetNewObjectId();
 
 		/* Check for existing file of same name */
-#ifndef PGXC
 		rpath = relpath(rnode, MAIN_FORKNUM);
-		rpath = relpath_pgxc(rnode, MAIN_FORKNUM,PGXCNodeName);
-#endif
 		if (access(rpath, F_OK) == 0)
 		{
 			/* definite collision */

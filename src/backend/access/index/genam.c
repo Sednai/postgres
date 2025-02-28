@@ -409,6 +409,7 @@ systable_beginscan(Relation heapRelation,
 	if (snapshot == NULL)
 	{
 		Oid			relid = RelationGetRelid(heapRelation);
+
 		snapshot = RegisterSnapshot(GetCatalogSnapshot(relid));
 		sysscan->snapshot = snapshot;
 	}
@@ -418,7 +419,6 @@ systable_beginscan(Relation heapRelation,
 		sysscan->snapshot = NULL;
 	}
 
-	
 	if (irel)
 	{
 		int			i;

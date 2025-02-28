@@ -6,8 +6,7 @@
  *
  * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
- * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
- * 
+ *
  * IDENTIFICATION
  *	  src/backend/bootstrap/bootstrap.c
  *
@@ -45,11 +44,6 @@
 #include "utils/memutils.h"
 #include "utils/rel.h"
 #include "utils/relmapper.h"
-
-#ifdef PGXC
-#include "nodes/nodes.h"
-#include "pgxc/poolmgr.h"
-#endif
 
 uint32		bootstrap_data_checksum_version = 0;	/* No checksum */
 
