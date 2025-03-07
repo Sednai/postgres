@@ -58,4 +58,15 @@ extern TargetEntry *get_tle_by_resno(List *tlist, AttrNumber resno);
 
 extern RowMarkClause *get_parse_rowmark(Query *qry, Index rtindex);
 
+
+#ifdef PGXC
+/*
+ * Given an RTE and an attribute number, return the appropriate
+ * type and typemod info for that attribute of that RTE.
+ */
+extern void get_rte_attribute_type(RangeTblEntry *rte, AttrNumber attnum,
+								   Oid *vartype, int32 *vartypmod, Oid *varcollid);
+
+#endif
+
 #endif							/* PARSETREE_H */

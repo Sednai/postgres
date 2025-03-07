@@ -27,6 +27,7 @@
 #include "storage/ipc.h"
 #include "utils/elog.h"
 #include "miscadmin.h"
+#include "port/pg_bswap.h"
 
 static int	pool_recvbuf(PoolPort *port);
 static int	pool_discardbytes(PoolPort *port, size_t len);
@@ -205,7 +206,7 @@ pool_getmessage(PoolPort *port, StringInfo s, int maxlen)
 		return EOF;
 	}
 
-	len = ntohl(len);
+	len = pg_ntoh32(len);
 
 	if (len < 4 ||
 		(maxlen > 0 && len > maxlen))
@@ -466,7 +467,7 @@ pool_putmessage(PoolPort *port, char msgtype, const char *s, size_t len)
 	if (pool_putbytes(port, &msgtype, 1))
 		return EOF;
 
-	n32 = htonl((uint32) (len + 4));
+	n32 = pg_hton32((uint32) (len + 4));
 	if (pool_putbytes(port, (char *) &n32, 4))
 		return EOF;
 
@@ -497,9 +498,9 @@ pool_sendfds(PoolPort *port, int *fds, int count)
 	struct cmsghdr *cmptr = NULL;
 
 	buf[0] = 'f';
-	n32 = htonl((uint32) 8);
+	n32 = pg_hton32((uint32) 8);
 	memcpy(buf + 1, &n32, 4);
-	n32 = htonl((uint32) count);
+	n32 = pg_hton32((uint32) count);
 	memcpy(buf + 5, &n32, 4);
 
 	iov[0].iov_base = buf;
@@ -599,7 +600,7 @@ pool_recvfds(PoolPort *port, int *fds, int count)
 	}
 
 	memcpy(&n32, buf + 1, 4);
-	n32 = ntohl(n32);
+	n32 = pg_ntoh32(n32);
 	if (n32 != 8)
 	{
 		ereport(ERROR,
@@ -615,7 +616,7 @@ pool_recvfds(PoolPort *port, int *fds, int count)
 	 * a protocol violation. (Probably connection went out of sync)
 	 */
 	memcpy(&n32, buf + 5, 4);
-	n32 = ntohl(n32);
+	n32 = pg_ntoh32(n32);
 	if (n32 == 0)
 	{
 		ereport(LOG,
@@ -652,7 +653,7 @@ pool_sendres(PoolPort *port, int res)
 	/* Header */
 	buf[0] = 's';
 	/* Result */
-	n32 = htonl(res);
+	n32 = pg_hton32(res);
 	memcpy(buf + 1, &n32, 4);
 
 	if (send(Socket(*port), &buf, SEND_RES_BUFFER_SIZE, 0) != SEND_RES_BUFFER_SIZE)
@@ -706,7 +707,7 @@ pool_recvres(PoolPort *port)
 	}
 
 	memcpy(&n32, buf + 1, 4);
-	n32 = ntohl(n32);
+	n32 = pg_ntoh32(n32);
 	if (n32 != 0)
 		return EOF;
 
@@ -765,7 +766,7 @@ pool_recvpids(PoolPort *port, int **pids)
 	}
 
 	memcpy(&n32, buf + 1, 4);
-	n32 = ntohl(n32);
+	n32 = pg_ntoh32(n32);
 	if (n32 == 0)
 	{
 		elog(WARNING, "No transaction to abort");
@@ -778,7 +779,7 @@ pool_recvpids(PoolPort *port, int **pids)
 	{
 		int n;
 		memcpy(&n, buf + 5 + i * sizeof(int), sizeof(int));
-		(*pids)[i] = ntohl(n);
+		(*pids)[i] = pg_ntoh32(n);
 	}
 	return n32;
 
@@ -798,12 +799,12 @@ pool_sendpids(PoolPort *port, int *pids, int count)
 	uint		n32;
 
 	buf[0] = 'p';
-	n32 = htonl((uint32) count);
+	n32 = pg_hton32((uint32) count);
 	memcpy(buf + 1, &n32, 4);
 	for (i = 0; i < count; i++)
 	{
 		int n;
-		n = htonl((uint32) pids[i]);
+		n = pg_hton32((uint32) pids[i]);
 		memcpy(buf + 5 + i * sizeof(int), &n, 4);
 	}
 

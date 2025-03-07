@@ -60,6 +60,7 @@
 #include "access/heaptoast.h"
 #ifdef PGXC
 #include "funcapi.h"
+#include "port/pg_bswap.h"
 #endif
 #include "access/hash.h"
 #include "access/sysattr.h"
@@ -1656,7 +1657,7 @@ slot_deform_datarow(TupleTableSlot *slot)
 
 	memcpy(&n16, cur, 2);
 	cur += 2;
-	col_count = ntohs(n16);
+	col_count = pg_ntoh16(n16);
 
 	if (col_count != attnum)
 		ereport(ERROR,
@@ -1680,7 +1681,7 @@ slot_deform_datarow(TupleTableSlot *slot)
 		/* get size */
 		memcpy(&n32, cur, 4);
 		cur += 4;
-		len = ntohl(n32);
+		len = pg_ntoh32(n32);
 
 		/* get data */
 		if (len == -1)

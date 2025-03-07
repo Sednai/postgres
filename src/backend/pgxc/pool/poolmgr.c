@@ -517,15 +517,15 @@ PoolManagerConnect(PoolHandle *handle,
 	pool_putbytes(&handle->port, &msgtype, 1);
 
 	/* Message length */
-	n32 = htonl(strlen(database) + strlen(user_name) + strlen(pgoptions) + 23);
+	n32 = pg_hton32(strlen(database) + strlen(user_name) + strlen(pgoptions) + 23);
 	pool_putbytes(&handle->port, (char *) &n32, 4);
 
 	/* PID number */
-	n32 = htonl(MyProcPid);
+	n32 = pg_hton32(MyProcPid);
 	pool_putbytes(&handle->port, (char *) &n32, 4);
 
 	/* Length of Database string */
-	n32 = htonl(strlen(database) + 1);
+	n32 = pg_hton32(strlen(database) + 1);
 	pool_putbytes(&handle->port, (char *) &n32, 4);
 
 	/* Send database name followed by \0 terminator */
@@ -533,7 +533,7 @@ PoolManagerConnect(PoolHandle *handle,
 	pool_flush(&handle->port);
 
 	/* Length of user name string */
-	n32 = htonl(strlen(user_name) + 1);
+	n32 = pg_hton32(strlen(user_name) + 1);
 	pool_putbytes(&handle->port, (char *) &n32, 4);
 
 	/* Send user name followed by \0 terminator */
@@ -541,7 +541,7 @@ PoolManagerConnect(PoolHandle *handle,
 	pool_flush(&handle->port);
 
 	/* Length of pgoptions string */
-	n32 = htonl(strlen(pgoptions) + 1);
+	n32 = pg_hton32(strlen(pgoptions) + 1);
 	pool_putbytes(&handle->port, (char *) &n32, 4);
 
 	/* Send pgoptions followed by \0 terminator */
@@ -593,20 +593,20 @@ PoolManagerSetCommand(PoolCommandType command_type, const char *set_command)
 
 		/* Message length */
 		if (set_command)
-			n32 = htonl(strlen(set_command) + 13);
+			n32 = pg_hton32(strlen(set_command) + 13);
 		else
-			n32 = htonl(12);
+			n32 = pg_hton32(12);
 
 		pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 		/* LOCAL or SESSION parameter ? */
-		n32 = htonl(command_type);
+		n32 = pg_hton32(command_type);
 		pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 		if (set_command)
 		{
 			/* Length of SET command string */
-			n32 = htonl(strlen(set_command) + 1);
+			n32 = pg_hton32(strlen(set_command) + 1);
 			pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 			/* Send command string followed by \0 terminator */
@@ -615,7 +615,7 @@ PoolManagerSetCommand(PoolCommandType command_type, const char *set_command)
 		else
 		{
 			/* Send empty command */
-			n32 = htonl(0);
+			n32 = pg_hton32(0);
 			pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 		}
 
@@ -655,17 +655,17 @@ PoolManagerSendLocalCommand(int dn_count, int* dn_list, int co_count, int* co_li
 		return EOF;
 
 	/* Insert the list of Datanodes in buffer */
-	n32 = htonl((uint32) dn_count);
+	n32 = pg_hton32((uint32) dn_count);
 	buf[0] = n32;
 
 	for (i = 0; i < dn_count;)
 	{
-		n32 = htonl((uint32) dn_list[i++]);
+		n32 = pg_hton32((uint32) dn_list[i++]);
 		buf[i] = n32;
 	}
 
 	/* Insert the list of Coordinators in buffer */
-	n32 = htonl((uint32) co_count);
+	n32 = pg_hton32((uint32) co_count);
 	buf[dn_count + 1] = n32;
 
 	/* Not necessary to send to pooler a request if there is no Coordinator */
@@ -673,7 +673,7 @@ PoolManagerSendLocalCommand(int dn_count, int* dn_list, int co_count, int* co_li
 	{
 		for (i = dn_count + 1; i < (dn_count + co_count + 1);)
 		{
-			n32 = htonl((uint32) co_list[i - (dn_count + 1)]);
+			n32 = pg_hton32((uint32) co_list[i - (dn_count + 1)]);
 			buf[++i] = n32;
 		}
 	}
@@ -701,11 +701,11 @@ PoolManagerLock(bool is_lock)
 	pool_putbytes(&poolHandle->port, &msgtype, 1);
 
 	/* Message length */
-	n32 = htonl(msglen);
+	n32 = pg_hton32(msglen);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 	/* Lock information */
-	n32 = htonl((int) is_lock);
+	n32 = pg_hton32((int) is_lock);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 	pool_flush(&poolHandle->port);
 }
@@ -835,22 +835,22 @@ PoolManagerGetConnections(List *datanodelist, List *coordlist)
 	 * This list can be NULL for a query that does not need
 	 * Datanode Connections (Sequence DDLs)
 	 */
-	nodes[0] = htonl(list_length(datanodelist));
+	nodes[0] = pg_hton32(list_length(datanodelist));
 	i = 1;
 	if (list_length(datanodelist) != 0)
 	{
 		foreach(nodelist_item, datanodelist)
 		{
-			nodes[i++] = htonl(lfirst_int(nodelist_item));
+			nodes[i++] = pg_hton32(lfirst_int(nodelist_item));
 		}
 	}
 	/* Then with Coordinator list (can be nul) */
-	nodes[i++] = htonl(list_length(coordlist));
+	nodes[i++] = pg_hton32(list_length(coordlist));
 	if (list_length(coordlist) != 0)
 	{
 		foreach(nodelist_item, coordlist)
 		{
-			nodes[i++] = htonl(lfirst_int(nodelist_item));
+			nodes[i++] = pg_hton32(lfirst_int(nodelist_item));
 		}
 	}
 
@@ -894,11 +894,11 @@ PoolManagerAbortTransactions(char *dbname, char *username, int **proc_pids)
 
 	/* Message length */
 	msglen = dblen + userlen + 12;
-	n32 = htonl(msglen);
+	n32 = pg_hton32(msglen);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 	/* Length of Database string */
-	n32 = htonl(dblen);
+	n32 = pg_hton32(dblen);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 	/* Send database name, followed by \0 terminator if necessary */
@@ -906,7 +906,7 @@ PoolManagerAbortTransactions(char *dbname, char *username, int **proc_pids)
 		pool_putbytes(&poolHandle->port, dbname, dblen);
 
 	/* Length of Username string */
-	n32 = htonl(userlen);
+	n32 = pg_hton32(userlen);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 	/* Send user name, followed by \0 terminator if necessary */
@@ -936,22 +936,22 @@ PoolManagerCleanConnection(List *datanodelist, List *coordlist, char *dbname, ch
 	int			userlen = username ? strlen(username) + 1 : 0;
 	int			dblen = dbname ? strlen(dbname) + 1 : 0;
 
-	nodes[0] = htonl(list_length(datanodelist));
+	nodes[0] = pg_hton32(list_length(datanodelist));
 	i = 1;
 	if (list_length(datanodelist) != 0)
 	{
 		foreach(nodelist_item, datanodelist)
 		{
-			nodes[i++] = htonl(lfirst_int(nodelist_item));
+			nodes[i++] = pg_hton32(lfirst_int(nodelist_item));
 		}
 	}
 	/* Then with Coordinator list (can be nul) */
-	nodes[i++] = htonl(list_length(coordlist));
+	nodes[i++] = pg_hton32(list_length(coordlist));
 	if (list_length(coordlist) != 0)
 	{
 		foreach(nodelist_item, coordlist)
 		{
-			nodes[i++] = htonl(lfirst_int(nodelist_item));
+			nodes[i++] = pg_hton32(lfirst_int(nodelist_item));
 		}
 	}
 
@@ -960,14 +960,14 @@ PoolManagerCleanConnection(List *datanodelist, List *coordlist, char *dbname, ch
 
 	/* Message length */
 	msglen = sizeof(int) * (totlen + 2) + dblen + userlen + 12;
-	n32 = htonl(msglen);
+	n32 = pg_hton32(msglen);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 	/* Send list of nodes */
 	pool_putbytes(&poolHandle->port, (char *) nodes, sizeof(int) * (totlen + 2));
 
 	/* Length of Database string */
-	n32 = htonl(dblen);
+	n32 = pg_hton32(dblen);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 	/* Send database name, followed by \0 terminator if necessary */
@@ -975,7 +975,7 @@ PoolManagerCleanConnection(List *datanodelist, List *coordlist, char *dbname, ch
 		pool_putbytes(&poolHandle->port, dbname, dblen);
 
 	/* Length of Username string */
-	n32 = htonl(userlen);
+	n32 = pg_hton32(userlen);
 	pool_putbytes(&poolHandle->port, (char *) &n32, 4);
 
 	/* Send user name, followed by \0 terminator if necessary */
@@ -1691,17 +1691,17 @@ PoolManagerCancelQuery(int dn_count, int* dn_list, int co_count, int* co_list)
 		return;
 
 	/* Insert the list of Datanodes in buffer */
-	n32 = htonl((uint32) dn_count);
+	n32 = pg_hton32((uint32) dn_count);
 	buf[0] = n32;
 
 	for (i = 0; i < dn_count;)
 	{
-		n32 = htonl((uint32) dn_list[i++]);
+		n32 = pg_hton32((uint32) dn_list[i++]);
 		buf[i] = n32;
 	}
 
 	/* Insert the list of Coordinators in buffer */
-	n32 = htonl((uint32) co_count);
+	n32 = pg_hton32((uint32) co_count);
 	buf[dn_count + 1] = n32;
 
 	/* Not necessary to send to pooler a request if there is no Coordinator */
@@ -1709,7 +1709,7 @@ PoolManagerCancelQuery(int dn_count, int* dn_list, int co_count, int* co_list)
 	{
 		for (i = dn_count + 1; i < (dn_count + co_count + 1);)
 		{
-			n32 = htonl((uint32) co_list[i - (dn_count + 1)]);
+			n32 = pg_hton32((uint32) co_list[i - (dn_count + 1)]);
 			buf[++i] = n32;
 		}
 	}

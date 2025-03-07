@@ -270,7 +270,10 @@ ClassifyUtilityCommandAsReadOnly(Node *parsetree)
 	 * (planner.h, locator.h, nodemgr.h, groupmgr.h)
 	 */
 		case T_CreateNodeStmt:
-
+		case T_AlterNodeStmt:
+		case T_DropNodeStmt:
+		case T_RemoteQuery:
+		case T_ExecDirectStmt:
 #endif
 
 			{
@@ -278,6 +281,10 @@ ClassifyUtilityCommandAsReadOnly(Node *parsetree)
 				return COMMAND_IS_NOT_READ_ONLY;
 			}
 
+
+#ifdef PGXC
+		case T_CleanConnStmt:
+#endif
 		case T_AlterSystemStmt:
 			{
 				/*
@@ -656,8 +663,8 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 	if (IS_PGXC_COORDINATOR && !IsConnFromCoord() && IsNormalProcessingMode())
 	{
 		/* Is the statement a prohibited one? */
-		if (!IsStmtAllowedInLockedMode(parsetree, queryString))
-			pgxc_lock_for_utility_stmt(parsetree);
+		if (!IsStmtAllowedInLockedMode(pstmt->utilityStmt, queryString))
+			pgxc_lock_for_utility_stmt(pstmt->utilityStmt);
 	}
 #endif
 
@@ -1118,10 +1125,11 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 						Oid			relid = vacrel->oid;
 
 						/* Skip if object does not exist */
-						if (!OidIsValid(relid))
+						if (!OidIsValid(relid)) {
 							relid = RangeVarGetRelid(vacrel->relation, NoLock, false);
 							if (!OidIsValid(relid))
 								continue;
+						}
 
 						Relation rel = relation_open(relid, NoLock);
 						bool res = rel->rd_locator_info;
@@ -4608,7 +4616,7 @@ CreateCommandTag(Node *parsetree)
 			break;
 		case T_CleanConnStmt:
 			tag = CMDTAG_CLEAN_CONNECTION;
-			break;
+			break;	
 #endif	
 	
 		default:

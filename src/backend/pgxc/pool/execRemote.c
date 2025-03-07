@@ -275,7 +275,7 @@ create_tuple_desc(char *msg_body, size_t len)
 
 	/* get number of attributes */
 	memcpy(&n16, msg_body, 2);
-	nattr = ntohs(n16);
+	nattr = pg_ntoh16(n16);
 	msg_body += 2;
 
 	result = CreateTemplateTupleDesc(nattr);
@@ -313,7 +313,7 @@ create_tuple_desc(char *msg_body, size_t len)
 
 		/* type mod */
 		memcpy(&typemode, msg_body, 4);
-		typmod = ntohl(typemode);
+		typmod = pg_ntoh32(typemode);
 		msg_body += 4;
 
 		/* PGXCTODO text/binary flag? */
@@ -830,7 +830,7 @@ HandleDatanodeCommandId(RemoteQueryState *combiner, char *msg_body, size_t len)
 
 	/* Get the command Id */
 	memcpy(&n32, &msg_body[0], 4);
-	cid = ntohl(n32);
+	cid = pg_ntoh32(n32);
 
 	/* If received command Id is higher than current one, set it to a new value */
 	if (cid > GetReceivedCommandId())
@@ -2237,7 +2237,7 @@ DataNodeCopyIn(char *data_row, int len, ExecNodes *exec_nodes, PGXCNodeHandle** 
 	ListCell *nodeitem;
 	/* size + data row + \n */
 	int msgLen = 4 + len + 1;
-	int nLen = htonl(msgLen);
+	int nLen = pg_hton32(msgLen);
 
 	if (exec_nodes->primarynodelist)
 	{
@@ -2538,7 +2538,7 @@ pgxcNodeCopyFinish(PGXCNodeHandle** copy_connections, int primary_dn_index,
 bool
 DataNodeCopyEnd(PGXCNodeHandle *handle, bool is_error)
 {
-	int 		nLen = htonl(4);
+	int 		nLen = pg_hton32(4);
 
 	if (handle == NULL)
 		return true;
@@ -2587,7 +2587,7 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	/* Initialise child expressions */
 	/* PGXC 11 drop */
 	/*
-	remotestate->ss.ps.targetlist = (List *)
+	remotestate->ss.ps.plan->targetlist = (List *)
 		ExecInitExpr((Expr *) node->scan.plan.targetlist,
 					 (PlanState *) remotestate);
 	*/
@@ -2606,9 +2606,11 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	remotestate->eof_underlying = false;
 	remotestate->tuplestorestate = NULL;
 
-	ExecInitScanTupleSlot(estate, &remotestate->ss, NULL, &TTSOpsMinimalTuple);
 	scan_type = ExecTypeFromTL(node->base_tlist);
+	ExecInitScanTupleSlot(estate, &remotestate->ss, NULL, &TTSOpsMinimalTuple);
 	ExecAssignScanType(&remotestate->ss, scan_type);
+	
+	remotestate->ss.ps.plan->targetlist = node->base_tlist;
 
 	/*
 	 * If there are parameters supplied, get them into a form to be sent to the
@@ -2620,7 +2622,7 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	 * Initialize result tuple type and projection info.
 	 */
 	ExecInitResultTupleSlotTL(&remotestate->ss.ps, &TTSOpsMinimalTuple);
-	ExecAssignScanProjectionInfo(&remotestate->ss);
+	ExecAssignScanProjectionInfoWithVarno(&remotestate->ss,node->scan.scanrelid);
 
 	if (node->rq_save_command_id)
 	{
@@ -3665,7 +3667,7 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 	initStringInfo(&buf);
 
 	/* Number of parameter values */
-	n16 = htons(real_num_params);
+	n16 = pg_hton16(real_num_params);
 	appendBinaryStringInfo(&buf, (char *) &n16, 2);
 
 	/* Parameter values */
@@ -3680,7 +3682,7 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 		 */
 		if (param->isnull || !OidIsValid(param->ptype))
 		{
-			n32 = htonl(-1);
+			n32 = pg_hton32(-1);
 			appendBinaryStringInfo(&buf, (char *) &n32, 4);
 		}
 		else
@@ -3708,7 +3710,7 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 
 			/* copy data to the buffer */
 			len = strlen(pstring);
-			n32 = htonl(len);
+			n32 = pg_hton32(len);
 			appendBinaryStringInfo(&buf, (char *) &n32, 4);
 			appendBinaryStringInfo(&buf, pstring, len);
 		}
@@ -4118,7 +4120,7 @@ int DataNodeCopyInBinaryForAll(char *msg_buf, int len, PGXCNodeHandle** copy_con
 	int 		conn_count = 0;
 	PGXCNodeHandle *connections[NumDataNodes];
 	int msgLen = 4 + len + 1;
-	int nLen = htonl(msgLen);
+	int nLen = pg_hton32(msgLen);
 
 	for (i = 0; i < NumDataNodes; i++)
 	{
@@ -4227,7 +4229,7 @@ ExecProcNodeDMLInXC(EState *estate,
 	                TupleTableSlot *sourceDataSlot,
 	                TupleTableSlot *newDataSlot)
 {
-	ResultRelInfo *resultRelInfo = estate->es_result_relations;
+	ResultRelInfo **resultRelInfo = estate->es_result_relations;
 	RemoteQueryState *resultRemoteRel = (RemoteQueryState *) estate->es_result_remoterel;
 	ExprContext	*econtext = resultRemoteRel->ss.ps.ps_ExprContext;
 	TupleTableSlot	*returningResultSlot = NULL;	/* RETURNING clause result */
@@ -5088,7 +5090,7 @@ SetDataRowForIntParams(JunkFilter *junkfilter,
 	initStringInfo(&buf);
 
 	{
-		uint16 params_nbo = htons(numparams); /* Network byte order */
+		uint16 params_nbo = pg_hton16(numparams); /* Network byte order */
 		appendBinaryStringInfo(&buf, (char *) &params_nbo, sizeof(params_nbo));
 	}
 
@@ -5112,7 +5114,7 @@ SetDataRowForIntParams(JunkFilter *junkfilter,
 
 			if (dataSlot->tts_isnull[attindex])
 			{
-				n32 = htonl(-1);
+				n32 = pg_hton32(-1);
 				appendBinaryStringInfo(&buf, (char *) &n32, 4);
 			}
 			else
@@ -5194,7 +5196,7 @@ pgxc_append_param_val(StringInfo buf, Datum val, Oid valtype)
 
 	/* copy data to the buffer */
 	len = strlen(pstring);
-	n32 = htonl(len);
+	n32 = pg_hton32(len);
 	appendBinaryStringInfo(buf, (char *) &n32, 4);
 	appendBinaryStringInfo(buf, pstring, len);
 }

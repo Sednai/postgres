@@ -378,7 +378,7 @@ gtm_standby_connect_to_standby_int(int *report_needed)
 
 	if (!n)
 	{
-		elog(LOG, "Any GTM standby node not found in registered node(s).");
+		elog(DEBUG2, "Any GTM standby node not found in registered node(s).");
 		return NULL;
 	}
 

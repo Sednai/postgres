@@ -191,7 +191,7 @@ SendBarrierPrepareRequest(List *coords, const char *id)
 		}
 
 		handle->outBuffer[handle->outEnd++] = 'b';
-		msglen = htonl(msglen);
+		msglen = pg_hton32(msglen);
 		memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 		handle->outEnd += 4;
 
@@ -277,7 +277,7 @@ SendBarrierEndRequest(PGXCNodeAllHandles *coord_handles, const char *id)
 		}
 
 		handle->outBuffer[handle->outEnd++] = 'b';
-		msglen = htonl(msglen);
+		msglen = pg_hton32(msglen);
 		memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 		handle->outEnd += 4;
 
@@ -389,7 +389,7 @@ ExecuteBarrier(const char *id)
 		}
 
 		handle->outBuffer[handle->outEnd++] = 'b';
-		msglen = htonl(msglen);
+		msglen = pg_hton32(msglen);
 		memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 		handle->outEnd += 4;
 

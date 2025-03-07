@@ -50,6 +50,7 @@
 #include "utils/lsyscache.h"
 #include "utils/formatting.h"
 #include "../interfaces/libpq/libpq-fe.h"
+#include <netinet/in.h>
 
 #define CMD_ID_MSG_LEN 8
 #define PGXC_CANCEL_DELAY 15
@@ -677,12 +678,12 @@ get_int(PGXCNodeHandle *conn, size_t len, int *out)
 		case 2:
 			memcpy(&tmp2, conn->inBuffer + conn->inCursor, 2);
 			conn->inCursor += 2;
-			*out = (int) ntohs(tmp2);
+			*out = (int) pg_ntoh16(tmp2);
 			break;
 		case 4:
 			memcpy(&tmp4, conn->inBuffer + conn->inCursor, 4);
 			conn->inCursor += 4;
-			*out = (int) ntohl(tmp4);
+			*out = (int) pg_ntoh32(tmp4);
 			break;
 		default:
 			add_error_message(conn, "not supported int size");
@@ -1190,7 +1191,7 @@ pgxc_node_send_parse(PGXCNodeHandle * handle, const char* statement,
 
 	handle->outBuffer[handle->outEnd++] = 'P';
 	/* size */
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 	/* statement name */
@@ -1206,7 +1207,7 @@ pgxc_node_send_parse(PGXCNodeHandle * handle, const char* statement,
 	handle->outEnd += strLen;
 	/* parameter types */
 	Assert(sizeof(num_params) == 2);
-	*((short *)(handle->outBuffer + handle->outEnd)) = htons(num_params);
+	*((short *)(handle->outBuffer + handle->outEnd)) = pg_hton16(num_params);
 	handle->outEnd += sizeof(num_params);
 	/*
 	 * instead of parameter ids we should send parameter names (qualified by
@@ -1221,7 +1222,7 @@ pgxc_node_send_parse(PGXCNodeHandle * handle, const char* statement,
 		pfree(paramTypes[cnt_params]);
 	}
 	pfree(paramTypes);
-	Assert(old_outEnd + ntohl(msgLen) + 1 == handle->outEnd);
+	Assert(old_outEnd + pg_ntoh32(msgLen) + 1 == handle->outEnd);
 
  	return 0;
 }
@@ -1267,7 +1268,7 @@ pgxc_node_send_bind(PGXCNodeHandle * handle, const char *portal,
 
 	handle->outBuffer[handle->outEnd++] = 'B';
 	/* size */
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 	/* portal name */
@@ -1337,7 +1338,7 @@ pgxc_node_send_describe(PGXCNodeHandle * handle, bool is_statement,
 
 	handle->outBuffer[handle->outEnd++] = 'D';
 	/* size */
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 	/* statement/portal flag */
@@ -1377,7 +1378,7 @@ pgxc_node_send_close(PGXCNodeHandle * handle, bool is_statement,
 
 	handle->outBuffer[handle->outEnd++] = 'C';
 	/* size */
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 	/* statement/portal flag */
@@ -1417,7 +1418,7 @@ pgxc_node_send_execute(PGXCNodeHandle * handle, const char *portal, int fetch)
 
 	handle->outBuffer[handle->outEnd++] = 'E';
 	/* size */
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 	/* portal name */
@@ -1430,7 +1431,7 @@ pgxc_node_send_execute(PGXCNodeHandle * handle, const char *portal, int fetch)
 		handle->outBuffer[handle->outEnd++] = '\0';
 
 	/* fetch */
-	fetch = htonl(fetch);
+	fetch = pg_hton32(fetch);
 	memcpy(handle->outBuffer + handle->outEnd, &fetch, 4);
 	handle->outEnd += 4;
 
@@ -1458,7 +1459,7 @@ pgxc_node_send_flush(PGXCNodeHandle * handle)
 
 	handle->outBuffer[handle->outEnd++] = 'H';
 	/* size */
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 
@@ -1484,7 +1485,7 @@ pgxc_node_send_sync(PGXCNodeHandle * handle)
 
 	handle->outBuffer[handle->outEnd++] = 'S';
 	/* size */
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 
@@ -1589,7 +1590,7 @@ pgxc_node_send_query(PGXCNodeHandle * handle, const char *query)
 	}
 
 	handle->outBuffer[handle->outEnd++] = 'Q';
-	msgLen = htonl(msgLen);
+	msgLen = pg_hton32(msgLen);
 	memcpy(handle->outBuffer + handle->outEnd, &msgLen, 4);
 	handle->outEnd += 4;
 	memcpy(handle->outBuffer + handle->outEnd, query, strLen);
@@ -1622,13 +1623,13 @@ pgxc_node_send_gxid(PGXCNodeHandle *handle, FullTransactionId gxid)
 	}
 
 	handle->outBuffer[handle->outEnd++] = 'g';
-	msglen = htonl(msglen);
+	msglen = pg_hton32(msglen);
 	memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 	handle->outEnd += 4;
-	i32 = htonl(EpochFromFullTransactionId(gxid));
+	i32 = pg_hton32(EpochFromFullTransactionId(gxid));
 	memcpy(handle->outBuffer + handle->outEnd, &i32, 4);
 	handle->outEnd += 4;
-	i32 = htonl(XidFromFullTransactionId(gxid));
+	i32 = pg_hton32(XidFromFullTransactionId(gxid));
 	memcpy(handle->outBuffer + handle->outEnd, &i32, 4);
 	handle->outEnd += 4;
 
@@ -1660,10 +1661,10 @@ pgxc_node_send_cmd_id(PGXCNodeHandle *handle, CommandId cid)
 	}
 
 	handle->outBuffer[handle->outEnd++] = 'M';
-	msglen = htonl(msglen);
+	msglen = pg_hton32(msglen);
 	memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 	handle->outEnd += 4;
-	i32 = htonl(cid);
+	i32 = pg_hton32(cid);
 	memcpy(handle->outBuffer + handle->outEnd, &i32, 4);
 	handle->outEnd += 4;
 
@@ -1685,7 +1686,7 @@ pgxc_node_send_snapshot(PGXCNodeHandle *handle, Snapshot snapshot)
 		return EOF;
 
 	/* calculate message length */
-	msglen = 20;
+	msglen = 16;
 	if (snapshot->xcnt > 0)
 		msglen += snapshot->xcnt * 4;
 
@@ -1697,30 +1698,25 @@ pgxc_node_send_snapshot(PGXCNodeHandle *handle, Snapshot snapshot)
 	}
 
 	handle->outBuffer[handle->outEnd++] = 's';
-	msglen = htonl(msglen);
+	msglen = pg_hton32(msglen);
 	memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 	handle->outEnd += 4;
 
-	nval = htonl(snapshot->xmin);
+	nval = pg_hton32(snapshot->xmin);
 	memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
 	handle->outEnd += 4;
 
-	nval = htonl(snapshot->xmax);
+	nval = pg_hton32(snapshot->xmax);
 	memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
 	handle->outEnd += 4;
 
-/* REMOVED FOR PG15
-	nval = htonl(RecentGlobalXmin);
-	memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
-	handle->outEnd += 4;
-*/
-	nval = htonl(snapshot->xcnt);
+	nval = pg_hton32(snapshot->xcnt);
 	memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
 	handle->outEnd += 4;
 
 	for (i = 0; i < snapshot->xcnt; i++)
 	{
-		nval = htonl(snapshot->xip[i]);
+		nval = pg_hton32(snapshot->xip[i]);
 		memcpy(handle->outBuffer + handle->outEnd, &nval, 4);
 		handle->outEnd += 4;
 	}
@@ -1749,7 +1745,7 @@ pgxc_node_send_timestamp(PGXCNodeHandle *handle, TimestampTz timestamp)
 		return EOF;
 	}
 	handle->outBuffer[handle->outEnd++] = 't';
-	msglen = htonl(msglen);
+	msglen = pg_hton32(msglen);
 	memcpy(handle->outBuffer + handle->outEnd, &msglen, 4);
 	handle->outEnd += 4;
 
@@ -1760,13 +1756,13 @@ pgxc_node_send_timestamp(PGXCNodeHandle *handle, TimestampTz timestamp)
 #else
 	n32 = (uint32) (i >> 32);
 #endif
-	n32 = htonl(n32);
+	n32 = pg_hton32(n32);
 	memcpy(handle->outBuffer + handle->outEnd, &n32, 4);
 	handle->outEnd += 4;
 
 	/* Now the low order half */
 	n32 = (uint32) i;
-	n32 = htonl(n32);
+	n32 = pg_hton32(n32);
 	memcpy(handle->outBuffer + handle->outEnd, &n32, 4);
 	handle->outEnd += 4;
 

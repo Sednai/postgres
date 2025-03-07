@@ -72,7 +72,7 @@ typedef enum
 
 #define HAS_MESSAGE_BUFFERED(conn) \
 		((conn)->inCursor + 4 < (conn)->inEnd \
-			&& (conn)->inCursor + ntohl(*((uint32_t *) ((conn)->inBuffer + (conn)->inCursor + 1))) < (conn)->inEnd)
+			&& (conn)->inCursor + pg_ntoh32(*((uint32_t *) ((conn)->inBuffer + (conn)->inCursor + 1))) < (conn)->inEnd)
 
 struct pgxc_node_handle
 {

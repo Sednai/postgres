@@ -1246,12 +1246,12 @@ pq_getmessage(StringInfo s, int maxlen)
 	}
 
 	len = pg_ntoh32(len);
-
+	
 	if (len < 4 || len > maxlen)
 	{
 		ereport(COMMERROR,
 				(errcode(ERRCODE_PROTOCOL_VIOLATION),
-				 errmsg("invalid message length")));
+				 errmsg("invalid message length ( %d / %d )",len,maxlen)));
 		return EOF;
 	}
 

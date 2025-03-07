@@ -4942,7 +4942,6 @@ UnsetGlobalSnapshotData(void)
 	elog (DEBUG1, "unset snapshot info");
 }
 
-
 /*
  * Entry of snapshot obtention for Postgres-XC node
  */

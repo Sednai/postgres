@@ -456,11 +456,12 @@ SocketBackend(StringInfo inBuf)
 			doing_extended_query_message = true;
 			break;
 #ifdef PGXC /* PGXC_DATANODE */
-		case 'M':				/* Command ID */
+		case 'M':				/* Command ID */	
 		case 'g':				/* GXID */
 		case 's':				/* Snapshot */
 		case 't':				/* Timestamp */
 		case 'b':				/* Barrier */
+			maxmsglen = PQ_SMALL_MESSAGE_LIMIT;
 			break;
 #endif
 
@@ -497,6 +498,7 @@ SocketBackend(StringInfo inBuf)
 			break;
 	}
 
+	elog(WARNING,"[DEBUG]->SocketBackend");
 	/*
 	 * In protocol version 3, all frontend messages have a length word next
 	 * after the type code; we can read the message contents independently of
@@ -505,6 +507,8 @@ SocketBackend(StringInfo inBuf)
 	if (pq_getmessage(inBuf, maxmsglen))
 		return EOF;				/* suitable message already logged */
 	RESUME_CANCEL_INTERRUPTS();
+
+	elog(WARNING,"[DEBUG]->SocketBackend done");
 
 	return qtype;
 }
@@ -1124,6 +1128,8 @@ exec_simple_query(const char *query_string)
 	 * we are in aborted transaction state!)
 	 */
 	parsetree_list = pg_parse_query(query_string);
+
+	elog(WARNING,"[DEBUG]: %s",query_string);
 
 	/* Log immediately if dictated by log_statement */
 	if (check_log_statement(parsetree_list))
@@ -4891,11 +4897,14 @@ PostgresMain(const char *dbname, const char *username)
 		 */
 		DoingCommandRead = true;
 
+		elog(WARNING,"[DEBUG]: ReadCommand");
 		/*
 		 * (3) read a command (loop blocks here)
 		 */
 		firstchar = ReadCommand(&input_message);
-
+		
+		elog(WARNING,"[DEBUG]: first %d",firstchar);
+		
 		/*
 		 * (4) turn off the idle-in-transaction and idle-session timeouts if
 		 * active.  We do this before step (5) so that any last-moment timeout
@@ -5210,6 +5219,7 @@ PostgresMain(const char *dbname, const char *username)
 #ifdef PGXC
 			case 'M':			/* Command ID */
 				{
+					elog(WARNING, "command M received");
 					CommandId cid = (CommandId) pq_getmsgint(&input_message, 4);
 					elog(DEBUG1, "Received cmd id %u", cid);
 					SaveReceivedCommandId(cid);
@@ -5218,6 +5228,8 @@ PostgresMain(const char *dbname, const char *username)
 
 			case 'g':			/* gxid */
 				{
+					elog(WARNING, "command g received");
+		
 					/* Set the GXID we were passed down */
 					uint32 epoch = pq_getmsgint(&input_message, 4);
 					TransactionId xid = (TransactionId) pq_getmsgint(&input_message, 4);
@@ -5228,6 +5240,8 @@ PostgresMain(const char *dbname, const char *username)
 				break;
 
 			case 's':			/* snapshot */
+				elog(WARNING, "command s received");
+		
 				/* Set the snapshot we were passed down */
 				xmin = pq_getmsgint(&input_message, 4);
 				xmax = pq_getmsgint(&input_message, 4);
@@ -5260,6 +5274,8 @@ PostgresMain(const char *dbname, const char *username)
 				break;
 
 			case 't':			/* timestamp */
+				elog(WARNING, "command ts received");
+		
 				timestamp = (TimestampTz) pq_getmsgint64(&input_message);
 				pq_getmsgend(&input_message);
 
@@ -5272,6 +5288,7 @@ PostgresMain(const char *dbname, const char *username)
 
 			case 'b':			/* barrier */
 				{
+					elog(WARNING, "command b received");
 					int command;
 					char *id;
 
