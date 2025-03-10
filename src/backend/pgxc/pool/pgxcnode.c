@@ -1160,6 +1160,8 @@ pgxc_node_send_parse(PGXCNodeHandle * handle, const char* statement,
 	size_t		old_outEnd = handle->outEnd;
 #endif	
 
+	elog(WARNING,"[DEBUG](pgxc_node_send_parse): %s",query);
+	
 	/* if there are parameters, param_types should exist */
 	Assert(num_params <= 0 || param_types);
 	/* 2 bytes for number of parameters, preceding the type names */

@@ -788,6 +788,22 @@ pg_analyze_and_rewrite_varparams(RawStmt *parsetree,
 	 */
 	querytree_list = pg_rewrite_query(query);
 
+#ifdef PGXC
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+	{
+		ListCell   *lc;
+
+		foreach(lc, querytree_list)
+		{
+			Query *query = (Query *) lfirst(lc);
+
+			if (query->sql_statement == NULL)
+				query->sql_statement = pstrdup(query_string);
+		}
+	}
+#endif
+
+
 	TRACE_POSTGRESQL_QUERY_REWRITE_DONE(query_string);
 
 	return querytree_list;
@@ -827,6 +843,21 @@ pg_analyze_and_rewrite_withcb(RawStmt *parsetree,
 	 * (2) Rewrite the queries, as necessary
 	 */
 	querytree_list = pg_rewrite_query(query);
+
+#ifdef PGXC
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+	{
+		ListCell   *lc;
+
+		foreach(lc, querytree_list)
+		{
+			Query *query = (Query *) lfirst(lc);
+
+			if (query->sql_statement == NULL)
+				query->sql_statement = pstrdup(query_string);
+		}
+	}
+#endif
 
 	TRACE_POSTGRESQL_QUERY_REWRITE_DONE(query_string);
 
@@ -1492,6 +1523,9 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	bool		is_named;
 	bool		save_log_statement_stats = log_statement_stats;
 	char		msec_str[32];
+
+
+	elog(WARNING,"[DEBUG](exec_parse_msg): %s, %s",query_string,stmt_name);
 
 	/*
 	 * Report query to various monitoring facilities.

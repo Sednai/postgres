@@ -794,6 +794,9 @@ ExecInsert(ModifyTableContext *context,
 	ExecMaterializeSlot(slot);
 
 	resultRelationDesc = resultRelInfo->ri_RelationDesc;
+#ifdef PGXC	
+	resultRemoteRel = (RemoteQueryState *) estate->es_result_remoterel;
+#endif
 
 	/*
 	 * Open the table's indexes, if we have not done so already, so that we
@@ -1227,6 +1230,11 @@ ExecInsert(ModifyTableContext *context,
 		*inserted_tuple = slot;
 	if (insert_destrel)
 		*insert_destrel = resultRelInfo;
+
+#ifdef PGXC
+		if (TupIsNull(slot))
+			return NULL;
+#endif
 
 	return result;
 }
@@ -3798,6 +3806,19 @@ ExecModifyTable(PlanState *pstate)
 	resultRelInfo = node->resultRelInfo + node->mt_lastResultIndex;
 	subplanstate = outerPlanState(node);
 
+#ifdef PGXC
+	/* Initialize remote plan state */
+	remoterelstate = node->mt_remoterels[node->mt_lastResultIndex];
+	if (!IS_PGXC_DATANODE && remoterelstate != NULL)
+		step = (RemoteQuery *)((RemoteQueryState *)remoterelstate)->ss.ps.plan;
+#endif
+
+#ifdef PGXC
+	saved_resultRemoteRel = estate->es_result_remoterel;
+	estate->es_result_remoterel = remoterelstate;
+#endif
+
+
 	/* Set global context */
 	context.mtstate = node;
 	context.epqstate = &node->mt_epqstate;
@@ -4073,8 +4094,12 @@ ExecModifyTable(PlanState *pstate)
 		 * If we got a RETURNING result, return it to caller.  We'll continue
 		 * the work on next call.
 		 */
-		if (slot)
+		if (slot) {
+#ifdef PGXC
+			estate->es_result_remoterel = saved_resultRemoteRel;
+#endif
 			return slot;
+		}
 	}
 
 	/*
@@ -4082,6 +4107,10 @@ ExecModifyTable(PlanState *pstate)
 	 */
 	if (estate->es_insert_pending_result_relations != NIL)
 		ExecPendingInserts(estate);
+
+#ifdef PGXC	
+	estate->es_result_remoterel = saved_resultRemoteRel;
+#endif	
 
 	/*
 	 * We're done, but fire AFTER STATEMENT triggers before exiting.

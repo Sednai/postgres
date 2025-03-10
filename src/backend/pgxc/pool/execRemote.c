@@ -4256,12 +4256,9 @@ ExecProcNodeDMLInXC(EState *estate,
 	 * Use data row returned by the previous step as parameter for
 	 * the DML to be executed in this step.
 	 */
-	/* PG15 DEACTIVATED FOR NOW 
-	
-	SetDataRowForIntParams(resultRelInfo->ri_junkFilter,
+
+	SetDataRowForIntParams(estate->es_junkFilter,
 	                       sourceDataSlot, newDataSlot, resultRemoteRel);	
-	*/
-	elog(ERROR,"PG15-XC NEEDS JUNKFILTER FIX !");
 
 	/*
 	 * do_query calls get_exec_connections to determine target nodes

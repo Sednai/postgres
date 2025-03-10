@@ -1277,11 +1277,11 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 							set_remote_references(root, rq, rtoffset);
 						rq->scan.plan.targetlist = fix_scan_list(root,
 													rq->scan.plan.targetlist,
-													rtoffset, NUM_EXEC_TLIST(&rq->scan.plan));
+													rtoffset, NUM_EXEC_TLIST(plan));
 						rq->scan.plan.qual = fix_scan_list(root,
 															rq->scan.plan.qual,
-															rtoffset, NUM_EXEC_QUAL(&rq->scan.plan));
-						rq->base_tlist = fix_scan_list(root, rq->base_tlist, rtoffset, NUM_EXEC_TLIST(&rq->scan.plan));
+															rtoffset, NUM_EXEC_QUAL(plan));
+						rq->base_tlist = fix_scan_list(root, rq->base_tlist, rtoffset, NUM_EXEC_TLIST(plan));
 						rq->scan.scanrelid += rtoffset;
 					}
 				}

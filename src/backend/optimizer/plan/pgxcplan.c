@@ -1437,11 +1437,8 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 									resultRelationIndex);
 
 		/* Get the plan that is supposed to supply source data to this plan */
-		//sourceDataPlan = list_nth(mt->plans, relcount);
-		sourceDataPlan = &mt->plan;
-
 		pgxc_build_dml_statement(root, cmdtyp, resultRelationIndex, fstep,
-									sourceDataPlan->targetlist);
+									mt->plan.lefttree->targetlist);
 
 		fstep->combine_type = get_plan_combine_type(cmdtyp,
 													rel_loc_info->locatorType);
@@ -2410,7 +2407,7 @@ pgxc_planner(Query *query, int cursorOptions, ParamListInfo boundParams)
 	result = pgxc_FQS_planner(query, cursorOptions, boundParams);
 	if (result)
 		return result;
-
+	
 	/* we need Coordinator for evaluation, invoke standard planner */
 	result = standard_planner(query, query->sql_statement, cursorOptions, boundParams);
 	return result;

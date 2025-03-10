@@ -824,7 +824,9 @@ InitPlan(QueryDesc *queryDesc, int eflags)
 	ExecInitRangeTable(estate, rangeTable);
 
 	estate->es_plannedstmt = plannedstmt;
-
+#ifdef PGXC
+		estate->es_result_remoterel = NULL;
+#endif
 	/*
 	 * Next, build the ExecRowMark array from the PlanRowMark(s), if any.
 	 */
@@ -2866,7 +2868,7 @@ EvalPlanQualStart(EPQState *epqstate, Plan *planTree)
 	rcestate->es_result_relations = NULL;
 	/* es_trig_target_relations must NOT be copied */
 
-	#ifdef PGXC
+#ifdef PGXC
 	/* XXX Check if this is OK */
 	rcestate->es_result_remoterel = parentestate->es_result_remoterel;
 #endif
