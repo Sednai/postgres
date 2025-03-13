@@ -498,7 +498,6 @@ SocketBackend(StringInfo inBuf)
 			break;
 	}
 
-	elog(WARNING,"[DEBUG]->SocketBackend");
 	/*
 	 * In protocol version 3, all frontend messages have a length word next
 	 * after the type code; we can read the message contents independently of
@@ -507,8 +506,6 @@ SocketBackend(StringInfo inBuf)
 	if (pq_getmessage(inBuf, maxmsglen))
 		return EOF;				/* suitable message already logged */
 	RESUME_CANCEL_INTERRUPTS();
-
-	elog(WARNING,"[DEBUG]->SocketBackend done");
 
 	return qtype;
 }
@@ -1088,6 +1085,12 @@ pg_plan_queries(List *querytrees, const char *query_string, int cursorOptions,
 		}
 		else
 		{
+#ifdef PGXC
+			if(query->sql_statement != NULL)
+				stmt = pg_plan_query(query, query->sql_statement, cursorOptions,
+								 boundParams);
+			else
+#endif
 			stmt = pg_plan_query(query, query_string, cursorOptions,
 								 boundParams);
 		}
@@ -1159,8 +1162,6 @@ exec_simple_query(const char *query_string)
 	 * we are in aborted transaction state!)
 	 */
 	parsetree_list = pg_parse_query(query_string);
-
-	elog(WARNING,"[DEBUG]: %s",query_string);
 
 	/* Log immediately if dictated by log_statement */
 	if (check_log_statement(parsetree_list))
@@ -1523,9 +1524,6 @@ exec_parse_message(const char *query_string,	/* string to execute */
 	bool		is_named;
 	bool		save_log_statement_stats = log_statement_stats;
 	char		msec_str[32];
-
-
-	elog(WARNING,"[DEBUG](exec_parse_msg): %s, %s",query_string,stmt_name);
 
 	/*
 	 * Report query to various monitoring facilities.
@@ -4931,14 +4929,11 @@ PostgresMain(const char *dbname, const char *username)
 		 */
 		DoingCommandRead = true;
 
-		elog(WARNING,"[DEBUG]: ReadCommand");
 		/*
 		 * (3) read a command (loop blocks here)
 		 */
 		firstchar = ReadCommand(&input_message);
-		
-		elog(WARNING,"[DEBUG]: first %d",firstchar);
-		
+			
 		/*
 		 * (4) turn off the idle-in-transaction and idle-session timeouts if
 		 * active.  We do this before step (5) so that any last-moment timeout

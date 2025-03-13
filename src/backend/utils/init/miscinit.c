@@ -292,6 +292,10 @@ GetBackendTypeDesc(BackendType backendType)
 		case B_LOGGER:
 			backendDesc = "logger";
 			break;
+#ifdef PGXC
+		case B_POOLER:
+			backendDesc = "pgxc pooler";
+#endif
 	}
 
 	return backendDesc;

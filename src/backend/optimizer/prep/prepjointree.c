@@ -1279,8 +1279,10 @@ pull_up_simple_subquery(PlannerInfo *root, Node *jtnode, RangeTblEntry *rte,
 	 * concerned; but if this query level is in turn pulled up into a parent,
 	 * we'd waste cycles copying the now-unused query tree.
 	 */
+#ifndef PGXC
+	/* NEED TO KEEP FOR PGXC */
 	rte->subquery = NULL;
-
+#endif
 	/*
 	 * Miscellaneous housekeeping.
 	 *

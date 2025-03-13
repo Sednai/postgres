@@ -169,8 +169,6 @@ void
 SendRowDescriptionMessage(StringInfo buf, TupleDesc typeinfo,
 						  List *targetlist, int16 *formats)
 {
-	elog(WARNING,"[DEBUG] -> SendRowDescriptionMessage");
-
 	int			natts = typeinfo->natts;
 	int			i;
 	ListCell   *tlist_item = list_head(targetlist);

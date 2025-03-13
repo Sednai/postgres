@@ -2622,7 +2622,7 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	 * Initialize result tuple type and projection info.
 	 */
 	ExecInitResultTupleSlotTL(&remotestate->ss.ps, &TTSOpsMinimalTuple);
-	ExecAssignScanProjectionInfoWithVarno(&remotestate->ss,node->scan.scanrelid);
+	ExecAssignScanProjectionInfo(&remotestate->ss);
 
 	if (node->rq_save_command_id)
 	{

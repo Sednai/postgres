@@ -98,10 +98,11 @@ extern void standard_ProcessUtility(PlannedStmt *pstmt, const char *queryString,
 						DestReceiver *dest, bool sentToRemote, QueryCompletion *qc);
 #else
 						DestReceiver *dest, QueryCompletion *qc);
+#endif
 
 extern void ProcessUtilityForAlterTable(Node *stmt,
 										AlterTableUtilityContext *context);
-#endif
+
 extern bool UtilityReturnsTuples(Node *parsetree);
 
 extern TupleDesc UtilityTupleDescriptor(Node *parsetree);

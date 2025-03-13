@@ -1120,7 +1120,7 @@ ExecInitExprRec(Expr *node, ExprState *state,
 		case T_FuncExpr:
 			{
 				FuncExpr   *func = (FuncExpr *) node;
-
+				
 				ExecInitFunc(&scratch, node,
 							 func->args, func->funcid, func->inputcollid,
 							 state);

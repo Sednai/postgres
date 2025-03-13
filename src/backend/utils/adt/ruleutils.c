@@ -7703,12 +7703,14 @@ get_variable(Var *var, int levelsup, bool istoplevel, deparse_context *context)
 	 * backwards compatibility than anything else.  But it does have the
 	 * advantage of making plans more explicit.)
 	 */
+#ifndef PGXC
 	if (var->varnosyn > 0 && dpns->plan == NULL)
 	{
 		varno = var->varnosyn;
 		varattno = var->varattnosyn;
 	}
 	else
+#endif
 	{
 		varno = var->varno;
 		varattno = var->varattno;

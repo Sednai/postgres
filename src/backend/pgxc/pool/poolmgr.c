@@ -62,6 +62,8 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include "utils/varlena.h"
+#include "storage/procsignal.h"
+
 /* Configuration options */
 int			MinPoolSize = 1;
 int			MaxPoolSize = 100;
@@ -213,7 +215,9 @@ PoolManagerInit()
 	pqsignal(SIGQUIT, pooler_quickdie);
 	pqsignal(SIGHUP, SIG_IGN);
 	/* TODO other signal handlers */
-
+	pqsignal(SIGUSR1, procsignal_sigusr1_handler);
+	pqsignal(SIGUSR2, SIG_IGN);
+	
 	/* We allow SIGQUIT (quickdie) at all times */
 	sigdelset(&BlockSig, SIGQUIT);
 
@@ -2388,6 +2392,10 @@ PoolerLoop(void)
 
 			exit(0);
 		}
+
+		if (ProcSignalBarrierPending)
+			ProcessProcSignalBarrier();
+
 		/* wait for event */
 
 		retval = poll(pool_fd, agentCount + 1, -1);

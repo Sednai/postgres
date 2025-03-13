@@ -823,8 +823,6 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 											   false,
 											   false);
 
-		addNSItemToQuery(pstate, nsitem, true, false, false);
-
 #ifdef PGXC
 		/*
 		 * For an INSERT SELECT involving INSERT on a child after scanning
@@ -841,6 +839,8 @@ transformInsertStmt(ParseState *pstate, InsertStmt *stmt)
 			}
 		}
 #endif
+
+		addNSItemToQuery(pstate, nsitem, true, false, false);
 
 		/*----------
 		 * Generate an expression list for the INSERT that selects all the

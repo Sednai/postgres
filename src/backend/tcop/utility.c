@@ -2014,6 +2014,10 @@ ProcessUtilitySlow(ParseState *pstate,
 						atcontext.params = params;
 						atcontext.queryEnv = queryEnv;
 
+						/* ... ensure we have an event trigger context ... */
+						EventTriggerAlterTableStart(parsetree);
+						EventTriggerAlterTableRelid(relid);
+
 #ifdef PGXC
 						/*
 						 * Add a RemoteQuery node for a query at top level on a remote
@@ -2032,14 +2036,10 @@ ProcessUtilitySlow(ParseState *pstate,
 																 relid,
 																 &is_temp);
 
-								atstmt = AddRemoteQueryNode(atstmt, queryString, exec_type, is_temp);
+								ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, exec_type, is_temp);
 							}
 						}
 #endif
-
-						/* ... ensure we have an event trigger context ... */
-						EventTriggerAlterTableStart(parsetree);
-						EventTriggerAlterTableRelid(relid);
 
 						/* ... and do it */
 						AlterTable(atstmt, lockmode, &atcontext);

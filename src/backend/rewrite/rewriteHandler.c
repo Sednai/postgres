@@ -4024,7 +4024,6 @@ RewriteQuery(Query *parsetree, List *rewrite_events, int orig_rt_length)
 		product_queries = NIL;
 		if (IS_PGXC_COORDINATOR)
 #endif
-		product_orig_rt_length = list_length(parsetree->rtable);
 		product_queries = fireRules(parsetree,
 									result_relation,
 									event,
