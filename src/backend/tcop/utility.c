@@ -2018,6 +2018,8 @@ ProcessUtilitySlow(ParseState *pstate,
 						EventTriggerAlterTableStart(parsetree);
 						EventTriggerAlterTableRelid(relid);
 
+						/* ... and do it */
+						AlterTable(atstmt, lockmode, &atcontext);
 #ifdef PGXC
 						/*
 						 * Add a RemoteQuery node for a query at top level on a remote
@@ -2032,17 +2034,18 @@ ProcessUtilitySlow(ParseState *pstate,
 
 							if (OidIsValid(relid))
 							{
+								EventTriggerAlterTableEnd();
 								exec_type = ExecUtilityFindNodes(atstmt->objtype,
 																 relid,
 																 &is_temp);
 
 								ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, exec_type, is_temp);
+			
+								EventTriggerAlterTableStart(parsetree);
+								EventTriggerAlterTableRelid(relid);
 							}
 						}
 #endif
-
-						/* ... and do it */
-						AlterTable(atstmt, lockmode, &atcontext);
 
 						/* done */
 						EventTriggerAlterTableEnd();

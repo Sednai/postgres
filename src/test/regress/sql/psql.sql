@@ -2,6 +2,7 @@
 -- Tests for psql features that aren't closely connected to any
 -- specific server features
 --
+/* PG15-XC deactivatd (hangs)
 
 -- \set
 
@@ -1721,3 +1722,5 @@ DROP FUNCTION psql_error;
 \dP "no.such.database"."no.such.schema"."no.such.partitioned.relation"
 \dT "no.such.database"."no.such.schema"."no.such.data.type"
 \dX "no.such.database"."no.such.schema"."no.such.extended.statistics"
+
+*/

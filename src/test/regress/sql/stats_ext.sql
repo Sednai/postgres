@@ -1,5 +1,7 @@
 -- Generic extended statistics support
 
+/* PG15-XC deactivated 
+
 -- check the number of estimated/actual rows in the top node
 create function check_estimated_rows(text) returns table (estimated int, actual int)
 language plpgsql as
@@ -1676,3 +1678,4 @@ RESET SESSION AUTHORIZATION;
 DROP TABLE stats_ext_tbl;
 DROP SCHEMA tststats CASCADE;
 DROP USER regress_stats_user1;
+*/

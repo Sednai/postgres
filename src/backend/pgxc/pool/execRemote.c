@@ -2610,8 +2610,6 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	ExecInitScanTupleSlot(estate, &remotestate->ss, NULL, &TTSOpsMinimalTuple);
 	ExecAssignScanType(&remotestate->ss, scan_type);
 	
-	remotestate->ss.ps.plan->targetlist = node->base_tlist;
-
 	/*
 	 * If there are parameters supplied, get them into a form to be sent to the
 	 * Datanodes with bind message. We should not have had done this before.

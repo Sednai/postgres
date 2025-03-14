@@ -2858,7 +2858,11 @@ AddRemoteQueryNode(List *stmts, const char *queryString, RemoteQueryExecType rem
 		step->sql_statement = (char *) queryString;
 		step->exec_type = remoteExecType;
 		step->is_temp = is_temp;
-		result = lappend(result, step);
+		if(list_length(stmts) > 0) 
+			result = lappend(result, step);
+		else
+			result = list_make1(step);
+		
 	}
 
 	return result;

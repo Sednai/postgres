@@ -805,7 +805,7 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				if (splan->base_tlist)
 					set_remote_references(root, splan, rtoffset);
 				splan->scan.plan.targetlist =
-					fix_scan_list(root, splan->scan.plan.qual, rtoffset, NUM_EXEC_TLIST(plan));
+					fix_scan_list(root, splan->scan.plan.targetlist, rtoffset, NUM_EXEC_TLIST(plan));
 				splan->scan.plan.qual =
 					fix_scan_list(root, splan->scan.plan.qual, rtoffset, NUM_EXEC_QUAL(plan));
 				splan->base_tlist =

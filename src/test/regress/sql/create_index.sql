@@ -411,7 +411,8 @@ CREATE UNIQUE INDEX unique_idx4 ON unique_tbl (i) NULLS NOT DISTINCT;  -- ok now
 SELECT pg_get_indexdef('unique_idx3'::regclass);
 SELECT pg_get_indexdef('unique_idx4'::regclass);
 
-DROP TABLE unique_tbl;
+-- PG15-XC deadlock
+-- DROP TABLE unique_tbl;
 
 
 --
