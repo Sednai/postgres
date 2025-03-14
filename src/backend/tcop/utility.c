@@ -2025,7 +2025,7 @@ ProcessUtilitySlow(ParseState *pstate,
 						 * Add a RemoteQuery node for a query at top level on a remote
 						 * Coordinator, if not already done so
 						 */
-						if (!sentToRemote)
+						if (!sentToRemote && IS_PGXC_COORDINATOR && !IsConnFromCoord())
 						{
 							bool is_temp = false;
 							RemoteQueryExecType exec_type;
