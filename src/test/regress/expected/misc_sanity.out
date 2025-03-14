@@ -75,7 +75,10 @@ ORDER BY 1;
 -------------
  pg_depend
  pg_shdepend
-(2 rows)
+ pgxc_class
+ pgxc_group
+ pgxc_node
+(5 rows)
 
 -- system catalog unique indexes not wrapped in a constraint
 -- (There should be none.)

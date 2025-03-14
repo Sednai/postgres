@@ -63,7 +63,6 @@ SELECT * FROM OID_TBL ORDER BY f1;
        1235
    99999999
  4294966256
-
 (8 rows)
 
 SELECT o.* FROM OID_TBL o WHERE o.f1 = 1234;
@@ -75,32 +74,32 @@ SELECT o.* FROM OID_TBL o WHERE o.f1 = 1234;
 SELECT o.* FROM OID_TBL o WHERE o.f1 <> '1234' ORDER BY f1;
      f1     
 ------------
-       1235
-        987
- 4294966256
-   99999999
           5
          10
          15
+        987
+       1235
+   99999999
+ 4294966256
 (7 rows)
 
 SELECT o.* FROM OID_TBL o WHERE o.f1 <= '1234' ORDER BY f1;
   f1  
 ------
- 1234
-  987
     5
    10
    15
+  987
+ 1234
 (5 rows)
 
 SELECT o.* FROM OID_TBL o WHERE o.f1 < '1234' ORDER BY f1;
  f1  
 -----
- 987
    5
   10
   15
+ 987
 (4 rows)
 
 SELECT o.* FROM OID_TBL o WHERE o.f1 >= '1234' ORDER BY f1;
@@ -108,16 +107,16 @@ SELECT o.* FROM OID_TBL o WHERE o.f1 >= '1234' ORDER BY f1;
 ------------
        1234
        1235
- 4294966256
    99999999
+ 4294966256
 (4 rows)
 
 SELECT o.* FROM OID_TBL o WHERE o.f1 > '1234' ORDER BY f1;
      f1     
 ------------
        1235
- 4294966256
    99999999
+ 4294966256
 (3 rows)
 
 DROP TABLE OID_TBL;

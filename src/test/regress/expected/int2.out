@@ -45,9 +45,9 @@ SELECT * FROM INT2_TBL ORDER BY f1;
   32767
 (5 rows)
 
-SELECT * FROM INT2_TBL AS f(a, b);
+SELECT * FROM INT2_TBL AS f(a, b) ORDER BY f1;
 ERROR:  table "f" has 1 columns available but 2 columns specified
-SELECT * FROM (TABLE int2_tbl) AS s (a, b);
+SELECT * FROM (TABLE int2_tbl) AS s (a, b) ORDER BY f1;
 ERROR:  table "s" has 1 columns available but 2 columns specified
 SELECT i.* FROM INT2_TBL i WHERE i.f1 <> int2 '0' ORDER BY f1;
    f1   
@@ -131,7 +131,7 @@ SELECT i.* FROM INT2_TBL i WHERE i.f1 >= int2 '0' ORDER BY f1;
  32767
 (3 rows)
 
-SELECT i.* FROM INT2_TBL i WHERE i.f1 >= int4 '0' R BY f1;
+SELECT i.* FROM INT2_TBL i WHERE i.f1 >= int4 '0' ORDER BY f1;
   f1   
 -------
      0
@@ -150,20 +150,20 @@ SELECT i.* FROM INT2_TBL i WHERE (i.f1 % int2 '2') = int2 '1';
 SELECT i.* FROM INT2_TBL i WHERE (i.f1 % int4 '2') = int2 '0' ORDER BY f1;
   f1   
 -------
+ -1234
      0
   1234
- -1234
 (3 rows)
 
 SELECT i.f1, i.f1 * int2 '2' AS x FROM INT2_TBL i;
 ERROR:  smallint out of range
 SELECT i.f1, i.f1 * int2 '2' AS x FROM INT2_TBL i
-WHERE abs(f1) < 16384 ORDER BY f1s;
+WHERE abs(f1) < 16384 ORDER BY f1;
   f1   |   x   
 -------+-------
+ -1234 | -2468
      0 |     0
   1234 |  2468
- -1234 | -2468
 (3 rows)
 
 SELECT i.f1, i.f1 * int4 '2' AS x FROM INT2_TBL i ORDER BY f1;
@@ -178,8 +178,8 @@ SELECT i.f1, i.f1 * int4 '2' AS x FROM INT2_TBL i ORDER BY f1;
 
 SELECT i.f1, i.f1 + int2 '2' AS x FROM INT2_TBL i;
 ERROR:  smallint out of range
-SELECT i.f1, i.f1 + int2 '2' AS x FROM INT2_TBL i ORDER BY f1
-WHERE f1 < 32766;
+SELECT i.f1, i.f1 + int2 '2' AS x FROM INT2_TBL i
+WHERE f1 < 32766 ORDER BY f1;
    f1   |   x    
 --------+--------
  -32767 | -32765

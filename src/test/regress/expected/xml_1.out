@@ -978,7 +978,6 @@ ERROR:  unsupported XML feature
 LINE 1: SELECT * FROM xmltable('/x/a' PASSING '<x><a><ent>&apos;</en...
                                               ^
 DETAIL:  This functionality requires the server to be built with libxml support.
-HINT:  You need to rebuild PostgreSQL using --with-libxml.
 -- EXPLAIN (VERBOSE, COSTS OFF)
 -- SELECT  xmltable.*
 --    FROM (SELECT data FROM xmldata) x,

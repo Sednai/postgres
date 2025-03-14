@@ -29,11 +29,12 @@ INSERT INTO CHAR_TBL (f1) VALUES ('c     ');
 SELECT * FROM CHAR_TBL ORDER BY f1;
  f1 
 ----
- a
- A
+
  1
  2
  3
+ a
+ A
  c
 (7 rows)
 
