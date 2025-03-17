@@ -18,7 +18,9 @@
 #include "nodes/parsenodes.h"
 #include "parser/parse_node.h"
 #include "tcop/dest.h"
-
+#ifdef PGXC
+#include "pgxc/remotecopy.h"
+#endif
 /*
  * Represents whether a header line should be present, and whether it must
  * match the actual names (which implies "true").

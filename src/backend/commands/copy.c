@@ -45,6 +45,8 @@
 #include "nodes/nodes.h"
 #include "pgxc/poolmgr.h"
 #include "catalog/pgxc_node.h"
+#include "commands/copy.h"
+#include "utils/snapmgr.h"
 #endif
 #include "port/pg_bswap.h"
 #include "rewrite/rewriteHandler.h"
@@ -817,33 +819,6 @@ CopyGetAttnums(TupleDesc tupDesc, Relation rel, List *attnamelist)
 }
 
 #ifdef PGXC
-/*
-static RemoteCopyOptions *
-GetRemoteCopyOptions(CopyState cstate)
-{
-	RemoteCopyOptions *res = makeRemoteCopyOptions();
-	Assert(cstate);
-
-	// Then fill in structure
-	res->rco_binary = cstate->binary;
-	res->rco_csv_mode = cstate->csv_mode;
-	if (cstate->delim)
-		res->rco_delim = pstrdup(cstate->delim);
-	if (cstate->null_print)
-		res->rco_null_print = pstrdup(cstate->null_print);
-	if (cstate->quote)
-		res->rco_quote = pstrdup(cstate->quote);
-	if (cstate->escape)
-		res->rco_escape = pstrdup(cstate->escape);
-	if (cstate->force_quote)
-		res->rco_force_quote = list_copy(cstate->force_quote);
-	if (cstate->force_notnull)
-		res->rco_force_notnull = list_copy(cstate->force_notnull);
-
-	return res;
-}
-*/
-
 /* Convenience wrapper around DataNodeCopyBegin() */
 extern void
 pgxc_node_copybegin(RemoteCopyData *remoteCopyState, char node_type)
