@@ -1624,14 +1624,6 @@ grouping_planner(PlannerInfo *root, double tuple_fraction)
 			scanjoin_targets_contain_srfs = NIL;
 		}
 
-#ifdef PGXC
-//	if (IsA(top_plan, RemoteQuery) && parse->commandType == CMD_SELECT) {
-
-//						pgxc_rqplan_adjust_tlist((RemoteQuery *)top_plan);
-//		elog(WARNING,"[DEBUG](grouping_planner) -> before: Apply scan/join target ");
-//	}
-#endif
-
 		/* Apply scan/join target. */
 		scanjoin_target_same_exprs = list_length(scanjoin_targets) == 1
 			&& equal(scanjoin_target->exprs, current_rel->reltarget->exprs);

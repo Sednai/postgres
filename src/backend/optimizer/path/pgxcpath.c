@@ -192,7 +192,7 @@ pgxc_find_remotequery_path(RelOptInfo *rel)
  * JOIN.
  */
 extern void
-create_joinrel_rqpath(PlannerInfo *root, RemoteQueryPath *rqpath, RelOptInfo *joinrel,
+create_joinrel_rqpath(PlannerInfo *root, RelOptInfo *joinrel,
 						RelOptInfo *outerrel, RelOptInfo *innerrel,
 						List *restrictlist, JoinType jointype,
 						SpecialJoinInfo *sjinfo, Relids param_source_rels)
@@ -249,7 +249,7 @@ create_joinrel_rqpath(PlannerInfo *root, RemoteQueryPath *rqpath, RelOptInfo *jo
 	 * Collect quals from restrictions so as to check the shippability of a JOIN
 	 * between distributed relations.
 	 */
-	extract_actual_join_clauses(restrictlist, rqpath->path.parent->relids ,&join_quals, &other_quals);
+	extract_actual_join_clauses(restrictlist, joinrel->relids, &join_quals, &other_quals);
 	/*
 	 * If the joining qual is not shippable and it's an OUTER JOIN, we can not
 	 * ship the JOIN, since that would impact JOIN result.

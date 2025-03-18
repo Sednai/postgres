@@ -2201,6 +2201,11 @@ create_sort_plan(PlannerInfo *root, SortPath *best_path, int flags)
 								   IS_OTHER_REL(best_path->subpath->parent) ?
 								   best_path->path.parent->relids : NULL);
 
+#ifdef PGXC
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+		plan = (Plan *) create_remotesort_plan(root, plan);
+#endif /* PGXC */
+
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
 	return plan;
@@ -2265,6 +2270,17 @@ create_group_plan(PlannerInfo *root, GroupPath *best_path)
 					  extract_grouping_collations(best_path->groupClause,
 												  subplan->targetlist),
 					  subplan);
+
+#ifdef PGXC
+	/*
+		* Grouping will certainly not increase the number of rows
+		* Coordinator fetches from Datanode, in fact it's expected to
+		* reduce the number drastically. Hence, try pushing GROUP BY
+		* clauses and aggregates to the Datanode, thus saving bandwidth.
+		*/
+	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+		plan = create_remotegrouping_plan(root, plan);
+#endif /* PGXC */
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -2537,6 +2553,11 @@ create_groupingsets_plan(PlannerInfo *root, GroupingSetsPath *best_path)
 		/* Copy cost data from Path to Plan */
 		copy_generic_path_info(&plan->plan, &best_path->path);
 	}
+
+#ifdef PGXC
+if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+				plan = create_remotegrouping_plan(root, plan);
+#endif /* PGXC */
 
 	return (Plan *) plan;
 }
@@ -4508,6 +4529,11 @@ create_mergejoin_plan(PlannerInfo *root,
 
 		label_sort_with_costsize(root, sort, -1.0);
 		outer_plan = (Plan *) sort;
+#ifdef PGXC
+			if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+				outer_plan = (Plan *) create_remotesort_plan(root,
+														outer_plan);
+#endif /* PGXC */
 		outerpathkeys = best_path->outersortkeys;
 	}
 	else
@@ -4522,6 +4548,21 @@ create_mergejoin_plan(PlannerInfo *root,
 
 		label_sort_with_costsize(root, sort, -1.0);
 		inner_plan = (Plan *) sort;
+#ifdef PGXC
+			if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+			{
+				inner_plan = (Plan *) create_remotesort_plan(root,
+														inner_plan);
+				/* If Sort node is not needed on top of RemoteQuery node, we
+				 * will need to materialize the datanode result so that
+				 * mark/restore on the inner node can be handled.
+				 * We shouldn't be changing the members in path structure while
+				 * creating plan, but changing the one below isn't harmful.
+				 */
+				if (IsA(inner_plan, RemoteQuery))
+					best_path->materialize_inner = true;
+			}
+#endif /* PGXC */
 		innerpathkeys = best_path->innersortkeys;
 	}
 	else

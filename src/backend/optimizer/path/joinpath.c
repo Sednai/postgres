@@ -320,6 +320,16 @@ add_paths_to_joinrel(PlannerInfo *root,
 		hash_inner_and_outer(root, joinrel, outerrel, innerrel,
 							 jointype, &extra);
 
+#ifdef PGXC
+	/*
+	 * If the inner and outer relations have RemoteQuery paths, check if this
+	 * JOIN can be pushed to the data-nodes. If so, create a RemoteQuery path
+	 * corresponding to the this JOIN.
+	 */
+	create_joinrel_rqpath(root, joinrel, outerrel, innerrel, restrictlist,
+								jointype, sjinfo, extra.param_source_rels);
+#endif /* PGXC */
+
 	/*
 	 * createplan.c does not currently support handling of pseudoconstant
 	 * clauses assigned to joins pushed down by extensions; check if the

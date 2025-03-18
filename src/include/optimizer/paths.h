@@ -103,7 +103,7 @@ extern void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
  */
 extern bool create_plainrel_rqpath(PlannerInfo *root, RelOptInfo *rel,
 									RangeTblEntry *rte, Relids required_outer);
-extern void create_joinrel_rqpath(PlannerInfo *root, RemoteQueryPath *rqpath, RelOptInfo *joinrel,
+extern void create_joinrel_rqpath(PlannerInfo *root, RelOptInfo *joinrel,
 						RelOptInfo *outerrel, RelOptInfo *innerrel,
 						List *restrictlist, JoinType jointype,
 						SpecialJoinInfo *sjinfo, Relids param_source_rels);

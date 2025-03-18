@@ -389,6 +389,10 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 	List			*right_colvars;
 	/* Miscellaneous variables */
 	ListCell		*lcell;
+	ParseState *pstate;
+	ParseNamespaceItem* pni;
+	
+	pstate = make_parsestate(NULL);
 
 	if (!rqpath->leftpath || !rqpath->rightpath)
 		elog(ERROR, "a join relation path should have both left and right paths");
@@ -407,8 +411,10 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 	 * through this function. See notes in prologue of
 	 * create_remotequery_path().
 	 */
-	left_rte = addRangeTableEntryForSubquery(NULL, left_query, left_alias,
+	pni = addRangeTableEntryForSubquery(pstate, left_query, left_alias,
 												false, false);
+	left_rte = pni->p_rte;
+	
 	rtable = lappend(rtable, left_rte);
 	left_rtr = makeNode(RangeTblRef);
 	left_rtr->rtindex = list_length(rtable);
@@ -426,8 +432,10 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 	 * through this function. See notes in prologue of
 	 * create_remotequery_path().
 	 */
-	right_rte = addRangeTableEntryForSubquery(NULL, right_query, right_alias,
+	pni = addRangeTableEntryForSubquery(pstate, right_query, right_alias,
 											  false, false);
+	right_rte = pni->p_rte;
+
 	rtable = lappend(rtable, right_rte);
 	right_rtr = makeNode(RangeTblRef);
 	right_rtr->rtindex = list_length(rtable);
@@ -516,30 +524,27 @@ pgxc_build_shippable_query_jointree(PlannerInfo *root, RemoteQueryPath *rqpath,
 	join_expr->rarg = (Node *)right_rtr;
 	join_expr->quals = (Node *)make_ands_explicit(join_clauses);
 
-	/* PG15 TOFIX */
-	ParseNamespaceColumn* pncol;
-
-
+	// HERE CRASH with unknown rte ...
 
 	/* Build the RTE for JOIN query being created and add it to the rtable */
 	/* We need to construct joinaliasvars from the joining RTEs */
 	expandRTE(left_rte, left_rtr->rtindex, 0, -1, false, NULL, &left_colvars);
 	expandRTE(right_rte, right_rtr->rtindex, 0, -1, false, NULL, &right_colvars);
-
-	elog(ERROR,"PG15-XC JOINS CURRENTLY DEACTIVATED");
-	/*
-	join_rte = addRangeTableEntryForJoin(NULL,
+	
+	pni = addRangeTableEntryForJoin(pstate,
 										list_concat(copyObject(left_colnames),
 													copyObject(right_colnames)),
-										pncol,
+										pni->p_nscolumns,
 										rqpath->jointype,
+										0,
 										list_concat(left_colvars, right_colvars),
-										NULL, 
-
-										rqpath->join_using_alias,
-										rqpath->alias,
+										NIL,
+										NIL,
+										NULL,
+										NULL,
 										false);
-	*/
+	join_rte = pni->p_rte;
+
 	rtable = lappend(rtable, join_rte);
 	/* Put the index of this RTE in Join expression */
 	join_expr->rtindex = list_length(rtable);

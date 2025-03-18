@@ -5248,7 +5248,6 @@ PostgresMain(const char *dbname, const char *username)
 #ifdef PGXC
 			case 'M':			/* Command ID */
 				{
-					elog(WARNING, "command M received");
 					CommandId cid = (CommandId) pq_getmsgint(&input_message, 4);
 					elog(DEBUG1, "Received cmd id %u", cid);
 					SaveReceivedCommandId(cid);
@@ -5257,8 +5256,6 @@ PostgresMain(const char *dbname, const char *username)
 
 			case 'g':			/* gxid */
 				{
-					elog(WARNING, "command g received");
-		
 					/* Set the GXID we were passed down */
 					uint32 epoch = pq_getmsgint(&input_message, 4);
 					TransactionId xid = (TransactionId) pq_getmsgint(&input_message, 4);
@@ -5269,14 +5266,9 @@ PostgresMain(const char *dbname, const char *username)
 				break;
 
 			case 's':			/* snapshot */
-				elog(WARNING, "command s received");
-		
 				/* Set the snapshot we were passed down */
 				xmin = pq_getmsgint(&input_message, 4);
 				xmax = pq_getmsgint(&input_message, 4);
-				/* REMOVED PG15
-				RecentGlobalXmin = pq_getmsgint(&input_message, 4);
-				*/
 				xcnt = pq_getmsgint(&input_message, 4);
 				if (xcnt > 0)
 				{
@@ -5303,8 +5295,6 @@ PostgresMain(const char *dbname, const char *username)
 				break;
 
 			case 't':			/* timestamp */
-				elog(WARNING, "command ts received");
-		
 				timestamp = (TimestampTz) pq_getmsgint64(&input_message);
 				pq_getmsgend(&input_message);
 
@@ -5317,7 +5307,6 @@ PostgresMain(const char *dbname, const char *username)
 
 			case 'b':			/* barrier */
 				{
-					elog(WARNING, "command b received");
 					int command;
 					char *id;
 
