@@ -101,6 +101,8 @@ extern void add_paths_to_joinrel(PlannerInfo *root, RelOptInfo *joinrel,
 /*
  * 		routines to create RemoteQuery paths
  */
+extern bool create_fdw_rqpath(PlannerInfo *root, RelOptInfo *rel,
+									RangeTblEntry *rte);
 extern bool create_plainrel_rqpath(PlannerInfo *root, RelOptInfo *rel,
 									RangeTblEntry *rte, Relids required_outer);
 extern void create_joinrel_rqpath(PlannerInfo *root, RelOptInfo *joinrel,

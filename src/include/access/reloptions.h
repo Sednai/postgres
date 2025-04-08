@@ -223,6 +223,10 @@ extern Datum transformRelOptions(Datum oldOptions, List *defList,
 								 const char *namspace, char *validnsps[],
 								 bool acceptOidsOff, bool isReset);
 extern List *untransformRelOptions(Datum options);
+#ifdef PGXC
+extern List *untransformRelOptionsForNode(Datum options, bool node_only, bool strip_all);
+#endif
+
 extern bytea *extractRelOptions(HeapTuple tuple, TupleDesc tupdesc,
 								amoptions_function amoptions);
 extern void *build_reloptions(Datum reloptions, bool validate,

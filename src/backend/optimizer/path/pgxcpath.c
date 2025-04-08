@@ -94,6 +94,9 @@ create_remotequery_path(PlannerInfo *root, RelOptInfo *rel, ExecNodes *exec_node
 			rqpath->rqhas_temp_rel = IsTempTable(rte->relid);
 			unshippable_quals = !pgxc_is_expr_shippable((Expr *)extract_actual_clauses(rel->baserestrictinfo, false),
 														NULL);
+			
+			/* Allow for parallel scan */
+			rqpath->path.parallel_safe = true;
 		}
 		break;
 
@@ -118,6 +121,14 @@ create_remotequery_path(PlannerInfo *root, RelOptInfo *rel, ExecNodes *exec_node
 	cost_remotequery(rqpath, root, rel);
 
 	return rqpath;
+}
+
+
+extern bool
+create_fdw_rqpath(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
+{
+	return create_plainrel_rqpath(root, rel, rte, false);
+
 }
 
 /*

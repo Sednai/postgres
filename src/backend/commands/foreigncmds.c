@@ -63,7 +63,11 @@ static void import_error_callback(void *arg);
  * conversion.
  */
 static Datum
+#ifdef PGXC
+optionListToArray(List *options, bool strip_node)
+#else
 optionListToArray(List *options)
+#endif
 {
 	ArrayBuildState *astate = NULL;
 	ListCell   *cell;
@@ -79,6 +83,26 @@ optionListToArray(List *options)
 		len = VARHDRSZ + strlen(def->defname) + 1 + strlen(value);
 		t = palloc(len + 1);
 		SET_VARSIZE(t, len);
+#ifdef PGXC
+        if (strip_node)
+        {
+            /*
+             * Ignore any node options not intended for our node
+             * Options are in node:option=value format
+             */
+            char *p = strchr(def->defname, ':');
+            if (p)
+            {
+                *p++;
+				sprintf(VARDATA(t), "%s=%s", p, value);
+            }
+			else
+			{
+				sprintf(VARDATA(t), "%s=%s", def->defname, value);
+			}
+        }
+		else     
+#endif
 		sprintf(VARDATA(t), "%s=%s", def->defname, value);
 
 		astate = accumArrayResult(astate, PointerGetDatum(t),
@@ -112,7 +136,12 @@ transformGenericOptions(Oid catalogId,
 						List *options,
 						Oid fdwvalidator)
 {
+#ifdef PGXC
+	Datum	   *validateOptions;   /* list in a format for validating */
+    List	   *resultOptions = untransformRelOptionsForNode(oldOptions, false, false);
+#else
 	List	   *resultOptions = untransformRelOptions(oldOptions);
+#endif
 	ListCell   *optcell;
 	Datum		result;
 
@@ -176,12 +205,22 @@ transformGenericOptions(Oid catalogId,
 		}
 	}
 
-	result = optionListToArray(resultOptions);
+#ifdef PGXC
+    result = optionListToArray(resultOptions,false);
+    /* strip the node names for validation purposes */
+    validateOptions = optionListToArray(resultOptions, true);
+#else
+   result = optionListToArray(resultOptions);
+#endif
 
 	if (OidIsValid(fdwvalidator))
 	{
+#ifdef PGXC
+        Datum        valarg = validateOptions;
+#else
 		Datum		valarg = result;
 
+#endif
 		/*
 		 * Pass a null options list as an empty array, so that validators
 		 * don't have to be declared non-strict to handle the case.

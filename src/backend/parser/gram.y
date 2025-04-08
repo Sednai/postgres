@@ -569,6 +569,11 @@ static Node *makeRecursiveViewSelect(char *relname, List *aliases, Node *query);
 %type <node>	tablesample_clause opt_repeatable_clause
 %type <target>	target_el set_target insert_column_item
 
+/* PGXZ_BEGIN */
+%type <list>	create_fdw_options
+%type <list>	node_option_list
+%type <list>	node_option_spec
+/* PGXZ_END */
 %type <str>		generic_option_name
 %type <node>	generic_option_arg
 %type <defelt>	generic_option_elem alter_generic_option_elem
@@ -5481,6 +5486,47 @@ AlterFdwStmt: ALTER FOREIGN DATA_P WRAPPER name opt_fdw_options alter_generic_op
 					$$ = (Node *) n;
 				}
 		;
+/* PGXZ_BEGIN 
+Allowing for classical options applied to all nodes and node specific options
+*/
+
+create_fdw_options:
+			OPTIONS '(' node_option_list ')'			{ $$ = $3; }
+			| OPTIONS '(' generic_option_list ')'		{ $$ = $3; }
+			| /*EMPTY*/									{ $$ = NIL; }
+		;
+
+node_option_list:
+			node_option_spec
+				{
+					$$ = $1;
+				}
+			| 
+			node_option_list ',' node_option_spec
+				{
+					$$ = list_concat($1, $3);
+				}
+		;
+
+node_option_spec:
+			NODE pgxcnode_name '(' generic_option_list ')'
+				{
+					ListCell		   *option;
+
+					/* prepend the node associated with the value */
+					foreach(option, $4)
+					{
+						char	  *newname;
+						DefElem   *defel = (DefElem *) lfirst(option);
+
+						newname = psprintf("%s:%s", $2, defel->defname);
+						elog(LOG, "old name: %s, new name: %s", defel->defname, newname);
+						defel->defname = newname;
+					}
+					$$ = $4;
+				}
+		;
+/* PGXZ_END */
 
 /* Options definition for CREATE FDW, SERVER and USER MAPPING */
 create_generic_options:
@@ -5560,7 +5606,13 @@ generic_option_arg:
  *****************************************************************************/
 
 CreateForeignServerStmt: CREATE SERVER name opt_type opt_foreign_server_version
+/* PGXZ_BEGIN */
+/*
 						 FOREIGN DATA_P WRAPPER name create_generic_options
+*/
+		 				 FOREIGN DATA_P WRAPPER name create_fdw_options
+/* PGXZ_END */					 
+
 				{
 					CreateForeignServerStmt *n = makeNode(CreateForeignServerStmt);
 
@@ -5573,7 +5625,13 @@ CreateForeignServerStmt: CREATE SERVER name opt_type opt_foreign_server_version
 					$$ = (Node *) n;
 				}
 				| CREATE SERVER IF_P NOT EXISTS name opt_type opt_foreign_server_version
+/* PGXZ_BEGIN */
+/*
 						 FOREIGN DATA_P WRAPPER name create_generic_options
+*/
+						 FOREIGN DATA_P WRAPPER name create_fdw_options
+/* PGXZ_END */						 
+
 				{
 					CreateForeignServerStmt *n = makeNode(CreateForeignServerStmt);
 
@@ -5649,7 +5707,13 @@ AlterForeignServerStmt: ALTER SERVER name foreign_server_version alter_generic_o
 CreateForeignTableStmt:
 		CREATE FOREIGN TABLE qualified_name
 			'(' OptTableElementList ')'
+/* PGXZ_BEGIN */
+/*
 			OptInherit SERVER name create_generic_options
+*/
+			OptInherit SERVER name create_fdw_options
+			OptDistributeBy OptSubCluster
+/* PGXZ_END */
 				{
 					CreateForeignTableStmt *n = makeNode(CreateForeignTableStmt);
 
@@ -5666,11 +5730,21 @@ CreateForeignTableStmt:
 					/* FDW-specific data */
 					n->servername = $10;
 					n->options = $11;
+/* PGXZ_BEGIN */
+					n->base.distributeby = $12;
+					n->base.subcluster = $13;
+/* PGXZ_END */
 					$$ = (Node *) n;
 				}
 		| CREATE FOREIGN TABLE IF_P NOT EXISTS qualified_name
 			'(' OptTableElementList ')'
+/* PGXZ_BEGIN */
+/*
 			OptInherit SERVER name create_generic_options
+*/
+			OptInherit SERVER name create_fdw_options
+			OptDistributeBy OptSubCluster
+/* PGXZ_END */
 				{
 					CreateForeignTableStmt *n = makeNode(CreateForeignTableStmt);
 
@@ -5687,11 +5761,18 @@ CreateForeignTableStmt:
 					/* FDW-specific data */
 					n->servername = $13;
 					n->options = $14;
+/* PGXZ_BEGIN */
+					n->base.distributeby = $15;
+					n->base.subcluster = $16;
+/* PGXZ_END */
 					$$ = (Node *) n;
 				}
 		| CREATE FOREIGN TABLE qualified_name
 			PARTITION OF qualified_name OptTypedTableElementList PartitionBoundSpec
 			SERVER name create_generic_options
+/* PGXZ_BEGIN */
+			OptDistributeBy OptSubCluster
+/* PGXZ_END */
 				{
 					CreateForeignTableStmt *n = makeNode(CreateForeignTableStmt);
 
@@ -5709,11 +5790,18 @@ CreateForeignTableStmt:
 					/* FDW-specific data */
 					n->servername = $11;
 					n->options = $12;
+/* PGXZ_BEGIN */
+					n->base.distributeby = $13;					
+					n->base.subcluster = $14;
+/* PGXZ_END */					
 					$$ = (Node *) n;
 				}
 		| CREATE FOREIGN TABLE IF_P NOT EXISTS qualified_name
 			PARTITION OF qualified_name OptTypedTableElementList PartitionBoundSpec
 			SERVER name create_generic_options
+/* PGXZ_BEGIN */
+			OptDistributeBy OptSubCluster
+/* PGXZ_END */
 				{
 					CreateForeignTableStmt *n = makeNode(CreateForeignTableStmt);
 
@@ -5732,6 +5820,10 @@ CreateForeignTableStmt:
 					n->servername = $14;
 					n->options = $15;
 					$$ = (Node *) n;
+/* PGXZ_BEGIN */
+					n->base.distributeby = $16;
+					n->base.subcluster = $17;
+/* PGXZ_END */
 				}
 		;
 

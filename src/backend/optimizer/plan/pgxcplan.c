@@ -69,8 +69,6 @@ static bool contains_temp_tables(List *rtable);
 static void pgxc_handle_unsupported_stmts(Query *query);
 static PlannedStmt *pgxc_FQS_planner(Query *query, int cursorOptions,
 										ParamListInfo boundParams);
-static PlannedStmt *pgxc_handle_exec_direct(Query *query, int cursorOptions,
-												ParamListInfo boundParams);
 static RemoteQuery *pgxc_FQS_create_remote_plan(Query *query,
 												ExecNodes *exec_nodes,
 												bool is_exec_direct);
@@ -809,6 +807,9 @@ create_remotequery_plan(PlannerInfo *root, RemoteQueryPath *best_path)
 		}
 		return pgxc_create_gating_plan(root, &best_path->path,(Plan *)result_node, quals);
 	}
+
+	// DEBUG
+	((Plan *)result_node)->parallel_safe = true;
 
 	return (Plan *)result_node;
 }
@@ -2404,10 +2405,6 @@ pgxc_planner(Query *query, int cursorOptions, ParamListInfo boundParams)
 	/* handle the un-supported statements, obvious errors etc. */
 	pgxc_handle_unsupported_stmts(query);
 
-	result = pgxc_handle_exec_direct(query, cursorOptions, boundParams);
-	if (result)
-		return result;
-
 	/* see if can ship the query completely */
 	result = pgxc_FQS_planner(query, cursorOptions, boundParams);
 	if (result)
@@ -2418,7 +2415,7 @@ pgxc_planner(Query *query, int cursorOptions, ParamListInfo boundParams)
 	return result;
 }
 
-static PlannedStmt *
+PlannedStmt *
 pgxc_handle_exec_direct(Query *query, int cursorOptions,
 						ParamListInfo boundParams)
 {
@@ -3114,6 +3111,9 @@ create_remotesort_plan(PlannerInfo *root, Plan *local_plan)
 	/* The plan to return should be from the passed in tree */
 	Assert(result_plan == (Plan *)remote_scan ||
 			result_plan == (Plan *)local_sort);
+
+	// DEBUG
+	result_plan->parallel_safe = true;
 
 	return result_plan;
 }

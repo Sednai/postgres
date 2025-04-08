@@ -2354,6 +2354,12 @@ create_agg_plan(PlannerInfo *root, AggPath *best_path)
 					best_path->transitionSpace,
 					subplan);
 
+#ifdef PGXC
+if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+				plan = create_remotegrouping_plan(root, plan);
+#endif /* PGXC */
+
+
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
 	return plan;

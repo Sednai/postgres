@@ -142,6 +142,9 @@ typedef struct
 
 extern PlannedStmt *pgxc_planner(Query *query, int cursorOptions,
 								 ParamListInfo boundParams);
+extern PlannedStmt *pgxc_handle_exec_direct(Query *query, int cursorOptions,
+						ParamListInfo boundParams);
+													 
 extern List *AddRemoteQueryNode(List *stmts, const char *queryString,
 								RemoteQueryExecType remoteExecType, bool is_temp);
 extern bool pgxc_query_contains_temp_tables(List *queries);

@@ -280,6 +280,17 @@ planner(Query *parse, const char *query_string, int cursorOptions,
 {
 	PlannedStmt *result;
 
+#ifdef PGXC
+/*
+	Do execute direct before any potential hooks
+*/
+if (IS_PGXC_COORDINATOR && !IsConnFromCoord()) {
+	result = pgxc_handle_exec_direct(parse, cursorOptions, boundParams);
+	if (result)
+		return result;
+}
+#endif
+
 	if (planner_hook)
 		result = (*planner_hook) (parse, query_string, cursorOptions, boundParams);
 	else

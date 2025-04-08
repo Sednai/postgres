@@ -2355,16 +2355,13 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateFdwStmt:
-#ifdef PGXC
-				/* K.Suzuki, Sep.2nd, 2013
-				 * Moved from standard_ProcessUtility().
-				 */
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("Postgres-XC does not support FOREIGN DATA WRAPPER yet"),
-						 errdetail("The feature is not currently supported")));
-#endif
+
 				address = CreateForeignDataWrapper(pstate, (CreateFdwStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
+
 				break;
 
 			case T_AlterFdwStmt:
@@ -2372,20 +2369,21 @@ ProcessUtilitySlow(ParseState *pstate,
 				break;
 
 			case T_CreateForeignServerStmt:
-#ifdef PGXC
-				/* K.Suzuki, Sep.2nd, 2013
-				 * Moved from standard_ProcessUtility().
-				 */
-				ereport(ERROR,
-						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-						 errmsg("Postgres-XC does not support SERVER yet"),
-						 errdetail("The feature is not currently supported")));
-#endif
 				address = CreateForeignServer((CreateForeignServerStmt *) parsetree);
+
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
+
 				break;
 
 			case T_AlterForeignServerStmt:
 				address = AlterForeignServer((AlterForeignServerStmt *) parsetree);
+#ifdef PGXC
+				if (IS_PGXC_COORDINATOR)
+					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, EXEC_ON_ALL_NODES, false);
+#endif
 				break;
 
 			case T_CreateUserMappingStmt:

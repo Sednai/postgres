@@ -80,7 +80,11 @@ GetForeignDataWrapperExtended(Oid fdwid, bits16 flags)
 	if (isnull)
 		fdw->options = NIL;
 	else
-		fdw->options = untransformRelOptions(datum);
+#ifdef PGXC
+        fdw->options = untransformRelOptionsForNode(datum,false,false);
+#else
+        fdw->options = untransformRelOptions(datum);
+#endif
 
 	ReleaseSysCache(tp);
 
@@ -167,7 +171,11 @@ GetForeignServerExtended(Oid serverid, bits16 flags)
 	if (isnull)
 		server->options = NIL;
 	else
-		server->options = untransformRelOptions(datum);
+#ifdef PGXC
+        server->options = untransformRelOptionsForNode(datum,false,false);
+#else
+        server->options = untransformRelOptions(datum);
+#endif
 
 	ReleaseSysCache(tp);
 
@@ -235,8 +243,11 @@ GetUserMapping(Oid userid, Oid serverid)
 	if (isnull)
 		um->options = NIL;
 	else
-		um->options = untransformRelOptions(datum);
-
+#ifdef PGXC
+        um->options = untransformRelOptionsForNode(datum,false,false);
+#else
+        um->options = untransformRelOptions(datum);
+#endif
 	ReleaseSysCache(tp);
 
 	return um;
@@ -522,7 +533,11 @@ pg_options_to_table(PG_FUNCTION_ARGS)
 	List	   *options;
 	ReturnSetInfo *rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 
+#ifdef PGXC
+	options = untransformRelOptionsForNode(array,false,false);
+#else
 	options = untransformRelOptions(array);
+#endif
 	rsinfo = (ReturnSetInfo *) fcinfo->resultinfo;
 
 	/* prepare the result set */
