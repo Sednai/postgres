@@ -928,6 +928,8 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 				 * partial-aggregate subexpressions that will be available
 				 * from the child plan node.
 				 */
+
+		
 				if (DO_AGGSPLIT_COMBINE(agg->aggsplit))
 				{
 					plan->targetlist = (List *)
@@ -937,7 +939,11 @@ set_plan_refs(PlannerInfo *root, Plan *plan, int rtoffset)
 						convert_combining_aggrefs((Node *) plan->qual,
 												  NULL);
 				}
-
+				
+#ifdef PGXC
+				/* If the lower plan is RemoteQuery plan, adjust the aggregates */
+				pgxc_set_agg_references(root, (Agg *)plan);
+#endif
 				set_upper_references(root, plan, rtoffset);
 			}
 			break;
@@ -3729,7 +3735,7 @@ pgxc_set_agg_references(PlannerInfo *root, Agg *aggplan)
 	List		*nodes_to_modify;
 	List		*rq_nodes_to_modify;
 	List		*srt_nodes_to_modify;
-
+	
 	/* Lower plan tree can be Sort->RemoteQuery or RemoteQuery */
 	if (IsA(rqplan, Sort))
 	{
@@ -3739,8 +3745,12 @@ pgxc_set_agg_references(PlannerInfo *root, Agg *aggplan)
 	else
 		srtplan = NULL;
 
-	if (!IsA(rqplan, RemoteQuery))
+	if (!IsA(rqplan, RemoteQuery)) {
+		// For datanode use partial agg
+		if(IS_PGXC_DATANODE && IsConnFromCoord() && !aggplan->skip_trans)
+			aggplan->aggsplit = AGGSPLIT_INITIAL_SERIAL;
 		return;
+	}
 
 	Assert(IS_PGXC_COORDINATOR && !IsConnFromCoord());
 	/*
@@ -3750,10 +3760,13 @@ pgxc_set_agg_references(PlannerInfo *root, Agg *aggplan)
 	if (!aggplan->skip_trans)
 		return;
 
+	// Set to partial agg
+	aggplan->aggsplit = AGGSPLIT_FINAL_DESERIAL;
+
 	/* Gather all the aggregates from all the targetlists that need fixing */
 	nodes_to_modify = list_copy(aggplan->plan.targetlist);
 	nodes_to_modify = list_concat(nodes_to_modify, aggplan->plan.qual);
-	aggs_n_vars = pull_var_clause((Node *)nodes_to_modify, PVC_RECURSE_PLACEHOLDERS);
+	aggs_n_vars = pull_var_clause((Node *)nodes_to_modify, PVC_RECURSE_PLACEHOLDERS | PVC_INCLUDE_AGGREGATES);
 	rq_nodes_to_modify = NIL;
 	srt_nodes_to_modify = NIL;
 	/*
@@ -3775,19 +3788,24 @@ pgxc_set_agg_references(PlannerInfo *root, Agg *aggplan)
 			Assert(IsA(aggref, Var));
 			continue;
 		}
-
+		
+		
 		tle = tlist_member((Expr *)aggref, rqplan->scan.plan.targetlist);
 		if (!tle)
 			elog(ERROR, "Could not find the Aggref node");
 		rq_aggref = (Aggref *)tle->expr;
-		Assert(equal(rq_aggref, aggref));
+		Assert(equal(rq_aggref, aggref));	
+
+		// Set to partial agg
+		aggref->aggsplit = AGGSPLIT_FINAL_DESERIAL;
+
 		/*
 		 * Remember the Aggref nodes of which we need to modify. This is done so
 		 * that, if there multiple copies of same aggregate, we will match all
 		 * of them
 		 */
 		rq_nodes_to_modify = list_append_unique(rq_nodes_to_modify, rq_aggref);
-		arg_aggref = rq_aggref;
+		arg_aggref = rq_aggref;	
 
 		/*
 		 * If there is a Sort plan, get corresponding expression from there as

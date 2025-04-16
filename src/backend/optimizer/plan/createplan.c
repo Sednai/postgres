@@ -1922,7 +1922,6 @@ create_gather_plan(PlannerInfo *root, GatherPath *best_path)
 	Gather	   *gather_plan;
 	Plan	   *subplan;
 	List	   *tlist;
-
 	/*
 	 * Push projection down to the child node.  That way, the projection work
 	 * is parallelized, and there can be no system columns in the result (they

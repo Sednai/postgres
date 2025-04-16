@@ -2432,7 +2432,12 @@ agg_retrieve_direct(AggState *aggstate)
 					{
 						lookup_hash_entries(aggstate);
 					}
-
+#ifdef PGXC
+					// Set remote data values to aggstate
+					if(IS_PGXC_COORDINATOR)	{	
+						tmpcontext->ecxt_aggvalues = tmpcontext->ecxt_outertuple->tts_values;
+					}
+#endif
 					/* Advance the aggregates (or combine functions) */
 					advance_aggregates(aggstate);
 
@@ -2537,7 +2542,12 @@ agg_fill_hash_table(AggState *aggstate)
 
 		/* set up for lookup_hash_entries and advance_aggregates */
 		tmpcontext->ecxt_outertuple = outerslot;
-
+#ifdef PGXC
+		// Set remote data values to aggstate
+		if(IS_PGXC_COORDINATOR)	{	
+			tmpcontext->ecxt_aggvalues = tmpcontext->ecxt_outertuple->tts_values;
+		}
+#endif
 		/* Find or build hashtable entries */
 		lookup_hash_entries(aggstate);
 
@@ -3537,6 +3547,16 @@ ExecInitAgg(Agg *node, EState *estate, int eflags)
 	econtext = aggstate->ss.ps.ps_ExprContext;
 	econtext->ecxt_aggvalues = (Datum *) palloc0(sizeof(Datum) * numaggs);
 	econtext->ecxt_aggnulls = (bool *) palloc0(sizeof(bool) * numaggs);
+
+#ifdef PGXC
+	// Set up to receive data
+	if(IS_PGXC_COORDINATOR && !IsConnFromCoord()) {
+		ExprContext *tmpcontext;
+		tmpcontext = aggstate->tmpcontext;
+		tmpcontext->ecxt_aggvalues = (Datum *) palloc0(sizeof(Datum) * numaggs);
+		tmpcontext->ecxt_aggnulls = (bool *) palloc0(sizeof(bool) * numaggs);
+	}
+#endif
 
 	peraggs = (AggStatePerAgg) palloc0(sizeof(AggStatePerAggData) * numaggs);
 	pertransstates = (AggStatePerTrans) palloc0(sizeof(AggStatePerTransData) * numtrans);

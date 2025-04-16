@@ -787,7 +787,8 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 			if (aggref->aggorder ||
 				aggref->aggdistinct ||
 				aggref->agglevelsup ||
-				!aggref->agghas_collectfn ||
+// EXPERIMENTAL DEACTIVATION FOR AGG PUSHDOWN
+//				!aggref->agghas_collectfn ||
 				IsPolymorphicType(aggref->aggtrantype))
 				pgxc_set_shippability_reason(sc_context, SS_NEED_SINGLENODE);
 
@@ -1181,7 +1182,7 @@ pgxc_shippability_walker(Node *node, Shippability_context *sc_context)
 		break;
 	
 		default:
-			elog(ERROR, "pgxc_shippability_walker unrecognized node type: %d",
+			elog(ERROR, "(pgxc_shippability_walker) unrecognized node type: %d",
 				 (int) nodeTag(node));
 			break;
 	}

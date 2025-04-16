@@ -10678,9 +10678,16 @@ get_agg_combine_expr(Node *node, deparse_context *context, void *callback_arg)
 	Aggref	   *aggref;
 	Aggref	   *original_aggref = callback_arg;
 
-	if (!IsA(node, Aggref))
+	if (!IsA(node, Aggref)) {
+#ifdef PGXC
+/*
+ * Just ignore for PGXC due to agg push-down
+*/
+	return;
+#else
 		elog(ERROR, "combining Aggref does not point to an Aggref");
-
+#endif
+	}
 	aggref = (Aggref *) node;
 	get_agg_expr(aggref, context, original_aggref);
 }

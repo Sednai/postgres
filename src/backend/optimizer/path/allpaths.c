@@ -959,12 +959,11 @@ set_foreign_size(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 static void
 set_foreign_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 {
+#ifdef PGXC
+	if(!create_fdw_rqpath(root, rel, rte)) 
+#endif
 	/* Call the FDW's GetForeignPaths function to generate path(s) */
 	rel->fdwroutine->GetForeignPaths(root, rel, rte->relid);
-
-#ifdef PGXC
-	create_fdw_rqpath(root, rel, rte);
-#endif
 }
 
 /*

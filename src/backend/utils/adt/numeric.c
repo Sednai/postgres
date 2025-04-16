@@ -6501,6 +6501,86 @@ typedef struct Int8TransTypeData
 	int64		sum;
 } Int8TransTypeData;
 
+/*
+ * int_avg_serialize
+ *		Serialize Int8TransTypeData
+ */
+Datum
+int_avg_serialize(PG_FUNCTION_ARGS)
+{
+	StringInfoData buf;
+	bytea	   *result;
+	ArrayType  *transarray;
+	Int8TransTypeData *transdata;
+
+	/*
+	 * If we're invoked as an aggregate, we can cheat and modify our first
+	 * parameter in-place to reduce palloc overhead. Otherwise we need to make
+	 * a copy of it before scribbling on it.
+	 */
+	transarray = PG_GETARG_ARRAYTYPE_P(0);
+
+	if (ARR_HASNULL(transarray) ||
+		ARR_SIZE(transarray) != ARR_OVERHEAD_NONULLS(1) + sizeof(Int8TransTypeData))
+		elog(ERROR, "expected 2-element int8 array");
+
+	transdata = (Int8TransTypeData *) ARR_DATA_PTR(transarray);
+
+	pq_begintypsend(&buf);
+
+	pq_sendint64(&buf, transdata->count);
+	pq_sendint64(&buf, transdata->sum);
+
+	result = pq_endtypsend(&buf);
+
+	PG_RETURN_BYTEA_P(result);
+}
+
+/*
+ * int_avg_deserialize
+ *		Serialize Int8TransTypeData
+ */
+Datum
+int_avg_deserialize(PG_FUNCTION_ARGS)
+{
+	bytea	   *sstate;
+	StringInfoData buf;
+	ArrayType  *result;
+	Int8TransTypeData *transdata;
+
+	if (!AggCheckCallContext(fcinfo, NULL))
+		elog(ERROR, "aggregate function called in non-aggregate context");
+
+	sstate = PG_GETARG_BYTEA_PP(0);
+
+	/*
+	 * Copy the bytea into a StringInfo so that we can "receive" it using the
+	 * standard recv-function infrastructure.
+	 */
+	initStringInfo(&buf);
+	appendBinaryStringInfo(&buf,
+						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+
+	result = (ArrayType*)palloc0(2*sizeof(int64) + ARR_OVERHEAD_NONULLS(1) );
+	result->dataoffset = 0;
+	SET_VARSIZE(result, 2*sizeof(int64) + ARR_OVERHEAD_NONULLS(1) );
+    ARR_NDIM(result) = 1;
+    ARR_ELEMTYPE(result) = INT8OID;
+	*((int*)ARR_DIMS(result)) = 2;
+	*((int*)ARR_LBOUND(result)) = 1;
+	
+	transdata = (Int8TransTypeData *) ARR_DATA_PTR(result);
+	
+	transdata->count = pq_getmsgint64(&buf);
+	transdata->sum = pq_getmsgint64(&buf);
+	
+	pq_getmsgend(&buf);
+	pfree(buf.data);
+
+	PG_RETURN_POINTER(result);
+}
+
+
 Datum
 int2_avg_accum(PG_FUNCTION_ARGS)
 {

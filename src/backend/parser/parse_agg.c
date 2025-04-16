@@ -333,8 +333,6 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 	 * on the Coordinator.
 	 * Look up the aggregate definition and replace agg->aggtype
 	 */
-/*
-NEED TO ADD INFO TO PG_AGGREGATE.DAT FIRST !!
 	aggTuple = SearchSysCache(AGGFNOID,
 					  ObjectIdGetDatum(agg->aggfnoid),
 					  0, 0, 0);
@@ -342,13 +340,21 @@ NEED TO ADD INFO TO PG_AGGREGATE.DAT FIRST !!
 		elog(ERROR, "cache lookup failed for aggregate %u",
 			 agg->aggfnoid);
 	aggform = (Form_pg_aggregate) GETSTRUCT(aggTuple);
-	agg->aggtrantype = aggform->aggtranstype;
-	agg->agghas_collectfn = OidIsValid(aggform->aggcollectfn);
-	if (IS_PGXC_DATANODE)
-		agg->aggtype = agg->aggtrantype;
 
-	ReleaseSysCache(aggTuple);
-*/
+	if(aggform->aggtranstype == INTERNALOID) {
+		agg->aggtrantype = BYTEAOID;
+	} else
+		agg->aggtrantype = aggform->aggtranstype;
+
+	agg->agghas_collectfn = OidIsValid(aggform->aggcombinefn);
+
+	if (IS_PGXC_DATANODE && IsConnFromCoord() && agg->agghas_collectfn )
+		if(aggform->aggtranstype == INTERNALOID)
+			agg->aggtype = BYTEAOID;
+		else
+			agg->aggtype = aggform->aggtranstype;
+
+		ReleaseSysCache(aggTuple);
 #endif
 
 	}
@@ -376,7 +382,6 @@ NEED TO ADD INFO TO PG_AGGREGATE.DAT FIRST !!
 	while (min_varlevel-- > 0)
 		pstate = pstate->parentParseState;
 	pstate->p_hasAggs = true;
-
 
 	/*
 	 * Check to see if the aggregate function is in an invalid place within
