@@ -348,13 +348,14 @@ check_agglevels_and_constraints(ParseState *pstate, Node *expr)
 
 	agg->agghas_collectfn = OidIsValid(aggform->aggcombinefn);
 
-	if (IS_PGXC_DATANODE && IsConnFromCoord() && agg->agghas_collectfn )
+	if (IS_PGXC_DATANODE && IsConnFromCoord() && agg->agghas_collectfn ) {
 		if(aggform->aggtranstype == INTERNALOID)
 			agg->aggtype = BYTEAOID;
 		else
 			agg->aggtype = aggform->aggtranstype;
-
-		ReleaseSysCache(aggTuple);
+	}
+	
+	ReleaseSysCache(aggTuple);
 #endif
 
 	}

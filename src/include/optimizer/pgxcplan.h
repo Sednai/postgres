@@ -140,7 +140,7 @@ typedef struct
 										 */
 } RemoteQuery;
 
-extern PlannedStmt *pgxc_planner(Query *query, int cursorOptions,
+extern PlannedStmt *pgxc_planner(Query *query, const char *query_string, int cursorOptions,
 								 ParamListInfo boundParams);
 extern PlannedStmt *pgxc_handle_exec_direct(Query *query, int cursorOptions,
 						ParamListInfo boundParams);

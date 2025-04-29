@@ -3747,8 +3747,35 @@ pgxc_set_agg_references(PlannerInfo *root, Agg *aggplan)
 
 	if (!IsA(rqplan, RemoteQuery)) {
 		// For datanode use partial agg
-		if(IS_PGXC_DATANODE && IsConnFromCoord() && !aggplan->skip_trans)
-			aggplan->aggsplit = AGGSPLIT_INITIAL_SERIAL;
+		if(IS_PGXC_DATANODE && IsConnFromCoord()) {
+	//		if(IS_PGXC_DATANODE) {
+			
+			// Check if combinefn present or not
+			nodes_to_modify = list_copy(aggplan->plan.targetlist);
+			nodes_to_modify = list_concat(nodes_to_modify, aggplan->plan.qual);
+			aggs_n_vars = pull_var_clause((Node *)nodes_to_modify, PVC_RECURSE_PLACEHOLDERS | PVC_INCLUDE_AGGREGATES);
+
+			bool found = false;
+			foreach (lcell, aggs_n_vars)
+			{
+				Aggref 		*aggref = lfirst(lcell);
+			
+				if (!IsA(aggref, Aggref))
+				{
+					Assert(IsA(aggref, Var));
+					continue;
+				}
+				
+				if(aggref->agghas_collectfn) {
+					found = true;
+					break;
+				}
+
+			}
+			
+			if(found)
+				aggplan->aggsplit = AGGSPLIT_INITIAL_SERIAL;
+		}
 		return;
 	}
 

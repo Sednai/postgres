@@ -748,8 +748,6 @@ HandleError(RemoteQueryState *combiner, char *msg_body, size_t len)
  *	msg_body is execution result needed to combine
  *	len is msg_body sizes
  */
-
-// PG15 TOFIX
 void
 HandleCmdComplete(CmdType commandType, CombineTag *combine, QueryCompletion *qc)
 {

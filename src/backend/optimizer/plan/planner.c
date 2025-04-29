@@ -300,7 +300,7 @@ if (IS_PGXC_COORDINATOR && !IsConnFromCoord()) {
 		 * is not allowed to go into PGXC planner.
 		 */
 		if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-			result = pgxc_planner(parse, cursorOptions, boundParams);
+			result = pgxc_planner(parse, query_string, cursorOptions, boundParams);
 		else
 #endif
 		result = standard_planner(parse, query_string, cursorOptions, boundParams);
@@ -6499,6 +6499,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 #ifdef PGXC
 				// Do not add final aggregation on DN
 				if(!IS_PGXC_DATANODE || !IsConnFromCoord())
+				//if(!IS_PGXC_DATANODE )
 #endif
 					add_path(grouped_rel, (Path *)
 							 create_agg_path(root,
@@ -6552,6 +6553,11 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 															 -1.0);
 
 				if (parse->hasAggs)
+#ifdef PGXC
+				// Do not add final aggregation on DN
+				if(!IS_PGXC_DATANODE || !IsConnFromCoord())
+			//	if(!IS_PGXC_DATANODE )
+#endif
 					add_path(grouped_rel, (Path *)
 							 create_agg_path(root,
 											 grouped_rel,
@@ -6611,7 +6617,11 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 		if (partially_grouped_rel && partially_grouped_rel->pathlist)
 		{
 			Path	   *path = partially_grouped_rel->cheapest_total_path;
-
+#ifdef PGXC
+			// Do not add final aggregation on DN
+			if(!IS_PGXC_DATANODE || !IsConnFromCoord())
+			//if(!IS_PGXC_DATANODE )
+#endif
 			add_path(grouped_rel, (Path *)
 					 create_agg_path(root,
 									 grouped_rel,

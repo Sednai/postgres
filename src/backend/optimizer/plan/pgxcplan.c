@@ -1630,16 +1630,21 @@ create_remotegrouping_plan(PlannerInfo *root, Plan *local_plan)
 	 * datanode involved, the evaluation of aggregates and grouping involves
 	 * only a single datanode.
 	 */
+
+// TESTWISE DEACTIVATE
+
+/*
 	if (pgxc_query_has_distcolgrouping(query, remote_scan->exec_nodes) ||
 		list_length(remote_scan->exec_nodes->nodeList) == 1)
 		single_node_grouping = true;
 	else
-		single_node_grouping = false;
+*/
+	single_node_grouping = false;
 	/*
 	 * If we are able to completely evaluate the aggregates on datanodes, we
 	 * need to ask datanode/s to finalise the aggregates
 	 */
-	remote_scan->rq_finalise_aggs = single_node_grouping;
+//	remote_scan->rq_finalise_aggs = single_node_grouping;
 	/*
 	 * We want sort and group references to be included as column numbers in the
 	 * query to be sent to the datanodes.
@@ -1737,7 +1742,10 @@ create_remotegrouping_plan(PlannerInfo *root, Plan *local_plan)
 	 * If we can finalise the aggregates on the datanode/s, we don't need the
 	 * covering Agg/Group plan.
 	 */
-	if (single_node_grouping)
+	
+	 // TEST WISE DEACTIVATION
+	if(false)
+	// if (single_node_grouping)
 		return local_plan_left;
 	else
 	{
@@ -2398,7 +2406,7 @@ fetch_ctid_of(Plan *subtree, Query *query)
  * The plan generated in either of the above cases is returned.
  */
 PlannedStmt *
-pgxc_planner(Query *query, int cursorOptions, ParamListInfo boundParams)
+pgxc_planner(Query *query, const char *query_string, int cursorOptions, ParamListInfo boundParams)
 {
 	PlannedStmt *result;
 
