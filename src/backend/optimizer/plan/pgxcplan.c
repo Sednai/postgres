@@ -621,6 +621,9 @@ pgxc_rqplan_adjust_vars(RemoteQuery *rqplan, Node *node)
 		Var *var = (Var *)lfirst(lcell_var);
 
 		ref_tle = tlist_member((Expr *)var, rqplan->coord_var_tlist);
+		if(ref_tle == NULL)
+			elog(ERROR, "Unexpected error null pointer in target list");
+
 		qry_tle = get_tle_by_resno(rqplan->query_var_tlist, ref_tle->resno);
 		if (!IsA(qry_tle->expr, Var))
 			elog(ERROR, "expected a VAR node but got node of type %d", nodeTag(qry_tle->expr));

@@ -6501,6 +6501,8 @@ typedef struct Int8TransTypeData
 	int64		sum;
 } Int8TransTypeData;
 
+// PGXC-15: can be removed ...
+
 /*
  * int_avg_serialize
  *		Serialize Int8TransTypeData

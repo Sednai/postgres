@@ -1516,9 +1516,15 @@ BeginCopyFrom(ParseState *pstate,
 		else
 			cstate->input_buf = cstate->raw_buf;
 		cstate->input_reached_eof = false;
-
+#ifndef PGXC
 		initStringInfo(&cstate->line_buf);
+#endif
 	}
+
+#ifdef PGXC
+	/* PGXC-15 uses line_buf also for binary */
+	initStringInfo(&cstate->line_buf);
+#endif
 
 	initStringInfo(&cstate->attribute_buf);
 
@@ -1599,7 +1605,7 @@ BeginCopyFrom(ParseState *pstate,
 						else
 							getTypeOutputInfo(att->atttypid,
 											  &out_func_oid, &isvarlena);
-						fmgr_info(out_func_oid, &cstate->in_functions[attnum - 1]);
+						fmgr_info(out_func_oid, &in_functions[attnum - 1]);
 					}
 				}
 				else

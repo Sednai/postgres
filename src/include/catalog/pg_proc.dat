@@ -11833,10 +11833,3 @@
 { oid => '7005', descr => 'lock the cluster for taking backup',
   proname => 'pgxc_lock_for_backup', provolatile => 's', prorettype => 'bool',
   proargtypes => '', prosrc => 'pgxc_lock_for_backup' },
-
-{ oid => '7100', descr => 'aggregate serial function',
-  proname => 'int_avg_serialize', prorettype => 'bytea',
-  proargtypes => 'internal', prosrc => 'int_avg_serialize' },
-{ oid => '7101', descr => 'aggregate deserial function',
-  proname => 'int_avg_deserialize', prorettype => 'internal',
-  proargtypes => 'bytea internal', prosrc => 'int_avg_deserialize' },

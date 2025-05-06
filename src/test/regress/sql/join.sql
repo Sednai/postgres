@@ -697,6 +697,10 @@ where a.unique1 = 42 and
 --
 -- test proper positioning of one-time quals in EXISTS (8.4devel bug)
 --
+
+--- PGXC-15
+set enable_nestloop = 0;
+
 prepare foo(bool) as
   select count(*) from tenk1 a left join tenk1 b
     on (a.unique2 = b.unique1 and exists

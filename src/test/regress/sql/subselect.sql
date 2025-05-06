@@ -346,6 +346,9 @@ from tc;
 -- Test case for 8.3 "failed to locate grouping columns" bug
 --
 
+-- PGXC-15
+set enable_hashagg = 0;
+
 create temp table t1 (f1 numeric(14,0), f2 varchar(30));
 
 select * from

@@ -1857,10 +1857,6 @@ ProcessUtilitySlow(ParseState *pstate,
 								PoolManagerSetCommand(POOL_CMD_TEMP, NULL);
 #endif
 
-							/* Remember transformed RangeVar for LIKE */
-							table_rv = cstmt->relation;
-
-
 							/* Create the table itself */
 							address = DefineRelation(cstmt,
 													 RELKIND_RELATION,
