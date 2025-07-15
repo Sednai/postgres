@@ -274,7 +274,7 @@ create_joinrel_rqpath(PlannerInfo *root, RelOptInfo *joinrel,
 	 * to decide whether a JOIN is reducible or not based on quals (if
 	 * required).
 	 */
-	if (jointype == JOIN_INNER)
+	if (jointype == JOIN_INNER || jointype == JOIN_SEMI || jointype == JOIN_ANTI)
 		join_quals = list_concat(join_quals, other_quals);
 
 	/*

@@ -2093,8 +2093,13 @@ pgxc_is_join_shippable(ExecNodes *inner_en, ExecNodes *outer_en,
 	 * We only support reduction of INNER, LEFT [OUTER] and FULL [OUTER] joins.
 	 * RIGHT [OUTER] join is converted to LEFT [OUTER] join during join tree
 	 * deconstruction.
+	 * JOIN_SEMI added for PGXC15
 	 */
-	if (jointype != JOIN_INNER && jointype != JOIN_LEFT && jointype != JOIN_FULL)
+	if (jointype != JOIN_INNER 
+//		&& jointype != JOIN_SEMI
+		&& jointype != JOIN_LEFT 
+		&& jointype != JOIN_FULL
+	)
 		return NULL;
 
 	/*
@@ -2144,7 +2149,7 @@ pgxc_is_join_shippable(ExecNodes *inner_en, ExecNodes *outer_en,
 	 */
 	else if (IsExecNodesColumnDistributed(outer_en) &&
 				IsExecNodesReplicated(inner_en) &&
-				(jointype == JOIN_INNER || jointype == JOIN_LEFT))
+				(jointype == JOIN_INNER || jointype == JOIN_SEMI || jointype == JOIN_LEFT))
 			merge_nodes = true;
 	/*
 	 * If outer side is replicated and inner side is distributed, we can ship
@@ -2152,7 +2157,7 @@ pgxc_is_join_shippable(ExecNodes *inner_en, ExecNodes *outer_en,
 	 */
 	else if (IsExecNodesReplicated(outer_en) &&
 				IsExecNodesColumnDistributed(inner_en) &&
-				jointype == JOIN_INNER)
+				(jointype == JOIN_INNER || jointype == JOIN_SEMI))
 		merge_nodes = true;
 	/*
 	 * If the ExecNodes of inner and outer nodes can be merged, the JOIN is

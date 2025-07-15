@@ -1076,6 +1076,13 @@ subquery_planner(PlannerGlobal *glob, Query *parse,
 	parse->havingQual = (Node *) newHaving;
 
 	/* Remove any redundant GROUP BY columns */
+
+	/* For PGXC there is a SQL push down problem with groups removed, therefore skip on coordinator
+		(deparsing leads to inconsistent plan for DN parser)
+	*/
+#ifdef PGXC
+	if(!IS_PGXC_COORDINATOR)
+#endif
 	remove_useless_groupby_columns(root);
 
 	/*

@@ -3077,10 +3077,18 @@ create_remotesort_plan(PlannerInfo *root, Plan *local_plan)
 		 */
 		if (remote_query_tle->ressortgroupref <= 0)
 		{
-			remote_query_tle->ressortgroupref = next_ressortgrpref;
-			remote_tle->ressortgroupref = next_ressortgrpref;
-			remote_base_tle->ressortgroupref = next_ressortgrpref;
-			next_ressortgrpref = next_ressortgrpref + 1;
+			// Note: Do not understand why they need to use new numbers.
+			// 		 Bug work-around for now: Use from original targetlist
+			if (next_ressortgrpref != 1) {
+				remote_query_tle->ressortgroupref = next_ressortgrpref;
+				remote_tle->ressortgroupref = next_ressortgrpref;
+				remote_base_tle->ressortgroupref = next_ressortgrpref;
+				next_ressortgrpref = next_ressortgrpref + 1;
+			} else {
+				remote_query_tle->ressortgroupref = remote_tle->ressortgroupref;
+				remote_base_tle->ressortgroupref = remote_tle->ressortgroupref;
+			}
+	
 		}
 
 		orderby_entry = makeNode(SortGroupClause);
