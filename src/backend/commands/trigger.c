@@ -2691,12 +2691,12 @@ ExecIRInsertTriggers(EState *estate, ResultRelInfo *relinfo,
 	for (i = 0; i < trigdesc->numtriggers; i++)
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
+		HeapTuple	oldtuple;
 #ifdef PGXC
 		if (!pgxc_is_trigger_firable(relinfo->ri_RelationDesc, trigger,
 									 exec_all_triggers))
 			continue;
 #endif
-		HeapTuple	oldtuple;
 
 		if (!TRIGGER_TYPE_MATCHES(trigger->tgtype,
 								  TRIGGER_TYPE_ROW,
@@ -2909,6 +2909,12 @@ ExecBRDeleteTriggersNew(EState *estate, EPQState *epqstate,
 	{
 		HeapTuple	newtuple;
 		Trigger    *trigger = &trigdesc->triggers[i];
+
+#ifdef PGXC
+		if (!pgxc_is_trigger_firable(relinfo->ri_RelationDesc, trigger,
+									 exec_all_triggers))
+			continue;
+#endif
 
 		if (!TRIGGER_TYPE_MATCHES(trigger->tgtype,
 								  TRIGGER_TYPE_ROW,
@@ -3297,6 +3303,12 @@ ExecBRUpdateTriggersNew(EState *estate, EPQState *epqstate,
 	{
 		Trigger    *trigger = &trigdesc->triggers[i];
 		HeapTuple	oldtuple;
+		
+#ifdef PGXC
+		if (!pgxc_is_trigger_firable(relinfo->ri_RelationDesc, trigger,
+									 exec_all_triggers))
+			continue;
+#endif
 
 		if (!TRIGGER_TYPE_MATCHES(trigger->tgtype,
 								  TRIGGER_TYPE_ROW,
@@ -4352,8 +4364,8 @@ static void pgxc_ARFetchRow(Relation rel, RowPointerData *rpid, HeapTuple *rs_tu
 static void pgxc_ar_dofetch(Relation rel, ARTupInfo *rs_tupinfo, int fetchpos, HeapTuple *rs_tuple);
 static  int pgxc_ar_goto_end(ARTupInfo *rs_tupinfo);
 static void pgxc_ARNextNewRowpos(RowPointerData *rpid);
-static void pgxc_ar_doadd(HeapTuple tuple, ARTupInfo *rs_tupinfo);
-static void pgxc_ARAddRow(HeapTuple oldtup, HeapTuple newtup, bool is_deferred);
+static void pgxc_ar_doadd(TupleTableSlot* tuple, ARTupInfo *rs_tupinfo);
+static void pgxc_ARAddRow(TupleTableSlot* oldtup, TupleTableSlot* newtup, bool is_deferred);
 static void pgxc_ar_init_tupinfo(ARTupInfo *rs_tupinfo);
 static void pgxc_ARFreeRowStoreForQuery(int query_index);
 static void pgxc_ARMarkAllDeferred(void);
@@ -7521,12 +7533,12 @@ pgxc_ar_init_tupinfo(ARTupInfo *rs_tupinfo)
  * current position.
  */
 static void
-pgxc_ar_doadd(HeapTuple tuple, ARTupInfo *rs_tupinfo)
+pgxc_ar_doadd(TupleTableSlot* tuple, ARTupInfo *rs_tupinfo)
 {
 	if (!rs_tupinfo->tupstate)
 		pgxc_ar_init_tupinfo(rs_tupinfo);
 
-	tuplestore_puttuple(rs_tupinfo->tupstate, tuple);
+	tuplestore_puttupleslot(rs_tupinfo->tupstate, tuple);
 
 	/*
 	 * If tuplestore is at eof, the readptr gets implicitly incremented on new
@@ -7545,14 +7557,14 @@ pgxc_ar_doadd(HeapTuple tuple, ARTupInfo *rs_tupinfo)
  * so that it won't get cleaned up at query end.
  */
 static void
-pgxc_ARAddRow(HeapTuple oldtup, HeapTuple newtup, bool is_deferred)
+pgxc_ARAddRow(TupleTableSlot* oldtup, TupleTableSlot* newtup, bool is_deferred)
 {
 	int					query_index = afterTriggers.query_depth;
 	ARRowStore	   *rowstore;
-	HeapTuple			firsttup;
-	HeapTuple			secondtup;
+	TupleTableSlot*			firsttup;
+	TupleTableSlot*			secondtup;
 
-	/* Initialize the array of rowstores if not already */
+	/* Initisalize the array of rowstores if not already */
 	pgxc_ar_init_rowstore();
 
 	rowstore = afterTriggers.xc_rowstores[query_index];
@@ -7663,9 +7675,6 @@ pgxc_ARMarkAllDeferred(void)
 {
 	int				rs_index;
 	ARRowStore	*rowstore;
-
-	if (&afterTriggers == NULL)
-		return;
 
 	for (rs_index = 0; rs_index < afterTriggers.xc_max_rowstores; rs_index++)
 	{

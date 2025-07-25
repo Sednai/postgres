@@ -483,9 +483,6 @@ brin_inclusion_union(PG_FUNCTION_ARGS)
 	FmgrInfo   *finfo;
 	Datum		result;
 
-	/* Does the "b" summary represent any NULL values? */
-	bool		b_has_nulls = (col_b->bv_hasnulls || col_b->bv_allnulls);
-
 	Assert(col_a->bv_attno == col_b->bv_attno);
 	Assert(!col_a->bv_allnulls && !col_b->bv_allnulls);
 

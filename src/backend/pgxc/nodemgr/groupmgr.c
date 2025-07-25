@@ -47,6 +47,7 @@ PgxcGroupCreate(CreateGroupStmt *stmt)
 	int			member_count = list_length(stmt->nodes);
 	ListCell   *lc;
 	int			i = 0;
+	CatalogIndexState indstate;
 
 	/* Only a DB administrator can add cluster node groups */
 	if (!superuser())
@@ -107,9 +108,6 @@ PgxcGroupCreate(CreateGroupStmt *stmt)
 
 	/* Do the insertion */
 	(void) simple_heap_insert(rel, tup);
-
-
-	CatalogIndexState indstate;
 
 	indstate = CatalogOpenIndexes(rel);
 	CatalogIndexInsert(indstate, tup);

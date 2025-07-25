@@ -722,7 +722,6 @@ fetch_remote_table_info(char *nspname, char *relname,
 	Oid			attrRow[] = {INT2OID, TEXTOID, OIDOID, BOOLOID};
 	Oid			qualRow[] = {TEXTOID};
 	bool		isnull;
-	char		relkind;
 	int			natt;
 	ListCell   *lc;
 	Bitmapset  *included_cols = NULL;

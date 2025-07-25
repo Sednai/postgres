@@ -6567,6 +6567,16 @@ alter_table_type_to_string(AlterTableType cmdtype)
 			return "ALTER COLUMN ... DROP IDENTITY";
 		case AT_ReAddStatistics:
 			return NULL;		/* not real grammar */
+#ifdef PGXC
+		case AT_DistributeBy:
+			return "ALTER DISTRIBUTION";
+		case AT_SubCluster:
+			return "ALTER SUBCLUSTER";
+		case AT_AddNodeList:
+			return "ALTER NODELIST ... ADD";
+		case AT_DeleteNodeList:
+			return "ALTER NODELIST ... DELETE";
+#endif
 	}
 
 	return NULL;
@@ -13534,7 +13544,11 @@ ATExecAlterColumnType(AlteredTableInfo *tab, Relation rel,
 			case OCLASS_PUBLICATION_NAMESPACE:
 			case OCLASS_SUBSCRIPTION:
 			case OCLASS_TRANSFORM:
-
+#ifdef PGXC
+			case OCLASS_PGXC_CLASS:
+			case OCLASS_PGXC_NODE:
+			case OCLASS_PGXC_GROUP:
+#endif
 				/*
 				 * We don't expect any of these sorts of objects to depend on
 				 * a column.
@@ -19480,54 +19494,6 @@ out:
 		index_close(attachrelIdxRels[i], AccessShareLock);
 	MemoryContextSwitchTo(oldcxt);
 	MemoryContextDelete(cxt);
-}
-
-/*
- * isPartitionTrigger
- *		Subroutine for CloneRowTriggersToPartition: determine whether
- *		the given trigger has been cloned from another one.
- *
- * We use pg_depend as a proxy for this, since we don't have any direct
- * evidence.  This is an ugly hack to cope with a catalog deficiency.
- * Keep away from children.  Do not stare with naked eyes.  Do not propagate.
- */
-static bool
-isPartitionTrigger(Oid trigger_oid)
-{
-	Relation	pg_depend;
-	ScanKeyData key[2];
-	SysScanDesc	scan;
-	HeapTuple	tup;
-	bool		found = false;
-
-	pg_depend = table_open(DependRelationId, AccessShareLock);
-
-	ScanKeyInit(&key[0], Anum_pg_depend_classid,
-				BTEqualStrategyNumber,
-				F_OIDEQ,
-				ObjectIdGetDatum(TriggerRelationId));
-	ScanKeyInit(&key[1], Anum_pg_depend_objid,
-				BTEqualStrategyNumber,
-				F_OIDEQ,
-				ObjectIdGetDatum(trigger_oid));
-
-	scan = systable_beginscan(pg_depend, DependDependerIndexId,
-							  true, NULL, 2, key);
-	while ((tup = systable_getnext(scan)) != NULL)
-	{
-		Form_pg_depend	dep = (Form_pg_depend) GETSTRUCT(tup);
-
-		if (dep->refclassid == TriggerRelationId)
-		{
-			found = true;
-			break;
-		}
-	}
-
-	systable_endscan(scan);
-	table_close(pg_depend, AccessShareLock);
-
-	return found;
 }
 
 /*

@@ -3256,7 +3256,7 @@ transformExecDirectStmt(ParseState *pstate, ExecDirectStmt *stmt)
 	 */
 	foreach(raw_parsetree_item, raw_parsetree_list)
 	{
-		Node   *parsetree = (Node *) lfirst(raw_parsetree_item);
+		RawStmt    *parsetree = lfirst_node(RawStmt, raw_parsetree_item);
 		int numparams;
 		numparams = 0;
 		result = parse_analyze_varparams(parsetree, query, NULL, &numparams, pstate->p_queryEnv);

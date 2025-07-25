@@ -2475,6 +2475,7 @@ agg_retrieve_direct(AggState *aggstate)
 					if (node->aggstrategy != AGG_PLAIN)
 					{
 						tmpcontext->ecxt_innertuple = firstSlot;
+						
 						if (!ExecQual(aggstate->phase->eqfunctions[node->numCols - 1],
 									  tmpcontext))
 						{

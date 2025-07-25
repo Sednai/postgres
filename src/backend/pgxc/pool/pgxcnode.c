@@ -436,6 +436,7 @@ retry:
 	res_select = select(nfds + 1, &readfds, NULL, NULL, timeout);
 	if (res_select < 0)
 	{
+		int errn;
 		/* error - retry if EINTR or EAGAIN */
 		if (errno == EINTR || errno == EAGAIN)
 			goto retry;
@@ -444,7 +445,7 @@ retry:
 		{
 			elog(WARNING, "select() bad file descriptor set");
 		}
-		int errn = errno;
+		errn = errno;
 		elog(WARNING, "select() error: %d", errn);
 		if (errno)
 			return ERROR_OCCURED;

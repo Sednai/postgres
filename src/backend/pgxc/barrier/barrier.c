@@ -27,6 +27,7 @@
 #include "storage/lwlock.h"
 #include "tcop/dest.h"
 #include "access/xlog_internal.h"
+#include "access/xloginsert.h"
 
 static const char *generate_barrier_id(const char *id);
 static PGXCNodeAllHandles *PrepareBarrier(const char *id);

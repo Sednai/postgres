@@ -92,8 +92,6 @@ main(int argc, char *argv[])
 	while ((c = getopt_long(argc, argv, "h:p:U:g:wWedDsSrRiIlLc:PE",
 							long_options, &optindex)) != -1)
 	{
-		char   *endptr;
-
 		switch (c)
 		{
 			case 'h':

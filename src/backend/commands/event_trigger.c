@@ -1079,7 +1079,12 @@ EventTriggerSupportsObjectClass(ObjectClass objclass)
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
 			return true;
-
+#ifdef PGXC
+		case OCLASS_PGXC_CLASS:
+		case OCLASS_PGXC_NODE:
+		case OCLASS_PGXC_GROUP:
+			return false;
+#endif
 			/*
 			 * There's intentionally no default: case here; we want the
 			 * compiler to warn if a new OCLASS hasn't been handled above.

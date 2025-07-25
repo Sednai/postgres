@@ -6561,6 +6561,7 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 
 				if (parse->hasAggs)
 #ifdef PGXC
+				{
 				// Do not add final aggregation on DN
 				if(!IS_PGXC_DATANODE || !IsConnFromCoord())
 			//	if(!IS_PGXC_DATANODE )
@@ -6576,6 +6577,9 @@ add_paths_to_grouping_rel(PlannerInfo *root, RelOptInfo *input_rel,
 											 havingQual,
 											 agg_final_costs,
 											 dNumGroups));
+#ifdef PGXC
+				}
+#endif
 				else
 					add_path(grouped_rel, (Path *)
 							 create_group_path(root,

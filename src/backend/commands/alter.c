@@ -434,8 +434,7 @@ ExecAlterObjectDependsStmt(AlterObjectDependsStmt *stmt, ObjectAddress *refAddre
 	ObjectAddress address;
 	ObjectAddress refAddr;
 	Relation	rel;
-	List   *currexts;
-
+	
 	address =
 		get_object_address_rv(stmt->objectType, stmt->relation, (List *) stmt->object,
 							  &rel, AccessExclusiveLock, false);
@@ -667,6 +666,11 @@ AlterObjectNamespace_oid(Oid classId, Oid objid, Oid nspOid,
 		case OCLASS_PUBLICATION_REL:
 		case OCLASS_SUBSCRIPTION:
 		case OCLASS_TRANSFORM:
+#ifdef PGXC
+		case OCLASS_PGXC_CLASS:
+		case OCLASS_PGXC_NODE:
+		case OCLASS_PGXC_GROUP:
+#endif
 			/* ignore object types that don't have schema-qualified names */
 			break;
 

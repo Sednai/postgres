@@ -70,13 +70,6 @@ extern char *GTMProxyConfigFileName;
 
 Server_Message_Level_Options();
 
-static const struct config_enum_entry gtm_startup_mode_options[] = {
-	{"act", GTM_ACT_MODE, false},
-	{"standby", GTM_STANDBY_MODE, false},
-	{NULL, 0, false}
-};
-
-
 /*
  * GTM option variables that are exported from this module
  */

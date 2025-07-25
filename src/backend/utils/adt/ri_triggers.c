@@ -251,7 +251,6 @@ RI_FKey_check(TriggerData *trigdata)
 	TupleTableSlot *newslot;
 	RI_QueryKey qkey;
 	SPIPlanPtr	qplan;
-	int			i;
 
 #ifdef PGXC
 	/* 

@@ -3748,6 +3748,8 @@ pgxc_set_agg_references(PlannerInfo *root, Agg *aggplan)
 	if (!IsA(rqplan, RemoteQuery)) {
 		// For datanode use partial agg
 		if(IS_PGXC_DATANODE && IsConnFromCoord()) {
+			bool found = false;
+
 	//		if(IS_PGXC_DATANODE) {
 			
 			// Check if combinefn present or not
@@ -3755,7 +3757,6 @@ pgxc_set_agg_references(PlannerInfo *root, Agg *aggplan)
 			nodes_to_modify = list_concat(nodes_to_modify, aggplan->plan.qual);
 			aggs_n_vars = pull_var_clause((Node *)nodes_to_modify, PVC_RECURSE_PLACEHOLDERS | PVC_INCLUDE_AGGREGATES);
 
-			bool found = false;
 			foreach (lcell, aggs_n_vars)
 			{
 				Aggref 		*aggref = lfirst(lcell);

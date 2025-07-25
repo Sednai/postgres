@@ -322,7 +322,7 @@ RenameSchema(const char *oldname, const char *newname)
 		Oid					namespaceId;
 
 		/* Check object dependency and see if there is a sequence. If yes rename it */
-		namespaceId = get_namespace_oid(CStringGetDatum(oldname),true);
+		namespaceId = get_namespace_oid(oldname,true);
 
 		/* Create the object that will be checked for the dependencies */
 		object.classId = NamespaceRelationId;

@@ -1823,9 +1823,6 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 
 	context->cpUpdateReturningSlot = NULL;
 	*retry_slot = NULL;
-#ifdef PGXC
-	RemoteQueryState  *resultRemoteRel = NULL;
-#endif
 
 	/*
 	 * Disallow an INSERT ON CONFLICT DO UPDATE that causes the original row

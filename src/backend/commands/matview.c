@@ -1046,7 +1046,6 @@ pgxc_fill_matview_by_copy(DestReceiver *mv_dest, bool skipdata, int operation,
 		/* Read the rows one by one and insert into the materialized view */
 		for(;;)
 		{
-			Oid				tupleOid; /* Temporary variable passed to NextCopyFrom() */
 			HeapTuple		tuple;
 			ExecClearTuple(slot);
 			/*
@@ -1089,7 +1088,7 @@ pgxc_send_matview_data(RangeVar *matview_rv, const char *query_string)
 	Relation		matviewRel;
 	RemoteCopyData	*copyState;
 	TupleDesc 		tupdesc;
-	HeapScanDesc 	scandesc;
+	TableScanDesc 	scandesc;
 	HeapTuple		tuple;
 	Datum			*values;
 	bool			*nulls;
@@ -1131,7 +1130,8 @@ pgxc_send_matview_data(RangeVar *matview_rv, const char *query_string)
 	tupdesc = RelationGetDescr(matviewRel);
 	values = (Datum *) palloc(tupdesc->natts * sizeof(Datum));
 	nulls = (bool *) palloc(tupdesc->natts * sizeof(bool));
-	scandesc = heap_beginscan(matviewRel, SnapshotAny, 0, NULL, NULL, NULL);
+	
+	scandesc = heap_beginscan(matviewRel, SnapshotAny, 0, NULL, NULL, SO_TYPE_SEQSCAN | SO_ALLOW_STRAT | SO_ALLOW_SYNC | SO_ALLOW_PAGEMODE);
 
 	/* Send each tuple to the other coordinators in COPY format */
 	while ((tuple = heap_getnext(scandesc, ForwardScanDirection)) != NULL)

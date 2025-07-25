@@ -1948,7 +1948,6 @@ static Oid
 findTypeInputFunction(List *procname, Oid typeOid)
 {
 	Oid			argList[3];
-	int			nmatches = 0;
 	Oid			procOid;
 	Oid			procOid2;
 

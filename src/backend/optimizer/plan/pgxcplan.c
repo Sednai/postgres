@@ -73,7 +73,7 @@ static RemoteQuery *pgxc_FQS_create_remote_plan(Query *query,
 												ExecNodes *exec_nodes,
 												bool is_exec_direct);
 static bool pgxc_locate_grouping_columns(PlannerInfo *root, List *tlist,
-											AttrNumber *grpColIdx);
+											AttrNumber *grpColIdx, Agg *plan);
 static List *pgxc_process_grouping_targetlist(List *local_tlist,
 												bool single_node_grouping);
 static List *pgxc_process_having_clause(List *remote_tlist, bool single_node_grouping,
@@ -160,6 +160,7 @@ pgxc_build_shippable_tlist(List *tlist, List *unshippabl_quals, bool has_aggs)
 	List					*unshippable_expr = list_copy(unshippabl_quals);
 	List					*aggs_n_vars;
 	bool					tmp_has_aggs;
+	int						flags;
 
 	/*
 	 * Add all the shippable members as they are to the target list being built,
@@ -198,7 +199,7 @@ pgxc_build_shippable_tlist(List *tlist, List *unshippabl_quals, bool has_aggs)
 	 * expressions (from targetlist and unshippable quals and add them to
 	 * remote targetlist.
 	 */
-	int flags =  (has_aggs ? PVC_INCLUDE_AGGREGATES : 0);
+	flags = (has_aggs ? PVC_INCLUDE_AGGREGATES : 0);
 
 	aggs_n_vars = pull_var_clause((Node *)unshippable_expr,flags | PVC_RECURSE_PLACEHOLDERS);
 	
@@ -1555,6 +1556,10 @@ create_remotegrouping_plan(PlannerInfo *root, Plan *local_plan)
 	/* for now only Agg/Group plans */
 	if (local_plan && IsA(local_plan, Agg))
 	{
+		/* PGXC-15 NO groupingsets (order problem) */
+		if(((Agg *)local_plan)->groupingSets)
+			return local_plan;
+
 		numGroupCols = ((Agg *)local_plan)->numCols;
 		grpColIdx = ((Agg *)local_plan)->grpColIdx;
 	}
@@ -1706,7 +1711,7 @@ create_remotegrouping_plan(PlannerInfo *root, Plan *local_plan)
 	 * RemoteQuery, hence those need to be recomputed
 	 * If we couldn't locate a particular GROUP BY
 	 */
-	if (!pgxc_locate_grouping_columns(root, base_tlist, grpColIdx))
+	if (!pgxc_locate_grouping_columns(root, base_tlist, grpColIdx, (Agg*) local_plan))
 		return local_plan;
 	/*
 	 * We have adjusted the targetlist of the RemoteQuery underneath to suit the
@@ -1770,7 +1775,7 @@ create_remotegrouping_plan(PlannerInfo *root, Plan *local_plan)
  */
 static bool
 pgxc_locate_grouping_columns(PlannerInfo *root, List *tlist,
-								AttrNumber *groupColIdx)
+								AttrNumber *groupColIdx, Agg* local_plan)
 {
 	int			keyno = 0;
 	ListCell   *gl;
@@ -1782,7 +1787,7 @@ pgxc_locate_grouping_columns(PlannerInfo *root, List *tlist,
 		SortGroupClause *grpcl = (SortGroupClause *) lfirst(gl);
 		TargetEntry *te = get_sortgroupclause_tle(grpcl, tlist);
 		if (!te)
-			return false;
+			return false;	
 		groupColIdx[keyno++] = te->resno;
 	}
 	return true;

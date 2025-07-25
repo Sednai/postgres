@@ -756,6 +756,12 @@ set_rel_consider_parallel(PlannerInfo *root, RelOptInfo *rel,
 		case RTE_RESULT:
 			/* RESULT RTEs, in themselves, are no problem. */
 			break;
+
+#ifdef PGXC
+		case RTE_REMOTE_DUMMY:
+			return;
+#endif
+
 	}
 
 	/*

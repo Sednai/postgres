@@ -179,7 +179,6 @@ extern void ReceiveCopyBinaryHeader(CopyFromState cstate);
 
 #ifdef PGXC
 static void append_defvals(Datum *values, CopyFromState cstate);
-static RemoteCopyOptions *GetRemoteCopyOptions(CopyFromState cstate);
 #endif
 
 #endif							/* COPYFROM_INTERNAL_H */

@@ -93,7 +93,7 @@ optionListToArray(List *options)
             char *p = strchr(def->defname, ':');
             if (p)
             {
-                *p++;
+                p++;
 				sprintf(VARDATA(t), "%s=%s", p, value);
             }
 			else
@@ -137,7 +137,7 @@ transformGenericOptions(Oid catalogId,
 						Oid fdwvalidator)
 {
 #ifdef PGXC
-	Datum	   *validateOptions;   /* list in a format for validating */
+	Datum	   validateOptions;   /* list in a format for validating */
     List	   *resultOptions = untransformRelOptionsForNode(oldOptions, false, false);
 #else
 	List	   *resultOptions = untransformRelOptions(oldOptions);

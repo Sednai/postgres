@@ -1401,8 +1401,8 @@ dependencies_clauselist_selectivity(PlannerInfo *root,
 	if (!has_stats_of_kind(rel->statlist, STATS_EXT_DEPENDENCIES))
 		return 1.0;
 
-	list_attnums = (Bitmapset **) palloc(sizeof(Bitmapset *) *
-										 list_length(clauses));
+	list_attnums = (AttrNumber *) palloc(sizeof(AttrNumber) *
+		list_length(clauses));
 
 	/*
 	 * We allocate space as if every clause was a unique expression, although

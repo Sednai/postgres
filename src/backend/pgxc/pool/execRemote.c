@@ -1614,6 +1614,7 @@ pgxc_node_remote_prepare(char *prepareGID)
 
 	for (i = 0; i < write_conn_count; i++)
 	{
+		int err;
 		/*
 		 * PGXCTODO - We should actually make sure that the connection state is
 		 * IDLE when we reach here. The executor should have guaranteed that
@@ -1630,7 +1631,7 @@ pgxc_node_remote_prepare(char *prepareGID)
 		 * Now we are ready to PREPARE the transaction. Any error at this point
 		 * can be safely ereport-ed and the transaction will be aborted.
 		 */
-		int err = pgxc_node_send_query(connections[i], prepare_cmd);
+		err = pgxc_node_send_query(connections[i], prepare_cmd);
 		if (err)
 		{
 
@@ -4225,7 +4226,6 @@ ExecProcNodeDMLInXC(EState *estate,
 	                TupleTableSlot *sourceDataSlot,
 	                TupleTableSlot *newDataSlot)
 {
-	ResultRelInfo **resultRelInfo = estate->es_result_relations;
 	RemoteQueryState *resultRemoteRel = (RemoteQueryState *) estate->es_result_remoterel;
 	ExprContext	*econtext = resultRemoteRel->ss.ps.ps_ExprContext;
 	TupleTableSlot	*returningResultSlot = NULL;	/* RETURNING clause result */
@@ -5221,20 +5221,25 @@ pgxc_rq_fire_bstriggers(RemoteQueryState *node)
 	/* If it's not an internally generated query, fire BS triggers */
 	if (!rq->rq_params_internal && estate->es_result_relations)
 	{
+		ListCell* l;
 		Assert(rq->remote_query);
-		switch (rq->remote_query->commandType)
+		foreach(l, estate->es_opened_result_relations)
 		{
-			case CMD_INSERT:
-				ExecBSInsertTriggers(estate, estate->es_result_relations);
-				break;
-			case CMD_UPDATE:
-				ExecBSUpdateTriggers(estate, estate->es_result_relations);
-				break;
-			case CMD_DELETE:
-				ExecBSDeleteTriggers(estate, estate->es_result_relations);
-				break;
-			default:
-				break;
+			ResultRelInfo* rInfo = lfirst(l);
+			switch (rq->remote_query->commandType)
+			{
+				case CMD_INSERT:
+					ExecBSInsertTriggers(estate, rInfo);
+					break;
+				case CMD_UPDATE:
+					ExecBSUpdateTriggers(estate, rInfo);
+					break;
+				case CMD_DELETE:
+					ExecBSDeleteTriggers(estate, rInfo);
+					break;
+				default:
+					break;
+			}
 		}
 	}
 }
@@ -5253,20 +5258,25 @@ pgxc_rq_fire_astriggers(RemoteQueryState *node)
 	/* If it's not an internally generated query, fire AS triggers */
 	if (!rq->rq_params_internal && estate->es_result_relations)
 	{
+		ListCell* l;
 		Assert(rq->remote_query);
-		switch (rq->remote_query->commandType)
+		foreach(l, estate->es_opened_result_relations)
 		{
-			case CMD_INSERT:
-				ExecASInsertTriggers(estate, estate->es_result_relations,node->mt_transition_capture);
-				break;
-			case CMD_UPDATE:
-				ExecASUpdateTriggers(estate, estate->es_result_relations,node->mt_transition_capture);
-				break;
-			case CMD_DELETE:
-				ExecASDeleteTriggers(estate, estate->es_result_relations,node->mt_transition_capture);
-				break;
-			default:
-				break;
+			ResultRelInfo* rInfo = lfirst(l);
+			switch (rq->remote_query->commandType)
+			{
+				case CMD_INSERT:
+					ExecASInsertTriggers(estate, rInfo, node->mt_transition_capture);
+					break;
+				case CMD_UPDATE:
+					ExecASUpdateTriggers(estate, rInfo, node->mt_transition_capture);
+					break;
+				case CMD_DELETE:
+					ExecASDeleteTriggers(estate, rInfo, node->mt_transition_capture);
+					break;
+				default:
+					break;
+			}
 		}
 	}
 }

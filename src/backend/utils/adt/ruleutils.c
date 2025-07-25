@@ -405,9 +405,6 @@ static char *get_rtable_name(int rtindex, deparse_context *context);
 static void set_deparse_plan(deparse_namespace *dpns, Plan *plan);
 static Plan *find_recursive_union(deparse_namespace *dpns,
 								  WorkTableScan *wtscan);
-#ifdef PGXC
-static void pgxc_set_deparse_plan(deparse_namespace *dpns, Plan *plan);
-#endif
 static void push_child_plan(deparse_namespace *dpns, Plan *plan,
 							deparse_namespace *save_dpns);
 static void pop_child_plan(deparse_namespace *dpns,

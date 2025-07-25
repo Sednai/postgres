@@ -133,7 +133,6 @@ static BitmapHeapScan *create_bitmap_scan_plan(PlannerInfo *root,
 static Plan *create_bitmap_subplan(PlannerInfo *root, Path *bitmapqual,
 								   List **qual, List **indexqual, List **indexECs);
 static void bitmap_subplan_mark_shared(Plan *plan);
-static List *flatten_partitioned_rels(List *partitioned_rels);
 static TidScan *create_tidscan_plan(PlannerInfo *root, TidPath *best_path,
 									List *tlist, List *scan_clauses);
 static TidRangeScan *create_tidrangescan_plan(PlannerInfo *root,
@@ -2202,7 +2201,7 @@ create_sort_plan(PlannerInfo *root, SortPath *best_path, int flags)
 
 #ifdef PGXC
 	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-		plan = (Plan *) create_remotesort_plan(root, plan);
+		plan = (Sort *) create_remotesort_plan(root, (Plan*) plan);
 #endif /* PGXC */
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
@@ -2278,7 +2277,7 @@ create_group_plan(PlannerInfo *root, GroupPath *best_path)
 		* clauses and aggregates to the Datanode, thus saving bandwidth.
 		*/
 	if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-		plan = create_remotegrouping_plan(root, plan);
+		plan = (Group*) create_remotegrouping_plan(root, (Plan*) plan);
 #endif /* PGXC */
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
@@ -2355,9 +2354,8 @@ create_agg_plan(PlannerInfo *root, AggPath *best_path)
 
 #ifdef PGXC
 if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-				plan = create_remotegrouping_plan(root, plan);
+	plan = (Agg*) create_remotegrouping_plan(root, (Plan*) plan);
 #endif /* PGXC */
-
 
 	copy_generic_path_info(&plan->plan, (Path *) best_path);
 
@@ -2561,7 +2559,7 @@ create_groupingsets_plan(PlannerInfo *root, GroupingSetsPath *best_path)
 
 #ifdef PGXC
 if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
-				plan = create_remotegrouping_plan(root, plan);
+	plan = (Agg*) create_remotegrouping_plan(root, (Plan*) plan);
 #endif /* PGXC */
 
 	return (Plan *) plan;
@@ -5517,27 +5515,6 @@ bitmap_subplan_mark_shared(Plan *plan)
 		elog(ERROR, "unrecognized node type: %d", nodeTag(plan));
 }
 
-/*
- * flatten_partitioned_rels
- *		Convert List of Lists into a single List with all elements from the
- *		sub-lists.
- */
-static List *
-flatten_partitioned_rels(List *partitioned_rels)
-{
-	List	   *newlist = NIL;
-	ListCell   *lc;
-
-	foreach(lc, partitioned_rels)
-	{
-		List	   *sublist = lfirst(lc);
-
-		newlist = list_concat(newlist, list_copy(sublist));
-	}
-
-	return newlist;
-}
-
 /*****************************************************************************
  *
  *	PLAN NODE BUILDING ROUTINES
@@ -7371,7 +7348,20 @@ pgxc_build_relation_tlist(PlannerInfo *root, Path *path)
 void
 pgxc_copy_path_costsize(Plan *dest, Path *src)
 {
-	copy_plan_costsize(dest, src);
+	if (src)
+	{
+		dest->startup_cost = src->startup_cost;
+		dest->total_cost = src->total_cost;
+		dest->plan_rows = src->rows;
+		dest->plan_width = src->parent->reltarget->width;
+	}
+	else
+	{
+		dest->startup_cost = 0;
+		dest->total_cost = 0;
+		dest->plan_rows = 0;
+		dest->plan_width = 0;
+	}
 }
 
 Plan *

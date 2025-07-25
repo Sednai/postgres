@@ -2129,13 +2129,14 @@ retry:
 				break; 		/* ok, no data */
 			else if (poll_result < 0)
 			{
+				int errn;
 				if (errno == EAGAIN || errno == EINTR)
             	{
 				    errno = 0;
 				    goto retry;
-			     }
+			    }
 
-				int errn = errno;
+				errn = errno;
 				elog(WARNING, "Error in checking connection, errno = %d", errn);
 			}
 			else

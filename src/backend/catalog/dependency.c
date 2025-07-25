@@ -1663,6 +1663,10 @@ doDeletion(const ObjectAddress *object, int flags)
 		 * OCLASS_PGXC_NODE, OCLASS_PGXC_GROUP intentionally not
 		 * handled here
 		 */
+		case OCLASS_PGXC_NODE:
+			break;
+		case OCLASS_PGXC_GROUP:
+			break;
 #endif
 
 		case OCLASS_EXTENSION:

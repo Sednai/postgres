@@ -132,12 +132,11 @@ static void ExplainIndexScanDetails(Oid indexid, ScanDirection indexorderdir,
 static void ExplainScanTarget(Scan *plan, ExplainState *es);
 static void ExplainModifyTarget(ModifyTable *plan, ExplainState *es);
 static void ExplainTargetRel(Plan *plan, Index rti, ExplainState *es);
-#ifdef PGXC
-#else
-static void show_modifytable_info(ModifyTableState *mtstate, ExplainState *es);
-#endif
+
+#ifndef PGXC
 static void show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 								  ExplainState *es);
+#endif
 static void ExplainMemberNodes(PlanState **planstates, int nplans,
 							   List *ancestors, ExplainState *es);
 static void ExplainMissingMembers(int nplans, int nchildren, ExplainState *es);
@@ -186,6 +185,9 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 	ListCell   *lc;
 	bool		timing_set = false;
 	bool		summary_set = false;
+#ifdef PGXC
+	Query *pquery = castNode(Query, copyObject(stmt->query));
+#endif
 
 	/* Parse options list. */
 	foreach(lc, stmt->options)
@@ -278,7 +280,6 @@ ExplainQuery(ParseState *pstate, ExplainStmt *stmt,
 	 * plancache.c.
 	 */
 #ifdef PGXC
-Query *pquery = castNode(Query, copyObject(stmt->query));
 if (pquery->commandType == CMD_UTILITY &&
 		IsA(pquery->utilityStmt, CreateTableAsStmt) &&
 		((CreateTableAsStmt *)pquery->utilityStmt)->objtype != OBJECT_MATVIEW)
@@ -3946,6 +3947,7 @@ ExplainTargetRel(Plan *plan, Index rti, ExplainState *es)
 	}
 }
 
+#ifndef PGXC
 /*
  * Show extra information for a ModifyTable node
  *
@@ -4158,45 +4160,7 @@ show_modifytable_info(ModifyTableState *mtstate, List *ancestors,
 	if (labeltargets)
 		ExplainCloseGroup("Target Tables", "Target Tables", false, es);
 }
-
-/*
- * Show extra information for a ModifyTable node
- */
-#ifdef PGXC
-#else
-static void
-show_modifytable_info(ModifyTableState *mtstate, ExplainState *es)
-{
-	FdwRoutine *fdwroutine = mtstate->resultRelInfo->ri_FdwRoutine;
-
-	/*
-	 * If the first target relation is a foreign table, call its FDW to
-	 * display whatever additional fields it wants to.	For now, we ignore the
-	 * possibility of other targets being foreign tables, although the API for
-	 * ExplainForeignModify is designed to allow them to be processed.
-	 */
-	if (fdwroutine != NULL &&
-		fdwroutine->ExplainForeignModify != NULL)
-	{
-		ModifyTable *node = (ModifyTable *) mtstate->ps.plan;
-		List	   *fdw_private = (List *) linitial(node->fdwPrivLists);
-
-		fdwroutine->ExplainForeignModify(mtstate,
-										 mtstate->resultRelInfo,
-										 fdw_private,
-										 0,
-										 es);
-	}
-}
 #endif
-
-
-
-/*
- 
-
-
-
 
 /*
  * Explain the constituent plans of an Append, MergeAppend,

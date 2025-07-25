@@ -2031,9 +2031,10 @@ CopyReadBinaryAttribute(CopyFromState cstate, FmgrInfo *flinfo,
 				 errmsg("unexpected EOF in COPY data")));
 
 #ifdef PGXC
-	int32 		nSize;
 	if (IS_PGXC_COORDINATOR)
 	{
+		int32 		nSize;
+
 		/* Add field size to the data row, unless it is invalid. */
 		if (fld_size >= -1) /* -1 is valid; it means NULL value */
 		{

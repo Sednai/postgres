@@ -2455,6 +2455,7 @@ main(int argc, char **argv)
 						pgxcCommand = strdup("--datanode");
 					else if (strcmp(optarg, "restoremode") == 0)
 						pgxcCommand = strdup("--restoremode");
+					break;
 #endif
 				case 's':
 					silent_mode = true;

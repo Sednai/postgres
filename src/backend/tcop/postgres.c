@@ -4301,13 +4301,11 @@ PostgresSingleUserMain(int argc, char *argv[],
 {
 	const char *dbname = NULL;
 
-	Assert(!IsUnderPostmaster);
-
 #ifdef PGXC /* PGXC_DATANODE */
 	/* Snapshot info */
 	int 			xmin;
 	int 			xmax;
-	int			xcnt;
+	int				xcnt;
 	int 			*xip;
 	/* Timestamp info */
 	TimestampTz		timestamp;
@@ -4315,6 +4313,8 @@ PostgresSingleUserMain(int argc, char *argv[],
 
 	remoteConnType = REMOTE_CONN_APP;
 #endif
+
+	Assert(!IsUnderPostmaster);
 
 	/* Initialize startup process environment. */
 	InitStandaloneProcess(argv[0]);

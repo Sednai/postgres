@@ -4093,6 +4093,14 @@ getObjectDescription(const ObjectAddress *object, bool missing_ok)
 			appendStringInfo(&buffer, "pgxc_class %u",
 							 object->objectId);
 			break;
+		case OCLASS_PGXC_NODE:
+			appendStringInfo(&buffer, "pgxc_node %u",
+							 object->objectId);
+			break;
+		case OCLASS_PGXC_GROUP:
+			appendStringInfo(&buffer, "pgxc_group %u",
+							 object->objectId);
+			break;
 #endif
 			/*
 			 * There's intentionally no default: case here; we want the
@@ -4651,6 +4659,12 @@ getObjectTypeDescription(const ObjectAddress *object, bool missing_ok)
 #ifdef PGXC
 		case OCLASS_PGXC_CLASS:
 			appendStringInfo(&buffer, "pgxc_class");
+			break;
+		case OCLASS_PGXC_NODE:
+			appendStringInfo(&buffer, "pgxc_node");
+			break;
+		case OCLASS_PGXC_GROUP:
+			appendStringInfo(&buffer, "pgxc_group");
 			break;
 #endif
 			/*
@@ -5963,6 +5977,14 @@ getObjectIdentityParts(const ObjectAddress *object,
 #ifdef PGXC
 		case OCLASS_PGXC_CLASS:
 			appendStringInfo(&buffer, "pgxc_class %u",
+							 object->objectId);
+			break;
+		case OCLASS_PGXC_NODE:
+			appendStringInfo(&buffer, "pgxc_node %u",
+							 object->objectId);
+			break;
+		case OCLASS_PGXC_GROUP:
+			appendStringInfo(&buffer, "pgxc_group %u",
 							 object->objectId);
 			break;
 #endif		

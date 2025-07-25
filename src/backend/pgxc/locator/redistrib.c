@@ -504,7 +504,7 @@ distrib_copy_from(RedistribState *distribState, ExecNodes *exec_nodes)
 	{
 		char *data;
 		int len;
-		Form_pg_attribute *attr = &tupdesc->attrs[0];
+		Form_pg_attribute attr = tupdesc->attrs;
 		Datum	dist_col_value = (Datum) 0;
 		bool	dist_col_is_null = true;
 		Oid		dist_col_type = UNKNOWNOID;
@@ -530,7 +530,7 @@ distrib_copy_from(RedistribState *distribState, ExecNodes *exec_nodes)
 		{
 			dist_col_value = slot->tts_values[copyState->idx_dist_by_col];
 			dist_col_is_null =  slot->tts_isnull[copyState->idx_dist_by_col];
-			dist_col_type = attr[copyState->idx_dist_by_col]->atttypid;
+			dist_col_type = attr[copyState->idx_dist_by_col].atttypid;
 		}
 
 		/* Build message to be sent to Datanodes */
@@ -711,14 +711,14 @@ distrib_delete_hash(RedistribState *distribState, ExecNodes *exec_nodes)
 		int			nodepos = 0;
 		ExecNodes  *local_exec_nodes = makeNode(ExecNodes);
 		TupleDesc	tupDesc = RelationGetDescr(rel);
-		Form_pg_attribute *attr = &tupDesc->attrs;
+		Form_pg_attribute attr = tupDesc->attrs;
 		ListCell   *item2;
 
 		/* Here the query is launched to a unique node */
 		local_exec_nodes->nodeList = lappend_int(NIL, nodenum);
 
 		/* Get the hash type of relation */
-		hashtype = attr[locinfo->partAttrNum - 1]->atttypid;
+		hashtype = attr[locinfo->partAttrNum - 1].atttypid;
 
 		/* Get function hash name */
 		hashfuncname = get_compute_hash_function(hashtype, locinfo->locatorType);

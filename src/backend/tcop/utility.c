@@ -1111,11 +1111,8 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 				if (IS_PGXC_COORDINATOR) {
 					VacuumStmt *stmt = (VacuumStmt *) parsetree;
 
-					bool has_local;
-
 					ListCell   *cell;
 			
-					RemoteQueryExecType exec_type;
 					bool first = true;
 					bool is_local = false;
 
@@ -1123,6 +1120,8 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 					{
 						VacuumRelation   *vacrel = (VacuumRelation *) lfirst(cell);
 						Oid			relid = vacrel->oid;
+						Relation rel;
+						bool res;
 
 						/* Skip if object does not exist */
 						if (!OidIsValid(relid)) {
@@ -1131,12 +1130,12 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 								continue;
 						}
 
-						Relation rel = relation_open(relid, NoLock);
-						bool res = rel->rd_locator_info;
+						rel = relation_open(relid, NoLock);
+						res = rel->rd_locator_info;
 						relation_close(rel, NoLock);
 						
 						if(first) {
-							is_local = (res == NIL);
+							is_local = (!res);
 							first = false;
 						}
 						else 
@@ -1375,13 +1374,16 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 #endif
 
 		case T_ReindexStmt:
+#ifdef PGXC
+			ReindexStmt *stmt;
+#endif
 			ExecReindex(pstate, (ReindexStmt *) parsetree, isTopLevel);
 #ifdef PGXC
-			ReindexStmt *stmt = (ReindexStmt *) parsetree;
+			stmt = (ReindexStmt *) parsetree;
 
 			if (IS_PGXC_COORDINATOR)
 				ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote,
-										stmt->kind == OBJECT_DATABASE, EXEC_ON_ALL_NODES, false);
+										stmt->kind == REINDEX_OBJECT_DATABASE, EXEC_ON_ALL_NODES, false);
 #endif
 			break;
 
@@ -1392,11 +1394,12 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 
 		case T_GrantStmt:
 			{
+				GrantStmt  *stmt = (GrantStmt *) parsetree;
+
 #ifdef PGXC
 				if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
 				{
 					RemoteQueryExecType remoteExecType = EXEC_ON_ALL_NODES;
-					GrantStmt *stmt = (GrantStmt *) parsetree;
 					bool is_temp = false;
 
 					/* Launch GRANT on Coordinator if object is a sequence */
@@ -1447,9 +1450,7 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 					ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, remoteExecType, is_temp);
 				}
 #endif
-
-				GrantStmt  *stmt = (GrantStmt *) parsetree;
-
+			
 				if (EventTriggerSupportsObjectType(stmt->objtype))
 					ProcessUtilitySlow(pstate, pstmt, queryString,
 									   context, params, queryEnv,
@@ -1633,8 +1634,18 @@ standard_ProcessUtility(PlannedStmt *pstmt,
 									   context, params, queryEnv,
 									   dest, sentToRemote, qc);
 				else
-					CommentObject(stmt);
-				break;
+					CommentObject(stmt);				
+#ifdef PGXC
+					/* Comment objects depending on their object and temporary types */
+					if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
+					{
+						bool is_temp = false;
+						CommentStmt *stmt = (CommentStmt *) parsetree;
+						RemoteQueryExecType exec_type = GetNodesForCommentUtility(stmt, &is_temp);
+						ExecUtilityStmtOnNodes(queryString, NULL, sentToRemote, false, exec_type, is_temp);
+					}
+#endif						
+					break;
 			}
 
 		case T_SecLabelStmt:
@@ -1752,17 +1763,16 @@ ProcessUtilitySlow(ParseState *pstate,
 				{
 					List	   *stmts;
 					RangeVar   *table_rv = NULL;
-
-					/* Run parse analysis ... */
-					stmts = transformCreateStmt((CreateStmt *) parsetree,
-												queryString);
-
-
 #ifdef PGXC
 					ListCell   *l;
 					bool		is_temp = false;
 					bool		is_local = false;
+#endif
+					/* Run parse analysis ... */
+					stmts = transformCreateStmt((CreateStmt *) parsetree,
+												queryString);
 
+#ifdef PGXC
 					if (IS_PGXC_COORDINATOR && !IsConnFromCoord())
 					{
 						/*
@@ -5357,7 +5367,7 @@ DropStmtPreTreatment(DropStmt *stmt, const char *queryString, bool sentToRemote,
 		case OBJECT_RULE:
 		case OBJECT_TRIGGER:
 			{
-				List *objname = linitial(stmt->objects);
+				Node *objname = linitial(stmt->objects);
 				Relation    relation = NULL;
 
 				get_object_address(stmt->removeType,

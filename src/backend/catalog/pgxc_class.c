@@ -44,6 +44,7 @@ PgxcClassCreate(Oid pcrelid,
 	Datum		values[Natts_pgxc_class];
 	int		i;
 	oidvector	*nodes_array;
+	CatalogIndexState indstate;
 
 	/* Build array of Oids to be inserted */
 	nodes_array = buildoidvector(nodes, numnodes);
@@ -82,8 +83,6 @@ PgxcClassCreate(Oid pcrelid,
 
 	(void) simple_heap_insert(pgxcclassrel, htup);
 
-	CatalogIndexState indstate;
-
 	indstate = CatalogOpenIndexes(pgxcclassrel);
 	CatalogIndexInsert(indstate, htup);
 	CatalogCloseIndexes(indstate);
@@ -112,6 +111,7 @@ PgxcClassAlter(Oid pcrelid,
 	Datum		new_record[Natts_pgxc_class];
 	bool		new_record_nulls[Natts_pgxc_class];
 	bool		new_record_repl[Natts_pgxc_class];
+	CatalogIndexState indstate;
 
 	Assert(OidIsValid(pcrelid));
 
@@ -182,8 +182,6 @@ PgxcClassAlter(Oid pcrelid,
 							   new_record,
 							   new_record_nulls, new_record_repl);
 	simple_heap_update(rel, &oldtup->t_self, newtup);
-
-	CatalogIndexState indstate;
 
 	indstate = CatalogOpenIndexes(rel);
 	CatalogIndexInsert(indstate, newtup);

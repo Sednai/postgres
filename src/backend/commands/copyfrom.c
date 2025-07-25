@@ -56,6 +56,7 @@
 #include "optimizer/pgxcship.h"
 #include "catalog/pgxc_node.h"
 #include "optimizer/pgxcplan.h"
+#include "pgxc/execRemote.h"
 #endif
 
 /*
@@ -114,6 +115,10 @@ static const char BinarySignature[11] = "PGCOPY\n\377\r\n\0";
 static char *limit_printout_length(const char *str);
 
 static void ClosePipeFromProgram(CopyFromState cstate);
+
+#ifdef PGXC
+static RemoteCopyOptions *GetRemoteCopyOptions(CopyFromState cstate);
+#endif
 
 /*
  * error context callback for COPY FROM

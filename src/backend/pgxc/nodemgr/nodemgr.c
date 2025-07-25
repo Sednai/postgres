@@ -326,7 +326,7 @@ PgxcNodeListAndCount(void)
 	 * 3) Complete primary/preferred node information
 	 */
 	rel = table_open(PgxcNodeRelationId, AccessShareLock);
-	scan = heap_beginscan(rel, SnapshotSelf, 0, NULL, NULL, NULL);
+	scan = heap_beginscan(rel, SnapshotSelf, 0, NULL, NULL, SO_TYPE_SEQSCAN | SO_ALLOW_STRAT | SO_ALLOW_SYNC | SO_ALLOW_PAGEMODE);
 	while ((tuple = heap_getnext(scan, ForwardScanDirection)) != NULL)
 	{
 		Form_pgxc_node  nodeForm = (Form_pgxc_node) GETSTRUCT(tuple);
@@ -620,6 +620,7 @@ PgxcNodeAlter(AlterNodeStmt *stmt)
 	bool		new_record_nulls[Natts_pgxc_node];
 	bool		new_record_repl[Natts_pgxc_node];
 	uint32		node_id;
+	CatalogIndexState indstate;
 
 	/* Only a DB administrator can alter cluster nodes */
 	if (!superuser())
@@ -722,8 +723,6 @@ PgxcNodeAlter(AlterNodeStmt *stmt)
 	simple_heap_update(rel, &oldtup->t_self, newtup);
 
 	/* Update indexes */
-	CatalogIndexState indstate;
-
 	indstate = CatalogOpenIndexes(rel);
 	CatalogIndexInsert(indstate, newtup);
 	CatalogCloseIndexes(indstate);
