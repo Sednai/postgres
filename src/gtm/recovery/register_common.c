@@ -177,7 +177,7 @@ pgxcnode_gethash(char *nodename)
 	int			value;
 	uint32			hash = 0;
 
-	if (nodename == NULL || nodename == '\0')
+	if (nodename == NULL || *nodename == '\0')
 	{
 		return 0;
 	}

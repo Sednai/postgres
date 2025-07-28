@@ -1,18 +1,12 @@
 /*-------------------------------------------------------------------------
  *
  * pqsignal.h
- *	  prototypes for the reliable BSD-style signal(2) routine.
+ *	  Backend signal(2) support (see also src/port/pqsignal.c)
  *
- *
- * Portions Copyright (c) 1996-2009, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2022, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
- * Portions Copyright (c) 2010-2012 Postgres-XC Development Group
  *
- * $PostgreSQL: pgsql/src/include/libpq/pqsignal.h,v 1.32 2008/01/01 19:45:58 momjian Exp $
- *
- * NOTES
- *	  This shouldn't be in libpq, but the monitor and some other
- *	  things need it...
+ * src/include/libpq/pqsignal.h
  *
  *-------------------------------------------------------------------------
  */
@@ -21,32 +15,28 @@
 
 #include <signal.h>
 
-#ifdef HAVE_SIGPROCMASK
-extern sigset_t UnBlockSig,
-			BlockSig,
-			AuthBlockSig;
-
+#ifndef WIN32
 #define PG_SETMASK(mask)	sigprocmask(SIG_SETMASK, mask, NULL)
 #else
-extern int	UnBlockSig,
-			BlockSig,
-			AuthBlockSig;
+/* Emulate POSIX sigset_t APIs on Windows */
+typedef int sigset_t;
 
-#ifndef WIN32
-#define PG_SETMASK(mask)	sigsetmask(*((int*)(mask)))
-#else
-#define PG_SETMASK(mask)		pqsigsetmask(*((int*)(mask)))
-int			pqsigsetmask(int mask);
-#endif
-#endif
+extern int	pqsigsetmask(int mask);
 
-#if 0
-/ * This type has already been defined at port.h./
-typedef void (*pqsigfunc) (int); 
-#endif
+#define PG_SETMASK(mask)		pqsigsetmask(*(mask))
+#define sigemptyset(set)		(*(set) = 0)
+#define sigfillset(set)			(*(set) = ~0)
+#define sigaddset(set, signum)	(*(set) |= (sigmask(signum)))
+#define sigdelset(set, signum)	(*(set) &= ~(sigmask(signum)))
+#endif							/* WIN32 */
+
+extern PGDLLIMPORT sigset_t UnBlockSig;
+extern PGDLLIMPORT sigset_t BlockSig;
+extern PGDLLIMPORT sigset_t StartupBlockSig;
 
 extern void pqinitmask(void);
 
-extern pqsigfunc pqsignal(int signo, pqsigfunc func);
+/* pqsigfunc is declared in src/include/port.h */
+extern pqsigfunc pqsignal_pm(int signo, pqsigfunc func);
 
-#endif   /* PQSIGNAL_H */
+#endif							/* PQSIGNAL_H */

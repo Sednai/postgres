@@ -177,8 +177,4 @@ typedef struct CopyFromStateData
 extern void ReceiveCopyBegin(CopyFromState cstate);
 extern void ReceiveCopyBinaryHeader(CopyFromState cstate);
 
-#ifdef PGXC
-static void append_defvals(Datum *values, CopyFromState cstate);
-#endif
-
 #endif							/* COPYFROM_INTERNAL_H */

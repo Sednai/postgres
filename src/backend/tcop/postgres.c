@@ -4301,19 +4301,6 @@ PostgresSingleUserMain(int argc, char *argv[],
 {
 	const char *dbname = NULL;
 
-#ifdef PGXC /* PGXC_DATANODE */
-	/* Snapshot info */
-	int 			xmin;
-	int 			xmax;
-	int				xcnt;
-	int 			*xip;
-	/* Timestamp info */
-	TimestampTz		timestamp;
-	PoolHandle		*pool_handle;
-
-	remoteConnType = REMOTE_CONN_APP;
-#endif
-
 	Assert(!IsUnderPostmaster);
 
 	/* Initialize startup process environment. */
@@ -4432,7 +4419,7 @@ PostgresMain(const char *dbname, const char *username)
 	/* Snapshot info */
 	int 			xmin;
 	int 			xmax;
-	int			xcnt;
+	int				xcnt;
 	int 			*xip;
 	/* Timestamp info */
 	TimestampTz		timestamp;

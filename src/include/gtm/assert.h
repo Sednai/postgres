@@ -73,6 +73,20 @@ extern bool assert_enabled;
 			 (pgxcExceptionalCondition(CppAsString(condition), (errorType), \
 								   __FILE__, __LINE__))))
 
+/* PGXC-15 */
+#ifdef Assert
+#undef Assert
+#endif
+#ifdef AssertMacro
+#undef AssertMacro
+#endif
+#ifdef AssertArg
+#undef AssertArg
+#endif
+#ifdef AssertState
+#undef AssertState
+#endif
+
 #ifndef USE_ASSERT_CHECKING
 #define Assert(condition)
 #define AssertMacro(condition)	((void)true)

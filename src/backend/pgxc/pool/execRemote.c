@@ -2613,7 +2613,8 @@ ExecInitRemoteQuery(RemoteQuery *node, EState *estate, int eflags)
 	 * If there are parameters supplied, get them into a form to be sent to the
 	 * Datanodes with bind message. We should not have had done this before.
 	 */
-	SetDataRowForExtParams(estate->es_param_list_info, remotestate);
+	if(estate->es_param_list_info)
+		SetDataRowForExtParams(estate->es_param_list_info, remotestate);
 
 	/*
 	 * Initialize result tuple type and projection info.
@@ -3607,11 +3608,8 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 	int i;
 	int real_num_params = 0;
 	RemoteQuery *node = (RemoteQuery*) rq_state->ss.ps.plan;
-
-	/* If there are no parameters, there is no data to BIND. */
-	if (!paraminfo)
-		return;
-
+	ParamExternData paras[paraminfo->numParams];
+	
 	/*
 	 * If this query has been generated internally as a part of two-step DML
 	 * statement, it uses only the internal parameters for input values taken
@@ -3630,8 +3628,7 @@ SetDataRowForExtParams(ParamListInfo paraminfo, RemoteQueryState *rq_state)
 	 * It is necessary to fetch parameters
 	 * before looking at the output value.
 	 */
-	ParamExternData paras[paraminfo->numParams];
-
+	
 	for (i = 0; i < paraminfo->numParams; i++)
 	{
 		if (paraminfo->paramFetch != NULL)

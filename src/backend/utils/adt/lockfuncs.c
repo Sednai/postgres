@@ -714,8 +714,6 @@ pg_isolation_test_session_is_blocked(PG_FUNCTION_ARGS)
 
 #ifdef PGXC
 
-#define MAXINT8LEN 25
-
 /*
  * pgxc_advisory_lock - Core function that implements the algorithm needed to
  * propogate the advisory lock function calls to all Coordinators.

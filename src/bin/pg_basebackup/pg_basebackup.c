@@ -40,6 +40,12 @@
 #include "receivelog.h"
 #include "streamutil.h"
 
+#ifdef PGXC
+#ifdef FRONTEND
+#undef ERRCODE_DATA_CORRUPTED
+#endif
+#endif
+
 #define ERRCODE_DATA_CORRUPTED	"XX001"
 
 typedef struct TablespaceListCell

@@ -29,6 +29,12 @@
 #include "receivelog.h"
 #include "streamutil.h"
 
+#ifdef PGXC
+#ifdef FRONTEND
+#undef ERRCODE_DUPLICATE_OBJECT
+#endif
+#endif
+
 #define ERRCODE_DUPLICATE_OBJECT  "42710"
 
 uint32		WalSegSz;

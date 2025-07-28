@@ -173,6 +173,7 @@ static void CopySendData(CopyFromState cstate, const void *databuf, int datasize
 static void CopyAttributeOutText(CopyFromState cstate, const char *string);
 static void CopyAttributeOutCSV(CopyFromState cstate, const char *string,
 								bool use_quote, bool single_attr);
+static void append_defvals(Datum *values, CopyFromState cstate);
 #endif
 
 

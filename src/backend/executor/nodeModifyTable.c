@@ -3756,9 +3756,7 @@ ExecModifyTable(PlanState *pstate)
 #ifdef PGXC
 	PlanState  *remoterelstate;
 	PlanState  *saved_resultRemoteRel;
-	RemoteQuery		*step = NULL;
 #endif
-	JunkFilter *junkfilter;
 	TupleTableSlot *slot;
 	TupleTableSlot *oldSlot;
 	ItemPointerData tuple_ctid;
@@ -3806,8 +3804,6 @@ ExecModifyTable(PlanState *pstate)
 #ifdef PGXC
 	/* Initialize remote plan state */
 	remoterelstate = node->mt_remoterels[node->mt_lastResultIndex];
-	if (!IS_PGXC_DATANODE && remoterelstate != NULL)
-		step = (RemoteQuery *)((RemoteQueryState *)remoterelstate)->ss.ps.plan;
 #endif
 
 #ifdef PGXC
@@ -4463,6 +4459,9 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 		resultRelInfo++;
 	}
 
+#ifdef PGXC
+	estate->es_result_remoterel = saved_remoteRelInfo;
+#endif
 	/*
 	 * Initialize RETURNING projections if needed.
 	 */

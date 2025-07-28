@@ -242,6 +242,7 @@ static void
 GTM_RemoveTransInfoMulti(GTM_TransactionInfo *gtm_txninfo[], int txn_count)
 {
 	int ii;
+	GlobalTransactionId xid;
 
 	/*
 	 * Remove the transaction structure from the global list of open
@@ -256,7 +257,7 @@ GTM_RemoveTransInfoMulti(GTM_TransactionInfo *gtm_txninfo[], int txn_count)
 
 		GTMTransactions.gt_open_transactions = gtm_list_delete(GTMTransactions.gt_open_transactions, gtm_txninfo[ii]);
 
-		GlobalTransactionId xid = XidFromFullTransactionId(gtm_txninfo[ii]->gti_gxid);
+		xid = XidFromFullTransactionId(gtm_txninfo[ii]->gti_gxid);
 		if (GlobalTransactionIdIsNormal(xid) &&
 			GlobalTransactionIdFollowsOrEquals(xid,
 											   GTMTransactions.gt_latestCompletedXid))
@@ -309,11 +310,12 @@ GTM_RemoveAllTransInfos(int backend_id)
 			(gtm_txninfo->gti_thread_id == thread_id) &&
 			((gtm_txninfo->gti_backend_id == backend_id) || (backend_id == -1)))
 		{
+			GlobalTransactionId xid;
+			
 			/* remove the entry */
 			GTMTransactions.gt_open_transactions = gtm_list_delete_cell(GTMTransactions.gt_open_transactions, cell, prev);
 
 			/* update the latestCompletedXid */
-			GlobalTransactionId xid;
 			xid = XidFromFullTransactionId(gtm_txninfo->gti_gxid);
 			if (GlobalTransactionIdIsNormal(xid) &&
 				GlobalTransactionIdFollowsOrEquals(xid,

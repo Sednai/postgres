@@ -16,6 +16,7 @@
 #ifdef PGXC
 #include "pgxc/pgxc.h"
 #endif
+
 /*
  *	'pgrminclude ignore' needed here because CppAsString2() does not throw
  *	an error if the symbol is not defined.

@@ -1412,7 +1412,6 @@ create_remotedml_plan(PlannerInfo *root, ModifyTable* mt, CmdType cmdtyp)
 		RelationLocInfo	*rel_loc_info;
 		RemoteQuery		*fstep;
 		RangeTblEntry	*dummy_rte;			/* RTE for the remote query node */
-		Plan			*sourceDataPlan;	/* plan producing source data */
 		char			*relname;
 
 		relcount++;
