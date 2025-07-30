@@ -1043,6 +1043,181 @@ rewriteTargetListIU(List *targetList,
 	return list_concat(new_tlist, junk_tlist);
 }
 
+#ifdef PGXC
+static void
+pgxc_rewriteTargetListUD(Query *parsetree, RangeTblEntry *target_rte,
+						 Relation target_relation)
+{
+	Var		   *var;
+	TargetEntry *tle;
+	List *new_tlist = parsetree->targetList;
+	int attno = list_length(parsetree->targetList);
+	List *var_list = NIL;
+	ListCell *elt;
+	bool can_use_pk_for_rep_change = false;
+	int16 *indexed_col_numbers = NULL;
+	int index_col_count = 0;
+
+	/*
+	 * In Postgres-XC, we need to evaluate quals of the parse tree and determine
+	 * if they are Coordinator quals. If they are, their attribute need to be
+	 * added to target list for evaluation. In case some are found, add them as
+	 * junks in the target list. The junk status will be used by remote UPDATE
+	 * planning to associate correct element to a clause.
+	 * For DELETE, having such columns in target list helps to evaluate Quals
+	 * correctly on Coordinator.
+	 * PGXCTODO: This list could be reduced to keep only in target list the
+	 * vars using Coordinator Quals.
+	 */
+	if (IS_PGXC_COORDINATOR && parsetree->jointree)
+		var_list = pull_qual_vars((Node *) parsetree->jointree, parsetree->resultRelation);
+
+	foreach(elt, var_list)
+	{
+		Form_pg_attribute att_tup;
+		int numattrs = RelationGetNumberOfAttributes(target_relation);
+
+		var = (Var *) lfirst(elt);
+		/* Bypass in case of extra target items like ctid */
+		if (var->varattno < 1 || var->varattno > numattrs)
+			continue;
+
+
+		att_tup = &target_relation->rd_att->attrs[var->varattno - 1];
+		attno += 1;
+		tle = makeTargetEntry((Expr *) var,
+							  attno,
+							  pstrdup(NameStr(att_tup->attname)),
+							  true);
+
+		new_tlist = lappend(new_tlist, tle);
+	}
+
+	if (IS_PGXC_COORDINATOR && RelationGetLocInfo(target_relation) != NULL
+		&& target_relation->rd_rel->relkind == RELKIND_RELATION)
+	{
+		can_use_pk_for_rep_change = IsRelationReplicated(RelationGetLocInfo(
+															target_relation));
+		if (can_use_pk_for_rep_change)
+		{
+			index_col_count = pgxc_find_unique_index(target_relation->rd_id,
+													&indexed_col_numbers);
+			if (index_col_count <= 0)
+				can_use_pk_for_rep_change = false;
+
+			if (can_use_pk_for_rep_change)
+			{
+				if (is_pk_being_changed(parsetree, indexed_col_numbers,
+										index_col_count))
+				{
+					can_use_pk_for_rep_change = false;
+				}
+			}
+		}
+
+		if (can_use_pk_for_rep_change)
+		{
+			int i;
+
+			for (i = 0; i < index_col_count; i++)
+			{
+				int			pkattno = indexed_col_numbers[i];
+				bool		found = false;
+				TargetEntry	*qtle;
+				char		*pkattname = get_attname(target_rte->relid, pkattno, false);
+
+				/*
+				 * Is it so that the primary key is already in the target list?
+				 */
+				foreach(elt, parsetree->targetList)
+				{
+					qtle = lfirst(elt);
+
+					if (qtle->resname == NULL)
+						continue;
+
+					if (!strcmp(qtle->resname, pkattname))
+					{
+						found = true;
+						break;
+					}
+				}
+
+				/*
+				 * Add all the primary key columns to the target list of the
+				 * query if one is not already there.
+				 */
+				if (!found)
+				{
+					TargetEntry		*tle;
+					Var				*var;
+					Oid				var_type;
+					int32			var_typmod;
+					Oid				var_collid;
+
+					get_rte_attribute_type(target_rte, pkattno, &var_type,
+							&var_typmod, &var_collid);
+
+					var = makeVar(parsetree->resultRelation, pkattno, var_type,
+									var_typmod, var_collid, 0);
+
+					attno += 1;
+					tle = makeTargetEntry((Expr *) var,
+										attno,
+										pkattname, true);
+
+					new_tlist = lappend(new_tlist, tle);
+				}
+			}
+		}
+	}
+	if (indexed_col_numbers != NULL)
+		pfree(indexed_col_numbers);
+
+	/* Add further attributes required for Coordinator */
+
+	if (IS_PGXC_COORDINATOR && RelationGetLocInfo(target_relation) != NULL
+		&& target_relation->rd_rel->relkind == RELKIND_RELATION)
+	{
+		/*
+		 * If relation is non-replicated, we need also to identify the Datanode
+		 * from where tuple is fetched.
+		 */
+		if (!IsRelationReplicated(RelationGetLocInfo(target_relation)))
+		{
+			var = makeVar(parsetree->resultRelation,
+						  XC_NodeIdAttributeNumber,
+						  INT4OID,
+						  -1,
+						  InvalidOid,
+						  0);
+			attno += 1;
+			tle = makeTargetEntry((Expr *) var,
+								  attno,
+								  pstrdup("xc_node_id"),
+								  true);
+
+			new_tlist = lappend(new_tlist, tle);
+		}
+
+		/* For non-shippable triggers, we need OLD row. */
+		if (pgxc_trig_oldrow_reqd(target_relation,
+								  parsetree->commandType))
+		{
+			var = makeWholeRowVar(target_rte,
+								  parsetree->resultRelation,
+								  0,
+								  false);
+			attno += 1;
+			tle = makeTargetEntry((Expr *) var,
+				  attno,
+				  pstrdup("wholerow"),
+				  true);
+			new_tlist = lappend(new_tlist, tle);
+		}
+	}
+}
+#endif
 
 /*
  * Convert a matched TLE from the original tlist into a correct new TLE.
@@ -3969,6 +4144,11 @@ RewriteQuery(Query *parsetree, List *rewrite_events, int orig_rt_length)
 									parsetree->override,
 									rt_entry_relation,
 									NULL, 0, NULL);
+
+#ifdef PGXC
+				pgxc_rewriteTargetListUD(parsetree, rt_entry ,rt_entry_relation);
+#endif
+						
 		}
 		else if (event == CMD_MERGE)
 		{
@@ -4009,6 +4189,9 @@ RewriteQuery(Query *parsetree, List *rewrite_events, int orig_rt_length)
 		else if (event == CMD_DELETE)
 		{
 			/* Nothing to do here */
+#ifdef PGXC
+			pgxc_rewriteTargetListUD(parsetree, rt_entry ,rt_entry_relation);
+#endif
 		}
 		else
 			elog(ERROR, "unrecognized commandType: %d", (int) event);

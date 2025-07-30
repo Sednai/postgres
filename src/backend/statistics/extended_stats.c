@@ -317,6 +317,8 @@ ComputeExtStatisticsRows(Relation onerel,
 			result = stattarget;
 	}
 
+	table_close(pg_stext, RowExclusiveLock);
+
 	MemoryContextSwitchTo(oldcxt);
 	MemoryContextDelete(cxt);
 

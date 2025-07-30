@@ -2342,7 +2342,7 @@ GetSnapshotData(Snapshot snapshot)
 	 */
 	
 	/* PG15-XC deactivated */
-	//cleanSnapshot(snapshot);
+	cleanSnapshot(snapshot);
 
 #endif
 	/*
@@ -4959,6 +4959,7 @@ cleanSnapshot(Snapshot snapshot)
 	snapshot->xcnt = 0;
 	snapshot->subxcnt = 0;
 	snapshot->xmin = snapshot->xmax = InvalidTransactionId;
+	snapshot->snapXactCompletionCount = 0;
 }
 #endif /* PGXC */
 

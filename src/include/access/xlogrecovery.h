@@ -28,6 +28,10 @@ typedef enum
 	RECOVERY_TARGET_NAME,
 	RECOVERY_TARGET_LSN,
 	RECOVERY_TARGET_IMMEDIATE
+#ifdef PGXC
+	,
+	RECOVERY_TARGET_BARRIER
+#endif
 } RecoveryTargetType;
 
 /*
@@ -70,6 +74,9 @@ extern PGDLLIMPORT bool wal_receiver_create_temp_slot;
 extern PGDLLIMPORT RecoveryTargetTimeLineGoal recoveryTargetTimeLineGoal;
 extern PGDLLIMPORT TimeLineID recoveryTargetTLIRequested;
 extern PGDLLIMPORT TimeLineID recoveryTargetTLI;
+#ifdef PGXC
+extern PGDLLIMPORT const char *recoveryTargetBarrierId;
+#endif
 
 /* Have we already reached a consistent database state? */
 extern PGDLLIMPORT bool reachedConsistency;

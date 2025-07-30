@@ -116,7 +116,6 @@ static bool pgxc_should_exec_triggers(Relation rel, int16 tgtype_event,
 static bool pgxc_is_trigger_firable(Relation rel, Trigger *trigger,
 									bool exec_all_triggers);
 static bool pgxc_is_internal_trig_firable(Relation rel, Trigger *trigger);
-static HeapTuple pgxc_get_trigger_tuple(HeapTupleHeader tuphead);
 static void pgxc_check_distcol_update(HeapTuple tup1, HeapTuple tup2,
 						  TupleDesc tupdesc, RelationLocInfo *rel_locinfo);
 #endif
@@ -7967,40 +7966,6 @@ pgxc_is_internal_trig_firable(Relation rel, Trigger *trigger)
 	 * tables
 	 */
 	return !RelationGetLocInfo(rel);
-}
-
-/*
- * Memo, K.Suzuki, Sep.2nd, 2013
- *
- * This function is called from ExecARDeleteTriggers(), ExecBRUpdateTriggers(),
- * and ExecARUpdateTriggers(), as replacement of GetTupleForTrigger() where
- * the lock mode for the tuple is specified, which this function does not
- * take care of.
- *
- * Should we take care of it?
- */
-/*
- * Convenience function to form a heaptuple out of a heaptuple header.
- * PGXCTO: Though this is a convenience function now, it would possibly serve the
- * purpose of GetTupleForTrigger() when we fix the GetTupleForTrigger() related
- * issue. If we don't end up in doing anything trigger specific, we will rename
- * and move this function to somewhere else.
- */
-static HeapTuple
-pgxc_get_trigger_tuple(HeapTupleHeader tuphead)
-{
-	HeapTupleData tuple;
-
-	if (!tuphead)
-		return NULL;
-
-	tuple.t_data = tuphead;
-	tuple.t_len = (tuphead ? HeapTupleHeaderGetDatumLength(tuphead) : 0);
-	ItemPointerSetInvalid(&tuple.t_self);
-	tuple.t_tableOid = InvalidOid;
-	tuple.t_xc_node_id = 0;
-
-	return heap_copytuple(&tuple);
 }
 
 /*

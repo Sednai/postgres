@@ -263,7 +263,10 @@ static bool check_recovery_target_lsn(char **newval, void **extra, GucSource sou
 static void assign_recovery_target_lsn(const char *newval, void *extra);
 static bool check_primary_slot_name(char **newval, void **extra, GucSource source);
 static bool check_default_with_oids(bool *newval, void **extra, GucSource source);
-
+#ifdef PGXC
+static bool check_recovery_target_barrier(char **newval, void **extra, GucSource source);
+static void assign_recovery_target_barrier(const char *newval, void *extra);
+#endif
 /* Private functions in guc-file.l that need to be called from guc.c */
 static ConfigVariable *ProcessConfigFileInternal(GucContext context,
 												 bool applySettings, int elevel);
@@ -757,7 +760,9 @@ static char *recovery_target_xid_string;
 static char *recovery_target_name_string;
 static char *recovery_target_lsn_string;
 static char *restrict_nonsystem_relation_kind_string;
-
+#ifdef PGXC
+static char *recovery_target_barrier_string;
+#endif
 
 /* should be static, but commands/variable.c needs to get at this */
 char	   *role_string;
@@ -4264,6 +4269,17 @@ static struct config_string ConfigureNamesString[] =
 		"",
 		check_recovery_target_xid, assign_recovery_target_xid, NULL
 	},
+#ifdef PGXC
+	{
+		{"recovery_target_barrier", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
+			gettext_noop("Sets the barrier ID up to which recovery will proceed."),
+			NULL
+		},
+		&recovery_target_barrier_string,
+		"",
+		check_recovery_target_barrier, assign_recovery_target_barrier, NULL
+	},
+#endif
 	{
 		{"recovery_target_time", PGC_POSTMASTER, WAL_RECOVERY_TARGET,
 			gettext_noop("Sets the time stamp up to which recovery will proceed."),
@@ -13293,6 +13309,31 @@ assign_recovery_target_xid(const char *newval, void *extra)
 	else
 		recoveryTarget = RECOVERY_TARGET_UNSET;
 }
+
+#ifdef PGXC
+static bool
+check_recovery_target_barrier(char **newval, void **extra, GucSource source)
+{
+	return true;
+}
+
+static void
+assign_recovery_target_barrier(const char *newval, void *extra)
+{
+	if (recoveryTarget != RECOVERY_TARGET_UNSET &&
+		recoveryTarget != RECOVERY_TARGET_BARRIER)
+		error_multiple_recovery_targets();
+
+	if (newval && strcmp(newval, "") != 0)
+	{
+		recoveryTarget = RECOVERY_TARGET_BARRIER;
+		recoveryTargetBarrierId = newval;
+	}
+	else
+		recoveryTarget = RECOVERY_TARGET_UNSET;
+}
+#endif
+
 
 /*
  * The interpretation of the recovery_target_time string can depend on the

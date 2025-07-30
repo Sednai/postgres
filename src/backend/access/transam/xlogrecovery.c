@@ -60,7 +60,9 @@
 #include "utils/guc.h"
 #include "utils/ps_status.h"
 #include "utils/pg_rusage.h"
-
+#ifdef PGXC
+#include "pgxc/barrier.h"
+#endif
 /* Unsupported old recovery command file names (relative to $PGDATA) */
 #define RECOVERY_COMMAND_FILE	"recovery.conf"
 #define RECOVERY_COMMAND_DONE	"recovery.done"
@@ -88,6 +90,9 @@ TimestampTz recoveryTargetTime;
 const char *recoveryTargetName;
 XLogRecPtr	recoveryTargetLSN;
 int			recovery_min_apply_delay = 0;
+#ifdef PGXC
+const char* recoveryTargetBarrierId = NULL;
+#endif
 
 /* options formerly taken from recovery.conf for XLOG streaming */
 char	   *PrimaryConnInfo = NULL;
@@ -294,10 +299,6 @@ bool		reachedConsistency = false;
 /* Buffers dedicated to consistency checks of size BLCKSZ */
 static char *replay_image_masked = NULL;
 static char *primary_image_masked = NULL;
-
-#ifdef PGXC
-static char *recoveryTargetBarrierId;
-#endif
 
 /*
  * Shared-memory state for WAL recovery.
@@ -550,6 +551,12 @@ InitWalRecovery(ControlFileData *ControlFile, bool *wasShutdown_ptr,
 			ereport(LOG,
 					(errmsg("starting point-in-time recovery to XID %u",
 							recoveryTargetXid)));
+#ifdef PGXC
+		else if (recoveryTarget == RECOVERY_TARGET_BARRIER)
+			ereport(LOG,
+					(errmsg("starting point-in-time recovery to barrier %s",
+							recoveryTargetBarrierId)));
+#endif
 		else if (recoveryTarget == RECOVERY_TARGET_TIME)
 			ereport(LOG,
 					(errmsg("starting point-in-time recovery to %s",
@@ -2507,6 +2514,10 @@ recoveryStopsBefore(XLogReaderState *record)
 	bool		isCommit;
 	TimestampTz recordXtime = 0;
 	TransactionId recordXid;
+#ifdef PGXC
+	bool		stopsAtThisBarrier = false;
+	char		*recordBarrierId = NULL;
+#endif
 
 	/*
 	 * Ignore recovery target settings when not in archive recovery (meaning
@@ -2545,12 +2556,22 @@ recoveryStopsBefore(XLogReaderState *record)
 		return true;
 	}
 
+#ifdef PGXC
+	/* We only consider stoppping at COMMIT, ABORT or BARRIER records */
+	if (XLogRecGetRmid(record) != RM_XACT_ID &&
+		XLogRecGetRmid(record) != RM_BARRIER_ID)
+#else
 	/* Otherwise we only consider stopping before COMMIT or ABORT records. */
 	if (XLogRecGetRmid(record) != RM_XACT_ID)
+#endif
 		return false;
 
 	xact_info = XLogRecGetInfo(record) & XLOG_XACT_OPMASK;
 
+#ifdef PGXC
+	if(XLogRecGetRmid(record) == RM_XACT_ID)
+	{
+#endif
 	if (xact_info == XLOG_XACT_COMMIT)
 	{
 		isCommit = true;
@@ -2585,7 +2606,20 @@ recoveryStopsBefore(XLogReaderState *record)
 	}
 	else
 		return false;
-
+#ifdef PGXC
+	}
+	else if (XLogRecGetRmid(record) == RM_BARRIER_ID)
+	{
+		if (xact_info == XLOG_BARRIER_CREATE)
+		{
+			recordBarrierId = (char *) XLogRecGetData(record);
+			ereport(DEBUG2,
+					(errmsg("processing barrier xlog record for %s", recordBarrierId)));
+		} else
+			return false;
+	} else
+		return false;
+#endif
 	if (recoveryTarget == RECOVERY_TARGET_XID && !recoveryTargetInclusive)
 	{
 		/*
@@ -2599,7 +2633,21 @@ recoveryStopsBefore(XLogReaderState *record)
 		 */
 		stopsHere = (recordXid == recoveryTargetXid);
 	}
-
+#ifdef PGXC
+	else if (recoveryTarget == RECOVERY_TARGET_BARRIER)
+	{
+		stopsHere = false;
+		if ((XLogRecGetRmid(record) == RM_BARRIER_ID) &&
+			(xact_info == XLOG_BARRIER_CREATE))
+		{
+			ereport(DEBUG2,
+					(errmsg("checking if barrier record matches the target "
+							"barrier")));
+			if (strcmp(recoveryTargetBarrierId, recordBarrierId) == 0)
+				stopsAtThisBarrier = true;
+		}
+	}
+#endif
 	/*
 	 * Note: we must fetch recordXtime regardless of recoveryTarget setting.
 	 * We don't expect getRecordTimestamp ever to fail, since we already know
@@ -2634,6 +2682,17 @@ recoveryStopsBefore(XLogReaderState *record)
 							recoveryStopXid,
 							timestamptz_to_str(recoveryStopTime))));
 		}
+#ifdef PGXC
+		else if (stopsAtThisBarrier)
+		{
+			recoveryStopTime = recordXtime;
+			ereport(LOG,
+					(errmsg("recovery stopping at barrier %s, time %s",
+							recoveryTargetBarrierId,
+							timestamptz_to_str(recoveryStopTime))));
+			return true;
+		}
+#endif
 		else
 		{
 			ereport(LOG,
