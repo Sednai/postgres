@@ -234,7 +234,7 @@ SELECT f1 as "date",
     date_part('doy', f1) AS doy,
     date_part('julian', f1) AS julian,
     date_part('epoch', f1) AS epoch
-    FROM date_tbl;
+    FROM date_tbl ORDER BY date;
 --
 -- epoch
 --

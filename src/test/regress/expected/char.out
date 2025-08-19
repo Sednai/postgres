@@ -43,10 +43,11 @@ SELECT c.*
    WHERE c.f1 <> 'a' ORDER BY f1;
  f1 
 ----
- A
+ 
  1
  2
  3
+ A
  c
 (6 rows)
 

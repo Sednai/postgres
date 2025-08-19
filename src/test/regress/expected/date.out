@@ -25,6 +25,7 @@ INSERT INTO DATE_TBL VALUES ('2040-04-10 BC');
 SELECT f1 FROM DATE_TBL ORDER BY f1;
       f1       
 ---------------
+ 04-10-2040 BC
  04-09-1957
  06-13-1957
  02-28-1996
@@ -40,12 +41,12 @@ SELECT f1 FROM DATE_TBL ORDER BY f1;
  04-08-2038
  04-09-2039
  04-10-2040
- 04-10-2040 BC
 (16 rows)
 
 SELECT f1 FROM DATE_TBL WHERE f1 < '2000-01-01' ORDER BY f1;
       f1       
 ---------------
+ 04-10-2040 BC
  04-09-1957
  06-13-1957
  02-28-1996
@@ -55,7 +56,6 @@ SELECT f1 FROM DATE_TBL WHERE f1 < '2000-01-01' ORDER BY f1;
  02-28-1997
  03-01-1997
  03-02-1997
- 04-10-2040 BC
 (10 rows)
 
 SELECT f1 FROM DATE_TBL
@@ -848,6 +848,7 @@ RESET datestyle;
 SELECT f1 - date '2000-01-01' AS "Days From 2K" FROM DATE_TBL ORDER BY 1;
  Days From 2K 
 --------------
+     -1475115
        -15607
        -15542
         -1403
@@ -863,12 +864,12 @@ SELECT f1 - date '2000-01-01' AS "Days From 2K" FROM DATE_TBL ORDER BY 1;
         13977
         14343
         14710
-     -1475115
 (16 rows)
 
 SELECT f1 - date 'epoch' AS "Days From Epoch" FROM DATE_TBL ORDER BY 1;
  Days From Epoch 
 -----------------
+        -1464158
            -4650
            -4585
             9554
@@ -884,7 +885,6 @@ SELECT f1 - date 'epoch' AS "Days From Epoch" FROM DATE_TBL ORDER BY 1;
            24934
            25300
            25667
-        -1464158
 (16 rows)
 
 SELECT date 'yesterday' - date 'today' AS "One day";
@@ -941,9 +941,10 @@ SELECT f1 as "date",
     date_part('doy', f1) AS doy,
     date_part('julian', f1) AS julian,
     date_part('epoch', f1) AS epoch
-    FROM date_tbl;
+    FROM date_tbl ORDER BY date;
      date      | year  | month | day | quarter | decade | century | millennium | isoyear | week | dow | isodow | doy | julian  |     epoch     
 ---------------+-------+-------+-----+---------+--------+---------+------------+---------+------+-----+--------+-----+---------+---------------
+ 04-10-2040 BC | -2040 |     4 |  10 |       2 |   -204 |     -21 |         -3 |   -2040 |   15 |   1 |      1 | 100 |  976430 | -126503251200
  04-09-1957    |  1957 |     4 |   9 |       2 |    195 |      20 |          2 |    1957 |   15 |   2 |      2 |  99 | 2435938 |    -401760000
  06-13-1957    |  1957 |     6 |  13 |       2 |    195 |      20 |          2 |    1957 |   24 |   4 |      4 | 164 | 2436003 |    -396144000
  02-28-1996    |  1996 |     2 |  28 |       1 |    199 |      20 |          2 |    1996 |    9 |   3 |      3 |  59 | 2450142 |     825465600
@@ -959,7 +960,6 @@ SELECT f1 as "date",
  04-08-2038    |  2038 |     4 |   8 |       2 |    203 |      21 |          3 |    2038 |   14 |   4 |      4 |  98 | 2465522 |    2154297600
  04-09-2039    |  2039 |     4 |   9 |       2 |    203 |      21 |          3 |    2039 |   14 |   6 |      6 |  99 | 2465888 |    2185920000
  04-10-2040    |  2040 |     4 |  10 |       2 |    204 |      21 |          3 |    2040 |   15 |   2 |      2 | 101 | 2466255 |    2217628800
- 04-10-2040 BC | -2040 |     4 |  10 |       2 |   -204 |     -21 |         -3 |   -2040 |   15 |   1 |      1 | 100 |  976430 | -126503251200
 (16 rows)
 
 --

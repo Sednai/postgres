@@ -169,13 +169,13 @@ INSERT INTO textrange_test VALUES(textrange('b', 'g'));
 INSERT INTO textrange_test VALUES('empty');
 INSERT INTO textrange_test VALUES(textrange('d', 'd', '[]'));
 
-SELECT tr, isempty(tr), lower(tr), upper(tr) FROM textrange_test;
-SELECT tr, lower_inc(tr), lower_inf(tr), upper_inc(tr), upper_inf(tr) FROM textrange_test;
+SELECT tr, isempty(tr), lower(tr), upper(tr) FROM textrange_test ORDER BY tr;
+SELECT tr, lower_inc(tr), lower_inf(tr), upper_inc(tr), upper_inf(tr) FROM textrange_test ORDER BY tr;
 
-SELECT * FROM textrange_test WHERE range_contains(tr, textrange('f', 'fx'));
-SELECT * FROM textrange_test WHERE tr @> textrange('a', 'z');
-SELECT * FROM textrange_test WHERE range_contained_by(textrange('0','9'), tr);
-SELECT * FROM textrange_test WHERE 'e'::text <@ tr;
+SELECT * FROM textrange_test WHERE range_contains(tr, textrange('f', 'fx')) ORDER BY tr;
+SELECT * FROM textrange_test WHERE tr @> textrange('a', 'z') ORDER BY tr;
+SELECT * FROM textrange_test WHERE range_contained_by(textrange('0','9'), tr) ORDER BY tr;
+SELECT * FROM textrange_test WHERE 'e'::text <@ tr ORDER BY tr;
 
 select * from textrange_test where tr = 'empty';
 select * from textrange_test where tr = '("b","g")';
@@ -380,8 +380,9 @@ select count(*) from test_range_elem where i <@ int4range(10,50);
 
 -- also test spgist index on anyrange expression
 create index on test_range_elem using spgist(int4range(i,i+10));
-explain (costs off)
-select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
+-- PGXC deactivated
+-- explain (costs off)
+-- select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
 select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
 
 RESET enable_seqscan;

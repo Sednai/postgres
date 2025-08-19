@@ -73,43 +73,43 @@ ERROR:  invalid input syntax for type interval: "@ 30 eons ago"
 LINE 1: INSERT INTO INTERVAL_TBL (f1) VALUES ('@ 30 eons ago');
                                               ^
 -- test interval operators
-SELECT '' AS ten, * FROM INTERVAL_TBL order by f1;
- ten |       f1        
------+-----------------
-     | -00:00:14
-     | 00:01:00
-     | 05:00:00
-     | 1 day 02:03:04
-     | 10 days
-     | 3 mons
-     | 5 mons
-     | 5 mons 12:00:00
-     | 6 years
-     | 34 years
+SELECT * FROM INTERVAL_TBL order by f1;
+       f1        
+-----------------
+ -00:00:14
+ 00:01:00
+ 05:00:00
+ 1 day 02:03:04
+ 10 days
+ 3 mons
+ 5 mons
+ 5 mons 12:00:00
+ 6 years
+ 34 years
 (10 rows)
 
-SELECT '' AS nine, * FROM INTERVAL_TBL
+SELECT * FROM INTERVAL_TBL
    WHERE INTERVAL_TBL.f1 <> interval '@ 10 days' order by f1;
- nine |       f1        
-------+-----------------
-      | -00:00:14
-      | 00:01:00
-      | 05:00:00
-      | 1 day 02:03:04
-      | 3 mons
-      | 5 mons
-      | 5 mons 12:00:00
-      | 6 years
-      | 34 years
+       f1        
+-----------------
+ -00:00:14
+ 00:01:00
+ 05:00:00
+ 1 day 02:03:04
+ 3 mons
+ 5 mons
+ 5 mons 12:00:00
+ 6 years
+ 34 years
 (9 rows)
 
-SELECT '' AS three, * FROM INTERVAL_TBL
+SELECT * FROM INTERVAL_TBL
    WHERE INTERVAL_TBL.f1 <= interval '@ 5 hours' order by f1;
- three |    f1     
--------+-----------
-       | -00:00:14
-       | 00:01:00
-       | 05:00:00
+    f1     
+-----------
+ -00:00:14
+ 00:01:00
+ 05:00:00
 (3 rows)
 
 SELECT * FROM INTERVAL_TBL
@@ -136,7 +136,7 @@ SELECT * FROM INTERVAL_TBL
  5 mons
  5 mons 12:00:00
  6 years
- 34 yearss
+ 34 years
 (5 rows)
 
 SELECT * FROM INTERVAL_TBL
@@ -145,12 +145,12 @@ SELECT * FROM INTERVAL_TBL
 -----------------
  00:01:00
  05:00:00
- 10 days
  1 day 02:03:04
+ 10 days
  3 mons
  5 mons
  5 mons 12:00:00
- 6 years 
+ 6 years
  34 years
 (9 rows)
 
@@ -1669,19 +1669,19 @@ SELECT f1,
     EXTRACT(CENTURY FROM f1) AS CENTURY,
     EXTRACT(MILLENNIUM FROM f1) AS MILLENNIUM,
     EXTRACT(EPOCH FROM f1) AS EPOCH
-    FROM INTERVAL_TBL;
+    FROM INTERVAL_TBL ORDER BY f1;
               f1               | microsecond | millisecond |   second   | minute | hour | day | month | quarter | year | decade | century | millennium |       epoch       
 -------------------------------+-------------+-------------+------------+--------+------+-----+-------+---------+------+--------+---------+------------+-------------------
+ @ 14 secs ago                 |   -14000000 |  -14000.000 | -14.000000 |      0 |    0 |   0 |     0 |       1 |    0 |      0 |       0 |          0 |        -14.000000
  @ 1 min                       |           0 |       0.000 |   0.000000 |      1 |    0 |   0 |     0 |       1 |    0 |      0 |       0 |          0 |         60.000000
  @ 5 hours                     |           0 |       0.000 |   0.000000 |      0 |    5 |   0 |     0 |       1 |    0 |      0 |       0 |          0 |      18000.000000
- @ 10 days                     |           0 |       0.000 |   0.000000 |      0 |    0 |  10 |     0 |       1 |    0 |      0 |       0 |          0 |     864000.000000
- @ 34 years                    |           0 |       0.000 |   0.000000 |      0 |    0 |   0 |     0 |       1 |   34 |      3 |       0 |          0 | 1072958400.000000
- @ 3 mons                      |           0 |       0.000 |   0.000000 |      0 |    0 |   0 |     3 |       2 |    0 |      0 |       0 |          0 |    7776000.000000
- @ 14 secs ago                 |   -14000000 |  -14000.000 | -14.000000 |      0 |    0 |   0 |     0 |       1 |    0 |      0 |       0 |          0 |        -14.000000
  @ 1 day 2 hours 3 mins 4 secs |     4000000 |    4000.000 |   4.000000 |      3 |    2 |   1 |     0 |       1 |    0 |      0 |       0 |          0 |      93784.000000
- @ 6 years                     |           0 |       0.000 |   0.000000 |      0 |    0 |   0 |     0 |       1 |    6 |      0 |       0 |          0 |  189345600.000000
+ @ 10 days                     |           0 |       0.000 |   0.000000 |      0 |    0 |  10 |     0 |       1 |    0 |      0 |       0 |          0 |     864000.000000
+ @ 3 mons                      |           0 |       0.000 |   0.000000 |      0 |    0 |   0 |     3 |       2 |    0 |      0 |       0 |          0 |    7776000.000000
  @ 5 mons                      |           0 |       0.000 |   0.000000 |      0 |    0 |   0 |     5 |       2 |    0 |      0 |       0 |          0 |   12960000.000000
  @ 5 mons 12 hours             |           0 |       0.000 |   0.000000 |      0 |   12 |   0 |     5 |       2 |    0 |      0 |       0 |          0 |   13003200.000000
+ @ 6 years                     |           0 |       0.000 |   0.000000 |      0 |    0 |   0 |     0 |       1 |    6 |      0 |       0 |          0 |  189345600.000000
+ @ 34 years                    |           0 |       0.000 |   0.000000 |      0 |    0 |   0 |     0 |       1 |   34 |      3 |       0 |          0 | 1072958400.000000
 (10 rows)
 
 SELECT EXTRACT(FORTNIGHT FROM INTERVAL '2 days');  -- error
@@ -1743,19 +1743,19 @@ SELECT f1,
     date_part('millisecond', f1) AS millisecond,
     date_part('second', f1) AS second,
     date_part('epoch', f1) AS epoch
-    FROM INTERVAL_TBL;
+    FROM INTERVAL_TBL ORDER BY f1;
               f1               | microsecond | millisecond | second |   epoch    
 -------------------------------+-------------+-------------+--------+------------
+ @ 14 secs ago                 |   -14000000 |      -14000 |    -14 |        -14
  @ 1 min                       |           0 |           0 |      0 |         60
  @ 5 hours                     |           0 |           0 |      0 |      18000
- @ 10 days                     |           0 |           0 |      0 |     864000
- @ 34 years                    |           0 |           0 |      0 | 1072958400
- @ 3 mons                      |           0 |           0 |      0 |    7776000
- @ 14 secs ago                 |   -14000000 |      -14000 |    -14 |        -14
  @ 1 day 2 hours 3 mins 4 secs |     4000000 |        4000 |      4 |      93784
- @ 6 years                     |           0 |           0 |      0 |  189345600
+ @ 10 days                     |           0 |           0 |      0 |     864000
+ @ 3 mons                      |           0 |           0 |      0 |    7776000
  @ 5 mons                      |           0 |           0 |      0 |   12960000
  @ 5 mons 12 hours             |           0 |           0 |      0 |   13003200
+ @ 6 years                     |           0 |           0 |      0 |  189345600
+ @ 34 years                    |           0 |           0 |      0 | 1072958400
 (10 rows)
 
 -- internal overflow test case

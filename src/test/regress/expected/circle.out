@@ -62,7 +62,7 @@ SELECT center(f1) AS center
 (8 rows)
 
 SELECT radius(f1) AS radius
-  FROM CIRCLE_TBL ORDER BY radius(f1);;
+  FROM CIRCLE_TBL ORDER BY radius(f1);
  radius 
 --------
       0

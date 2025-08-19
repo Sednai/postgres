@@ -1409,15 +1409,9 @@ select count(*) from test_range_elem where i <@ int4range(10,50);
 
 -- also test spgist index on anyrange expression
 create index on test_range_elem using spgist(int4range(i,i+10));
-explain (costs off)
-select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
-                               QUERY PLAN                                
--------------------------------------------------------------------------
- Aggregate
-   ->  Index Scan using test_range_elem_int4range_idx on test_range_elem
-         Index Cond: (int4range(i, (i + 10)) <@ '[10,30)'::int4range)
-(3 rows)
-
+-- PGXC deactivated
+-- explain (costs off)
+-- select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
 select count(*) from test_range_elem where int4range(i,i+10) <@ int4range(10,30);
  count 
 -------

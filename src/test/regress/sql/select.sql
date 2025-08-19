@@ -149,11 +149,6 @@ CREATE TEMP TABLE nocols();
 INSERT INTO nocols DEFAULT VALUES;
 SELECT * FROM nocols n, LATERAL (VALUES(n.*)) v;
 
--- corner case: VALUES with no columns
-CREATE TEMP TABLE nocols();
-INSERT INTO nocols DEFAULT VALUES;
-SELECT * FROM nocols n, LATERAL (VALUES(n.*)) v;
-
 --
 -- Test ORDER BY options
 --

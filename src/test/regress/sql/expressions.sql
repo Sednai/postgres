@@ -53,7 +53,8 @@ create view numeric_view as
 
 \d+ numeric_view
 
-explain (verbose, costs off) select * from numeric_view;
+-- PGXC deactivated
+-- explain (verbose, costs off) select * from numeric_view;
 
 -- bpchar, lacking planner support for its length coercion function,
 -- could behave differently
@@ -68,8 +69,9 @@ create view bpchar_view as
 
 \d+ bpchar_view
 
-explain (verbose, costs off) select * from bpchar_view
-  where f1::bpchar = 'foo';
+-- PGXC deactivated
+-- explain (verbose, costs off) select * from bpchar_view
+--   where f1::bpchar = 'foo';
 
 rollback;
 
@@ -190,7 +192,7 @@ default for type myint using hash as
   operator    1   =  (myint, myint),
   function    1   myinthash(myint);
 
-create table inttest (a myint);
+create table inttest (a myint) distribute by replication;
 insert into inttest values(1::myint),(null);
 
 -- try an array with enough elements to cause hashing

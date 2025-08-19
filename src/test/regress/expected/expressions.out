@@ -116,13 +116,8 @@ View definition:
     numeric_tbl.f2 AS f2n
    FROM numeric_tbl;
 
-explain (verbose, costs off) select * from numeric_view;
-                                                                      QUERY PLAN                                                                       
--------------------------------------------------------------------------------------------------------------------------------------------------------
- Seq Scan on public.numeric_tbl
-   Output: numeric_tbl.f1, (numeric_tbl.f1)::numeric(16,4), (numeric_tbl.f1)::numeric, numeric_tbl.f2, (numeric_tbl.f2)::numeric(16,4), numeric_tbl.f2
-(2 rows)
-
+-- PGXC deactivated
+-- explain (verbose, costs off) select * from numeric_view;
 -- bpchar, lacking planner support for its length coercion function,
 -- could behave differently
 create table bpchar_tbl (f1 character(16) unique, f2 bpchar);
@@ -150,15 +145,9 @@ View definition:
     bpchar_tbl.f2 AS f2n
    FROM bpchar_tbl;
 
-explain (verbose, costs off) select * from bpchar_view
-  where f1::bpchar = 'foo';
-                                                                   QUERY PLAN                                                                   
-------------------------------------------------------------------------------------------------------------------------------------------------
- Index Scan using bpchar_tbl_f1_key on public.bpchar_tbl
-   Output: bpchar_tbl.f1, (bpchar_tbl.f1)::character(14), (bpchar_tbl.f1)::bpchar, bpchar_tbl.f2, (bpchar_tbl.f2)::character(14), bpchar_tbl.f2
-   Index Cond: ((bpchar_tbl.f1)::bpchar = 'foo'::bpchar)
-(3 rows)
-
+-- PGXC deactivated
+-- explain (verbose, costs off) select * from bpchar_view
+--   where f1::bpchar = 'foo';
 rollback;
 --
 -- Ordinarily, IN/NOT IN can be converted to a ScalarArrayOpExpr
@@ -352,7 +341,7 @@ create operator class myint_ops
 default for type myint using hash as
   operator    1   =  (myint, myint),
   function    1   myinthash(myint);
-create table inttest (a myint);
+create table inttest (a myint) distribute by replication;
 insert into inttest values(1::myint),(null);
 -- try an array with enough elements to cause hashing
 select * from inttest where a in (1::myint,2::myint,3::myint,4::myint,5::myint,6::myint,7::myint,8::myint,9::myint, null);

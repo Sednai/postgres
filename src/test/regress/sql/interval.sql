@@ -128,7 +128,7 @@ DROP TABLE INTERVAL_MULDIV_TBL;
 SET DATESTYLE = 'postgres';
 SET IntervalStyle to postgres_verbose;
 
-SELECT * FROM INTERVAL_TBL;
+SELECT * FROM INTERVAL_TBL order by f1;
 
 -- multiplication and division overflow test cases
 SELECT '3000000 months'::interval * 1000;
@@ -558,7 +558,7 @@ SELECT f1,
     EXTRACT(CENTURY FROM f1) AS CENTURY,
     EXTRACT(MILLENNIUM FROM f1) AS MILLENNIUM,
     EXTRACT(EPOCH FROM f1) AS EPOCH
-    FROM INTERVAL_TBL;
+    FROM INTERVAL_TBL ORDER BY f1;
 
 SELECT EXTRACT(FORTNIGHT FROM INTERVAL '2 days');  -- error
 SELECT EXTRACT(TIMEZONE FROM INTERVAL '2 days');  -- error
@@ -580,7 +580,7 @@ SELECT f1,
     date_part('millisecond', f1) AS millisecond,
     date_part('second', f1) AS second,
     date_part('epoch', f1) AS epoch
-    FROM INTERVAL_TBL;
+    FROM INTERVAL_TBL ORDER BY f1;
 
 -- internal overflow test case
 SELECT extract(epoch from interval '1000000000 days');

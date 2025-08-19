@@ -4849,11 +4849,11 @@ pgxc_node_report_error(RemoteQueryState *combiner)
 		if (combiner->errorDetail != NULL)
 			ereport(ERROR,
 					(errcode(MAKE_SQLSTATE(code[0], code[1], code[2], code[3], code[4])),
-					errmsg("%s (remote)", combiner->errorMessage), errdetail("%s", combiner->errorDetail) ));
+					errmsg("%s", combiner->errorMessage), errdetail("%s", combiner->errorDetail) ));
 		else
 			ereport(ERROR,
 					(errcode(MAKE_SQLSTATE(code[0], code[1], code[2], code[3], code[4])),
-					errmsg("%s (remote)", combiner->errorMessage)));
+					errmsg("%s", combiner->errorMessage)));
 	}
 }
 
