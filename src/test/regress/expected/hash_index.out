@@ -6,19 +6,19 @@
 CREATE TABLE hash_i4_heap (
 	seqno 		int4,
 	random 		int4
-);
+) DISTRIBUTE BY REPLICATION;
 CREATE TABLE hash_name_heap (
 	seqno 		int4,
 	random 		name
-);
+) DISTRIBUTE BY REPLICATION;
 CREATE TABLE hash_txt_heap (
 	seqno 		int4,
 	random 		text
-);
+) DISTRIBUTE BY REPLICATION;
 CREATE TABLE hash_f8_heap (
 	seqno		int4,
 	random 		float8
-);
+) DISTRIBUTE BY REPLICATION;
 \set filename :abs_srcdir '/data/hash.data'
 COPY hash_i4_heap FROM :'filename';
 COPY hash_name_heap FROM :'filename';

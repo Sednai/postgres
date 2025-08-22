@@ -259,8 +259,8 @@ SELECT f.f1, @f.f1 AS abs_f1
    FROM FLOAT8_TBL f ORDER BY f1;
           f1          |        abs_f1        
 ----------------------+----------------------
-                    0 |                    0
                -34.84 |                34.84
+                    0 |                    0
  1.2345678901234e-200 | 1.2345678901234e-200
                1004.3 |               1004.3
  1.2345678901234e+200 | 1.2345678901234e+200
@@ -285,9 +285,9 @@ SELECT f.f1, round(f.f1) AS round_f1
 ----------------------+----------------------
                -34.84 |                  -35
                     0 |                    0
- 1.2345678901234e+200 | 1.2345678901234e+200
-               1004.3 |                 1004
  1.2345678901234e-200 |                    0
+               1004.3 |                 1004
+ 1.2345678901234e+200 | 1.2345678901234e+200
 (5 rows)
 
 -- ceil / ceiling
@@ -353,8 +353,8 @@ SELECT f.f1, |/f.f1 AS sqrt_f1
    WHERE f.f1 > '0.0' ORDER BY f1;
           f1          |        sqrt_f1        
 ----------------------+-----------------------
-               1004.3 |      31.6906926399535
  1.2345678901234e-200 | 1.11111110611109e-100
+               1004.3 |      31.6906926399535
  1.2345678901234e+200 | 1.11111110611109e+100
 (3 rows)
 
@@ -563,8 +563,8 @@ SELECT f.f1, exp(ln(f.f1)) AS exp_ln_f1
    WHERE f.f1 > '0.0' ORDER BY f1;
           f1          |       exp_ln_f1       
 ----------------------+-----------------------
-               1004.3 |                1004.3
  1.2345678901234e-200 | 1.23456789012339e-200
+               1004.3 |                1004.3
  1.2345678901234e+200 | 1.23456789012338e+200
 (3 rows)
 
@@ -620,18 +620,18 @@ SELECT ln(f.f1) from FLOAT8_TBL f where f.f1 = '0.0' ;
 ERROR:  cannot take logarithm of zero
 SELECT ln(f.f1) from FLOAT8_TBL f where f.f1 < '0.0' ;
 ERROR:  cannot take logarithm of a negative number
-SELECT exp(f.f1) from FLOAT8_TBL f;
-ERROR:  value out of range: underflow
+SELECT exp(f.f1) from FLOAT8_TBL f order by f.f1 desc;
+ERROR:  value out of range: overflow
 SELECT f.f1 / '0.0' from FLOAT8_TBL f;
 ERROR:  division by zero
 SELECT * FROM FLOAT8_TBL ORDER BY f1;
-          f1           
------------------------
-               -1004.3
-                -34.84
-                     0
- -1.2345678901234e-200
- -1.2345678901234e+200
+          f1          
+----------------------
+               -34.84
+                    0
+ 1.2345678901234e-200
+               1004.3
+ 1.2345678901234e+200
 (5 rows)
 
 -- hyperbolic functions

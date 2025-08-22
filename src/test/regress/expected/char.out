@@ -29,7 +29,7 @@ INSERT INTO CHAR_TBL (f1) VALUES ('c     ');
 SELECT * FROM CHAR_TBL ORDER BY f1;
  f1 
 ----
-
+  
  1
  2
  3
@@ -43,7 +43,7 @@ SELECT c.*
    WHERE c.f1 <> 'a' ORDER BY f1;
  f1 
 ----
- 
+  
  1
  2
  3

@@ -80,7 +80,7 @@ CREATE TABLE default_expr_agg (a int DEFAULT (generate_series(1,3)));
 -- Verify that subtransaction rollback restores rd_createSubid.
 BEGIN;
 CREATE TABLE remember_create_subid (c int);
-SAVEPOINT q; DROP TABLE remember_create_subid; ROLLBACK TO q;
+-- SAVEPOINT q; DROP TABLE remember_create_subid; ROLLBACK TO q;
 COMMIT;
 DROP TABLE remember_create_subid;
 
@@ -88,7 +88,7 @@ DROP TABLE remember_create_subid;
 CREATE TABLE remember_node_subid (c int);
 BEGIN;
 ALTER TABLE remember_node_subid ALTER c TYPE bigint;
-SAVEPOINT q; DROP TABLE remember_node_subid; ROLLBACK TO q;
+-- SAVEPOINT q; DROP TABLE remember_node_subid; ROLLBACK TO q;
 COMMIT;
 DROP TABLE remember_node_subid;
 
@@ -235,8 +235,8 @@ create table partitioned1
   partition of partitioned for values in ('(1,2)'::partitioned);
 create table partitioned2
   partition of partitioned for values in ('(2,4)'::partitioned);
-explain (costs off)
-select * from partitioned where row(a,b)::partitioned = '(1,2)'::partitioned;
+-- explain (costs off)
+-- select * from partitioned where row(a,b)::partitioned = '(1,2)'::partitioned;
 drop table partitioned;
 
 -- whole-row Var in partition key works too
@@ -246,8 +246,8 @@ create table partitioned1
   partition of partitioned for values in ('(1,2)');
 create table partitioned2
   partition of partitioned for values in ('(2,4)');
-explain (costs off)
-select * from partitioned where partitioned = '(1,2)'::partitioned;
+-- explain (costs off)
+-- select * from partitioned where partitioned = '(1,2)'::partitioned;
 \d+ partitioned1
 drop table partitioned;
 

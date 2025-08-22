@@ -3,7 +3,7 @@
 --
 create table insertconflicttest(key int4, fruit text);
 -- These things should work through a view, as well
-create view insertconflictview as select * from insertconflicttest;
+create view insertconflictview as select * from insertconflicttest distribute by replication;
 --
 -- Test unique index inference with operator class specifications and
 -- named collations

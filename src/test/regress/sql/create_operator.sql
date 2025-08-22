@@ -34,7 +34,7 @@ DROP OPERATOR ###### (int4, int8);
 
 -- => is disallowed as an operator name now
 CREATE OPERATOR => (
-   leftarg = int8,		-- right unary
+   rightarg = int8,
    procedure = factorial
 );
 
@@ -79,9 +79,8 @@ GRANT USAGE ON SCHEMA schema_op1 TO PUBLIC;
 REVOKE USAGE ON SCHEMA schema_op1 FROM regress_rol_op1;
 SET ROLE regress_rol_op1;
 CREATE OPERATOR schema_op1.#*# (
-   leftarg = int8,		-- right unary
-
-   procedure = numeric_fac
+   rightarg = int8,
+   procedure = factorial
 );
 ROLLBACK;
 
@@ -124,8 +123,9 @@ ROLLBACK;
 
 -- Should fail. Invalid attribute
 CREATE OPERATOR #@%# (
-   
-   procedure = numeric_fac,
+   rightarg = int8,
+   procedure = factorial,
+   invalid_att = int8
 );
 
 -- Should fail. At least rightarg should be mandatorily specified

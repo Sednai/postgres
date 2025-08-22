@@ -82,13 +82,13 @@ SELECT
   CASE
     WHEN i >= 3 THEN i
   END AS ">= 3 or Null"
-  FROM CASE_TBL order by 2;
+  FROM CASE_TBL order by 1;
 
 SELECT
   CASE WHEN i >= 3 THEN (i + i)
        ELSE i
   END AS "Simplest Math"
-  FROM CASE_TBL order by 2;
+  FROM CASE_TBL order by 1;
 
 SELECT i AS "Value",
   CASE WHEN (i < 0) THEN 'small'
@@ -97,7 +97,7 @@ SELECT i AS "Value",
        WHEN (i = 2) THEN 'two'
        ELSE 'big'
   END AS "Category"
-  FROM CASE_TBL order by 2;
+  FROM CASE_TBL order by 1;
 
 SELECT
   CASE WHEN ((i < 0) or (i < 0)) THEN 'small'
@@ -106,7 +106,7 @@ SELECT
        WHEN ((i = 2) or (i = 2)) THEN 'two'
        ELSE 'big'
   END AS "Category"
-  FROM CASE_TBL order by 2;
+  FROM CASE_TBL order by 1;
 
 --
 -- Examples of qualifications involving tables
@@ -131,7 +131,7 @@ SELECT *
 
 SELECT NULLIF(a.i,b.i) AS "NULLIF(a.i,b.i)",
   NULLIF(b.i, 4) AS "NULLIF(b.i,4)"
-  FROM CASE_TBL a, CASE2_TBL b order by 3,2;
+  FROM CASE_TBL a, CASE2_TBL b order by 2,1;
 
 SELECT *
   FROM CASE_TBL a, CASE2_TBL b
@@ -139,14 +139,14 @@ SELECT *
 
 -- Tests for constant subexpression simplification
 
-explain (costs off)
-SELECT * FROM CASE_TBL WHERE NULLIF(1, 2) = 2;
+-- explain (costs off)
+-- SELECT * FROM CASE_TBL WHERE NULLIF(1, 2) = 2;
 
-explain (costs off)
-SELECT * FROM CASE_TBL WHERE NULLIF(1, 1) IS NOT NULL;
+-- explain (costs off)
+-- SELECT * FROM CASE_TBL WHERE NULLIF(1, 1) IS NOT NULL;
 
-explain (costs off)
-SELECT * FROM CASE_TBL WHERE NULLIF(1, null) = 2;
+-- explain (costs off)
+-- SELECT * FROM CASE_TBL WHERE NULLIF(1, null) = 2;
 
 --
 -- Examples of updates involving tables

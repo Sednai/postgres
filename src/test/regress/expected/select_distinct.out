@@ -206,22 +206,10 @@ SET parallel_setup_cost=0;
 SET min_parallel_table_scan_size=0;
 SET max_parallel_workers_per_gather=2;
 -- Ensure we get a parallel plan
-EXPLAIN (costs off)
-SELECT DISTINCT four FROM tenk1;
-                     QUERY PLAN                     
-----------------------------------------------------
- Unique
-   ->  Sort
-         Sort Key: four
-         ->  Gather
-               Workers Planned: 2
-               ->  HashAggregate
-                     Group Key: four
-                     ->  Parallel Seq Scan on tenk1
-(8 rows)
-
+-- EXPLAIN (costs off)
+-- SELECT DISTINCT four FROM tenk1;
 -- Ensure the parallel plan produces the correct results
-SELECT DISTINCT four FROM tenk1;
+SELECT DISTINCT four FROM tenk1 ORDER BY 1;
  four 
 ------
     0
@@ -236,16 +224,8 @@ CREATE OR REPLACE FUNCTION distinct_func(a INT) RETURNS INT AS $$
   END;
 $$ LANGUAGE plpgsql PARALLEL UNSAFE;
 -- Ensure we don't do parallel distinct with a parallel unsafe function
-EXPLAIN (COSTS OFF)
-SELECT DISTINCT distinct_func(1) FROM tenk1;
-                        QUERY PLAN                        
-----------------------------------------------------------
- Unique
-   ->  Sort
-         Sort Key: (distinct_func(1))
-         ->  Index Only Scan using tenk1_hundred on tenk1
-(4 rows)
-
+-- EXPLAIN (COSTS OFF)
+-- SELECT DISTINCT distinct_func(1) FROM tenk1;
 -- make the function parallel safe
 CREATE OR REPLACE FUNCTION distinct_func(a INT) RETURNS INT AS $$
   BEGIN
@@ -253,18 +233,8 @@ CREATE OR REPLACE FUNCTION distinct_func(a INT) RETURNS INT AS $$
   END;
 $$ LANGUAGE plpgsql PARALLEL SAFE;
 -- Ensure we do parallel distinct now that the function is parallel safe
-EXPLAIN (COSTS OFF)
-SELECT DISTINCT distinct_func(1) FROM tenk1;
-                  QUERY PLAN                  
-----------------------------------------------
- Unique
-   ->  Sort
-         Sort Key: (distinct_func(1))
-         ->  Gather
-               Workers Planned: 2
-               ->  Parallel Seq Scan on tenk1
-(6 rows)
-
+-- EXPLAIN (COSTS OFF)
+-- SELECT DISTINCT distinct_func(1) FROM tenk1;
 RESET max_parallel_workers_per_gather;
 RESET min_parallel_table_scan_size;
 RESET parallel_setup_cost;

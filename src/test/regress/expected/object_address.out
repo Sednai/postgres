@@ -10,9 +10,7 @@ CREATE USER regress_addr_user;
 CREATE SCHEMA addr_nsp;
 SET search_path TO 'addr_nsp';
 CREATE FOREIGN DATA WRAPPER addr_fdw;
-ERROR:  Postgres-XC does not support FOREIGN DATA WRAPPER yet
-DETAIL:  The feature is not currently supported
--- CREATE SERVER addr_fserv FOREIGN DATA WRAPPER addr_fdw;
+CREATE SERVER addr_fserv FOREIGN DATA WRAPPER addr_fdw;
 CREATE TEXT SEARCH DICTIONARY addr_ts_dict (template=simple);
 CREATE TEXT SEARCH CONFIGURATION addr_ts_conf (copy=english);
 CREATE TEXT SEARCH TEMPLATE addr_ts_temp (lexize=dsimple_lexize);

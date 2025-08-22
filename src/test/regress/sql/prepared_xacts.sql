@@ -126,7 +126,7 @@ PREPARE TRANSACTION 'regress-two';
 FETCH 1 FROM foo;
 
 -- Table doesn't exist, the creation hasn't been committed yet
-SELECT * FROM pxtest2 ORDER BY a;
+SELECT * FROM pxtest2;
 
 -- There should be two prepared transactions
 SELECT gid FROM pg_prepared_xacts;
@@ -150,7 +150,7 @@ rollback;
 -- Commit table creation
 COMMIT PREPARED 'regress-one';
 \d pxtest2
-SELECT * FROM pxtest2;
+SELECT * FROM pxtest2 ORDER BY a;
 
 -- There should be one prepared transaction
 SELECT gid FROM pg_prepared_xacts;

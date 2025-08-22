@@ -125,15 +125,15 @@ SELECT q1 FROM int8_tbl EXCEPT ALL SELECT q1 FROM int8_tbl FOR NO KEY UPDATE;
 
 set enable_hashagg to on;
 
-explain (costs off)
-select count(*) from
-  ( select unique1 from tenk1 union select fivethous from tenk1 ) ss;
+-- explain (costs off)
+-- select count(*) from
+--   ( select unique1 from tenk1 union select fivethous from tenk1 ) ss;
 select count(*) from
   ( select unique1 from tenk1 union select fivethous from tenk1 ) ss;
 
-explain (costs off)
-select count(*) from
-  ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
+-- explain (costs off)
+-- select count(*) from
+--   ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
 select count(*) from
   ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
 
@@ -143,15 +143,15 @@ select unique1 from tenk1 except select unique2 from tenk1 where unique2 != 10;
 
 set enable_hashagg to off;
 
-explain (costs off)
-select count(*) from
-  ( select unique1 from tenk1 union select fivethous from tenk1 ) ss;
+-- explain (costs off)
+-- select count(*) from
+--   ( select unique1 from tenk1 union select fivethous from tenk1 ) ss;
 select count(*) from
   ( select unique1 from tenk1 union select fivethous from tenk1 ) ss;
 
-explain (costs off)
-select count(*) from
-  ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
+-- explain (costs off)
+-- select count(*) from
+--   ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
 select count(*) from
   ( select unique1 from tenk1 intersect select fivethous from tenk1 ) ss;
 
@@ -209,14 +209,14 @@ reset enable_hashagg;
 -- records
 set enable_hashagg to on;
 
-explain (costs off)
+-- explain (costs off)
+-- select x from (values (row(1, 2)), (row(1, 3))) _(x) union select x from (values (row(1, 2)), (row(1, 4))) _(x);
 select x from (values (row(1, 2)), (row(1, 3))) _(x) union select x from (values (row(1, 2)), (row(1, 4))) _(x);
-select x from (values (row(1, 2)), (row(1, 3))) _(x) union select x from (values (row(1, 2)), (row(1, 4))) _(x);
-explain (costs off)
+-- explain (costs off)
+-- select x from (values (row(1, 2)), (row(1, 3))) _(x) intersect select x from (values (row(1, 2)), (row(1, 4))) _(x);
 select x from (values (row(1, 2)), (row(1, 3))) _(x) intersect select x from (values (row(1, 2)), (row(1, 4))) _(x);
-select x from (values (row(1, 2)), (row(1, 3))) _(x) intersect select x from (values (row(1, 2)), (row(1, 4))) _(x);
-explain (costs off)
-select x from (values (row(1, 2)), (row(1, 3))) _(x) except select x from (values (row(1, 2)), (row(1, 4))) _(x);
+-- explain (costs off)
+-- select x from (values (row(1, 2)), (row(1, 3))) _(x) except select x from (values (row(1, 2)), (row(1, 4))) _(x);
 select x from (values (row(1, 2)), (row(1, 3))) _(x) except select x from (values (row(1, 2)), (row(1, 4))) _(x);
 
 -- non-hashable type

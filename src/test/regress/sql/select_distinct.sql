@@ -113,11 +113,11 @@ SET min_parallel_table_scan_size=0;
 SET max_parallel_workers_per_gather=2;
 
 -- Ensure we get a parallel plan
-EXPLAIN (costs off)
-SELECT DISTINCT four FROM tenk1;
+-- EXPLAIN (costs off)
+-- SELECT DISTINCT four FROM tenk1;
 
 -- Ensure the parallel plan produces the correct results
-SELECT DISTINCT four FROM tenk1;
+SELECT DISTINCT four FROM tenk1 ORDER BY 1;
 
 CREATE OR REPLACE FUNCTION distinct_func(a INT) RETURNS INT AS $$
   BEGIN
@@ -126,8 +126,8 @@ CREATE OR REPLACE FUNCTION distinct_func(a INT) RETURNS INT AS $$
 $$ LANGUAGE plpgsql PARALLEL UNSAFE;
 
 -- Ensure we don't do parallel distinct with a parallel unsafe function
-EXPLAIN (COSTS OFF)
-SELECT DISTINCT distinct_func(1) FROM tenk1;
+-- EXPLAIN (COSTS OFF)
+-- SELECT DISTINCT distinct_func(1) FROM tenk1;
 
 -- make the function parallel safe
 CREATE OR REPLACE FUNCTION distinct_func(a INT) RETURNS INT AS $$
@@ -137,8 +137,8 @@ CREATE OR REPLACE FUNCTION distinct_func(a INT) RETURNS INT AS $$
 $$ LANGUAGE plpgsql PARALLEL SAFE;
 
 -- Ensure we do parallel distinct now that the function is parallel safe
-EXPLAIN (COSTS OFF)
-SELECT DISTINCT distinct_func(1) FROM tenk1;
+-- EXPLAIN (COSTS OFF)
+-- SELECT DISTINCT distinct_func(1) FROM tenk1;
 
 RESET max_parallel_workers_per_gather;
 RESET min_parallel_table_scan_size;

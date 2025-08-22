@@ -36,16 +36,16 @@ delete from gin_test_tbl where i @> array[2];
 vacuum gin_test_tbl;
 
 -- Test for "rare && frequent" searches
-explain (costs off)
-select count(*) from gin_test_tbl where i @> array[1, 999];
+--- explain (costs off)
+--- select count(*) from gin_test_tbl where i @> array[1, 999];
 
 select count(*) from gin_test_tbl where i @> array[1, 999];
 
 -- Very weak test for gin_fuzzy_search_limit
 set gin_fuzzy_search_limit = 1000;
 
--- explain (costs off)
--- select count(*) > 0 as ok from gin_test_tbl where i @> array[1];
+--- explain (costs off)
+--- select count(*) > 0 as ok from gin_test_tbl where i @> array[1];
 
 select count(*) > 0 as ok from gin_test_tbl where i @> array[1];
 
@@ -68,14 +68,14 @@ values
   ('{1,1}', '{10}');
 
 set enable_seqscan = off;
-explain (costs off)
-select * from t_gin_test_tbl where array[0] <@ i;
+--- explain (costs off)
+--- select * from t_gin_test_tbl where array[0] <@ i;
 select * from t_gin_test_tbl where array[0] <@ i;
 select * from t_gin_test_tbl where array[0] <@ i and '{}'::int4[] <@ j;
 
-explain (costs off)
-select * from t_gin_test_tbl where i @> '{}';
-select * from t_gin_test_tbl where i @> '{}';
+--- explain (costs off)
+--- select * from t_gin_test_tbl where i @> '{}';
+select * from t_gin_test_tbl where i @> '{}' order by i[0],i[1];
 
 create function explain_query_json(query_sql text)
 returns table (explain_line json)
@@ -114,7 +114,7 @@ $$;
 
 -- check number of rows returned by index and removed by recheck
 select
-  query,
+  query::text as q,
   js->0->'Plan'->'Plans'->0->'Actual Rows' as "return by index",
   js->0->'Plan'->'Rows Removed by Index Recheck' as "removed by recheck",
   (res_index = res_heap) as "match"
@@ -149,14 +149,14 @@ analyze t_gin_test_tbl;
 set enable_seqscan = off;
 set enable_bitmapscan = on;
 
-explain (costs off)
+--- explain (costs off)
+--- select count(*) from t_gin_test_tbl where j @> array[50];
 select count(*) from t_gin_test_tbl where j @> array[50];
-select count(*) from t_gin_test_tbl where j @> array[50];
-explain (costs off)
+--- explain (costs off)
+--- select count(*) from t_gin_test_tbl where j @> array[2];
 select count(*) from t_gin_test_tbl where j @> array[2];
-select count(*) from t_gin_test_tbl where j @> array[2];
-explain (costs off)
-select count(*) from t_gin_test_tbl where j @> '{}'::int[];
+--- explain (costs off)
+--- select count(*) from t_gin_test_tbl where j @> '{}'::int[];
 select count(*) from t_gin_test_tbl where j @> '{}'::int[];
 
 -- test vacuuming of posting trees

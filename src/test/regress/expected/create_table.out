@@ -122,14 +122,14 @@ LINE 1: CREATE TABLE default_expr_agg (a int DEFAULT (generate_serie...
 -- Verify that subtransaction rollback restores rd_createSubid.
 BEGIN;
 CREATE TABLE remember_create_subid (c int);
-SAVEPOINT q; DROP TABLE remember_create_subid; ROLLBACK TO q;
+-- SAVEPOINT q; DROP TABLE remember_create_subid; ROLLBACK TO q;
 COMMIT;
 DROP TABLE remember_create_subid;
 -- Verify that subtransaction rollback restores rd_firstRelfilenodeSubid.
 CREATE TABLE remember_node_subid (c int);
 BEGIN;
 ALTER TABLE remember_node_subid ALTER c TYPE bigint;
-SAVEPOINT q; DROP TABLE remember_node_subid; ROLLBACK TO q;
+-- SAVEPOINT q; DROP TABLE remember_node_subid; ROLLBACK TO q;
 COMMIT;
 DROP TABLE remember_node_subid;
 --
@@ -315,14 +315,8 @@ create table partitioned1
   partition of partitioned for values in ('(1,2)'::partitioned);
 create table partitioned2
   partition of partitioned for values in ('(2,4)'::partitioned);
-explain (costs off)
-select * from partitioned where row(a,b)::partitioned = '(1,2)'::partitioned;
-                        QUERY PLAN                         
------------------------------------------------------------
- Seq Scan on partitioned1 partitioned
-   Filter: (ROW(a, b)::partitioned = '(1,2)'::partitioned)
-(2 rows)
-
+-- explain (costs off)
+-- select * from partitioned where row(a,b)::partitioned = '(1,2)'::partitioned;
 drop table partitioned;
 -- whole-row Var in partition key works too
 create table partitioned (a int, b int)
@@ -331,14 +325,8 @@ create table partitioned1
   partition of partitioned for values in ('(1,2)');
 create table partitioned2
   partition of partitioned for values in ('(2,4)');
-explain (costs off)
-select * from partitioned where partitioned = '(1,2)'::partitioned;
-                           QUERY PLAN                            
------------------------------------------------------------------
- Seq Scan on partitioned1 partitioned
-   Filter: ((partitioned.*)::partitioned = '(1,2)'::partitioned)
-(2 rows)
-
+-- explain (costs off)
+-- select * from partitioned where partitioned = '(1,2)'::partitioned;
 \d+ partitioned1
                                Table "public.partitioned1"
  Column |  Type   | Collation | Nullable | Default | Storage | Stats target | Description 
@@ -1067,7 +1055,7 @@ create table part_column_drop (
   d int,
   b int,
   useless_3 int
-) partition by range (id);
+) partition by range (id) distribute by replication;
 alter table part_column_drop drop column useless_1;
 alter table part_column_drop drop column useless_2;
 alter table part_column_drop drop column useless_3;

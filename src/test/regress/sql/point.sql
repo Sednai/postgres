@@ -4,9 +4,6 @@
 
 -- avoid bit-exact output here because operations may not be bit-exact.
 SET extra_float_digits = 0;
--- PGXC: point type cannot use ORDER BY so table
--- is replicated for regression tests whatever the cluster configuration
-
 -- point_tbl was already created and filled in test_setup.sql.
 -- Here we just try to insert bad values.
 
@@ -21,42 +18,42 @@ INSERT INTO POINT_TBL(f1) VALUES ('(10.0,10.0');
 INSERT INTO POINT_TBL(f1) VALUES ('(10.0, 1e+500)');	-- Out of range
 
 
-SELECT * FROM POINT_TBL;
+SELECT p.* FROM POINT_TBL p ORDER BY p.f1[0];
 
 -- left of
-SELECT p.* FROM POINT_TBL p WHERE p.f1 << '(0.0, 0.0)';
+SELECT p.* FROM POINT_TBL p WHERE p.f1 << '(0.0, 0.0)' ORDER BY p.f1[0];
 
 -- right of
-SELECT p.* FROM POINT_TBL p WHERE '(0.0,0.0)' >> p.f1;
+SELECT p.* FROM POINT_TBL p WHERE '(0.0,0.0)' >> p.f1 ORDER BY p.f1[0];
 
 -- above
-SELECT p.* FROM POINT_TBL p WHERE '(0.0,0.0)' |>> p.f1;
+SELECT p.* FROM POINT_TBL p WHERE '(0.0,0.0)' |>> p.f1 ORDER BY p.f1[0];
 
 -- below
-SELECT p.* FROM POINT_TBL p WHERE p.f1 <<| '(0.0, 0.0)';
+SELECT p.* FROM POINT_TBL p WHERE p.f1 <<| '(0.0, 0.0)' ORDER BY p.f1[0];
 
 -- equal
-SELECT p.* FROM POINT_TBL p WHERE p.f1 ~= '(5.1, 34.5)';
+SELECT p.* FROM POINT_TBL p WHERE p.f1 ~= '(5.1, 34.5)' ORDER BY p.f1[0];
 
 -- point in box
 SELECT p.* FROM POINT_TBL p
-   WHERE p.f1 <@ box '(0,0,100,100)';
+   WHERE p.f1 <@ box '(0,0,100,100)' ORDER BY p.f1[0];
 
 SELECT p.* FROM POINT_TBL p
-   WHERE box '(0,0,100,100)' @> p.f1;
+   WHERE box '(0,0,100,100)' @> p.f1 ORDER BY p.f1[0];
 
 SELECT p.* FROM POINT_TBL p
-   WHERE not p.f1 <@ box '(0,0,100,100)';
+   WHERE not p.f1 <@ box '(0,0,100,100)' ORDER BY p.f1[0];
 
 SELECT p.* FROM POINT_TBL p
-   WHERE p.f1 <@ path '[(0,0),(-10,0),(-10,10)]';
+   WHERE p.f1 <@ path '[(0,0),(-10,0),(-10,10)]' ORDER BY p.f1[0];
 
 SELECT p.* FROM POINT_TBL p
-   WHERE not box '(0,0,100,100)' @> p.f1;
+   WHERE not box '(0,0,100,100)' @> p.f1 ORDER BY p.f1[0];
 
 SELECT p.f1, p.f1 <-> point '(0,0)' AS dist
    FROM POINT_TBL p
-   ORDER BY dist;
+   ORDER BY dist,p.f1[0];
 
 SELECT p1.f1 AS point1, p2.f1 AS point2, p1.f1 <-> p2.f1 AS dist
    FROM POINT_TBL p1, POINT_TBL p2
@@ -64,7 +61,7 @@ SELECT p1.f1 AS point1, p2.f1 AS point2, p1.f1 <-> p2.f1 AS dist
 
 SELECT p1.f1 AS point1, p2.f1 AS point2
    FROM POINT_TBL p1, POINT_TBL p2
-   WHERE (p1.f1 <-> p2.f1) > 3;
+   WHERE (p1.f1 <-> p2.f1) > 3 ORDER BY p1.f1[0], p2.f1[0];
 
 -- put distance result into output to allow sorting with GEQ optimizer - tgl 97/05/10
 SELECT p1.f1 AS point1, p2.f1 AS point2, (p1.f1 <-> p2.f1) AS distance
@@ -76,7 +73,7 @@ SELECT p1.f1 AS point1, p2.f1 AS point2, (p1.f1 <-> p2.f1) AS distance
 SELECT p1.f1 AS point1, p2.f1 AS point2, (p1.f1 <-> p2.f1) AS distance
    FROM POINT_TBL p1, POINT_TBL p2
    WHERE (p1.f1 <-> p2.f1) > 3 and p1.f1 << p2.f1 and p1.f1 |>> p2.f1
-   ORDER BY distance;
+   ORDER BY distance, p2.f1[0];
 
 -- Test that GiST indexes provide same behavior as sequential scan
 CREATE TEMP TABLE point_gist_tbl(f1 point);

@@ -461,7 +461,7 @@ SELECT * FROM nummultirange_test WHERE nmr < '{}';
 -----
 (0 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr < '{[-1000.0, -1000.0]}';
+SELECT * FROM nummultirange_test WHERE nmr < '{[-1000.0, -1000.0]}' ORDER BY nmr;
   nmr   
 --------
  {}
@@ -473,7 +473,7 @@ SELECT * FROM nummultirange_test WHERE nmr < '{[-1000.0, -1000.0]}';
  {}
 (7 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr < '{[0.0, 1.0]}';
+SELECT * FROM nummultirange_test WHERE nmr < '{[0.0, 1.0]}' ORDER BY nmr;
   nmr   
 --------
  {}
@@ -485,7 +485,7 @@ SELECT * FROM nummultirange_test WHERE nmr < '{[0.0, 1.0]}';
  {}
 (7 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr < '{[1000.0, 1001.0]}';
+SELECT * FROM nummultirange_test WHERE nmr < '{[1000.0, 1001.0]}' ORDER BY nmr;
           nmr          
 -----------------------
  {}
@@ -510,7 +510,7 @@ SELECT * FROM nummultirange_test WHERE nmr <= '{}';
  {}
 (4 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr <= '{[3,)}';
+SELECT * FROM nummultirange_test WHERE nmr <= '{[3,)}' ORDER BY nmr;
           nmr          
 -----------------------
  {}
@@ -526,7 +526,7 @@ SELECT * FROM nummultirange_test WHERE nmr <= '{[3,)}';
  {[1.7,1.7],[1.9,2.1)}
 (11 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr >= '{}';
+SELECT * FROM nummultirange_test WHERE nmr >= '{}' ORDER BY nmr;
           nmr          
 -----------------------
  {}
@@ -548,7 +548,7 @@ SELECT * FROM nummultirange_test WHERE nmr >= '{[3,)}';
  {[3,)}
 (1 row)
 
-SELECT * FROM nummultirange_test WHERE nmr > '{}';
+SELECT * FROM nummultirange_test WHERE nmr > '{}' ORDER BY nmr;
           nmr          
 -----------------------
  {(,)}
@@ -560,7 +560,7 @@ SELECT * FROM nummultirange_test WHERE nmr > '{}';
  {[1.7,1.7],[1.9,2.1)}
 (7 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr > '{[-1000.0, -1000.0]}';
+SELECT * FROM nummultirange_test WHERE nmr > '{[-1000.0, -1000.0]}' ORDER BY nmr;
           nmr          
 -----------------------
  {[3,)}
@@ -569,7 +569,7 @@ SELECT * FROM nummultirange_test WHERE nmr > '{[-1000.0, -1000.0]}';
  {[1.7,1.7],[1.9,2.1)}
 (4 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr > '{[0.0, 1.0]}';
+SELECT * FROM nummultirange_test WHERE nmr > '{[0.0, 1.0]}' ORDER BY nmr;
           nmr          
 -----------------------
  {[3,)}
@@ -583,7 +583,7 @@ SELECT * FROM nummultirange_test WHERE nmr > '{[1000.0, 1001.0]}';
 -----
 (0 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr <> '{}';
+SELECT * FROM nummultirange_test WHERE nmr <> '{}' ORDER BY nmr;
           nmr          
 -----------------------
  {(,)}
@@ -595,7 +595,7 @@ SELECT * FROM nummultirange_test WHERE nmr <> '{}';
  {[1.7,1.7],[1.9,2.1)}
 (7 rows)
 
-SELECT * FROM nummultirange_test WHERE nmr <> '{(,5)}';
+SELECT * FROM nummultirange_test WHERE nmr <> '{(,5)}' ORDER BY nmr;
           nmr          
 -----------------------
  {}

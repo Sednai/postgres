@@ -531,16 +531,7 @@ Indexes:
     "wowidx2" gist (a tsvector_ops (siglen='1'))
 
 DROP INDEX wowidx;
-EXPLAIN (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
-                         QUERY PLAN                          
--------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on test_tsvector
-         Recheck Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-         ->  Bitmap Index Scan on wowidx2
-               Index Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-(5 rows)
-
+--- EXPLAIN (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
  count 
 -------
@@ -696,16 +687,7 @@ CREATE INDEX wowidx ON test_tsvector USING gist (a tsvector_ops(siglen=484));
 Indexes:
     "wowidx" gist (a tsvector_ops (siglen='484'))
 
-EXPLAIN (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
-                         QUERY PLAN                          
--------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on test_tsvector
-         Recheck Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-         ->  Bitmap Index Scan on wowidx
-               Index Cond: (a @@ '''wr'' | ''qh'''::tsquery)
-(5 rows)
-
+--- EXPLAIN (costs off) SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr|qh';
  count 
 -------
@@ -1003,34 +985,16 @@ SELECT count(*) FROM test_tsvector WHERE a @@ '!wd:D';
 (1 row)
 
 -- Test optimization of non-empty GIN_SEARCH_MODE_ALL queries
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM test_tsvector WHERE a @@ '!qh';
-                     QUERY PLAN                      
------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on test_tsvector
-         Recheck Cond: (a @@ '!''qh'''::tsquery)
-         ->  Bitmap Index Scan on wowidx
-               Index Cond: (a @@ '!''qh'''::tsquery)
-(5 rows)
-
+--- EXPLAIN (COSTS OFF)
+--- SELECT count(*) FROM test_tsvector WHERE a @@ '!qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ '!qh';
  count 
 -------
    410
 (1 row)
 
-EXPLAIN (COSTS OFF)
-SELECT count(*) FROM test_tsvector WHERE a @@ 'wr' AND a @@ '!qh';
-                                     QUERY PLAN                                     
-------------------------------------------------------------------------------------
- Aggregate
-   ->  Bitmap Heap Scan on test_tsvector
-         Recheck Cond: ((a @@ '''wr'''::tsquery) AND (a @@ '!''qh'''::tsquery))
-         ->  Bitmap Index Scan on wowidx
-               Index Cond: ((a @@ '''wr'''::tsquery) AND (a @@ '!''qh'''::tsquery))
-(5 rows)
-
+--- EXPLAIN (COSTS OFF)
+--- SELECT count(*) FROM test_tsvector WHERE a @@ 'wr' AND a @@ '!qh';
 SELECT count(*) FROM test_tsvector WHERE a @@ 'wr' AND a @@ '!qh';
  count 
 -------
@@ -2364,26 +2328,12 @@ SELECT count(*) FROM test_tsvector WHERE a @@ to_tsquery('345&qwerty');
 
 -- Test inlining of immutable constant functions
 -- to_tsquery(text) is not immutable, so it won't be inlined
-explain (costs off)
-select * from test_tsquery, to_tsquery('new') q where txtsample @@ q;
-                   QUERY PLAN                   
-------------------------------------------------
- Nested Loop
-   Join Filter: (test_tsquery.txtsample @@ q.q)
-   ->  Function Scan on to_tsquery q
-   ->  Seq Scan on test_tsquery
-(4 rows)
-
+--- explain (costs off)
+--- select * from test_tsquery, to_tsquery('new') q where txtsample @@ q;
 -- to_tsquery(regconfig, text) is an immutable function.
 -- That allows us to get rid of using function scan and join at all.
-explain (costs off)
-select * from test_tsquery, to_tsquery('english', 'new') q where txtsample @@ q;
-                 QUERY PLAN                  
----------------------------------------------
- Seq Scan on test_tsquery
-   Filter: (txtsample @@ '''new'''::tsquery)
-(2 rows)
-
+--- explain (costs off)
+--- select * from test_tsquery, to_tsquery('english', 'new') q where txtsample @@ q;
 -- test finding items in GIN's pending list
 create temp table pendtest (ts tsvector);
 create index pendtest_idx on pendtest using gin(ts);

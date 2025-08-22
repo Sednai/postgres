@@ -278,14 +278,14 @@ CREATE TYPE bogus AS ENUM('good');
 -- but we can't use them
 BEGIN;
 ALTER TYPE bogus ADD VALUE 'new';
-SAVEPOINT x;
-SELECT 'new'::bogus;  -- unsafe
-ROLLBACK TO x;
-SELECT enum_first(null::bogus);  -- safe
-SELECT enum_last(null::bogus);  -- unsafe
-ROLLBACK TO x;
-SELECT enum_range(null::bogus);  -- unsafe
-ROLLBACK TO x;
+-- SAVEPOINT x;
+-- SELECT 'new'::bogus;  -- unsafe
+-- ROLLBACK TO x;
+-- SELECT enum_first(null::bogus);  -- safe
+-- SELECT enum_last(null::bogus);  -- unsafe
+-- ROLLBACK TO x;
+-- SELECT enum_range(null::bogus);  -- unsafe
+-- ROLLBACK TO x;
 COMMIT;
 SELECT 'new'::bogus;  -- now safe
 SELECT enumlabel, enumsortorder

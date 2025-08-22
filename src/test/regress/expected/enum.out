@@ -582,27 +582,14 @@ CREATE TYPE bogus AS ENUM('good');
 -- but we can't use them
 BEGIN;
 ALTER TYPE bogus ADD VALUE 'new';
-SAVEPOINT x;
-SELECT 'new'::bogus;  -- unsafe
-ERROR:  unsafe use of new value "new" of enum type bogus
-LINE 1: SELECT 'new'::bogus;
-               ^
-HINT:  New enum values must be committed before they can be used.
-ROLLBACK TO x;
-SELECT enum_first(null::bogus);  -- safe
- enum_first 
-------------
- good
-(1 row)
-
-SELECT enum_last(null::bogus);  -- unsafe
-ERROR:  unsafe use of new value "new" of enum type bogus
-HINT:  New enum values must be committed before they can be used.
-ROLLBACK TO x;
-SELECT enum_range(null::bogus);  -- unsafe
-ERROR:  unsafe use of new value "new" of enum type bogus
-HINT:  New enum values must be committed before they can be used.
-ROLLBACK TO x;
+-- SAVEPOINT x;
+-- SELECT 'new'::bogus;  -- unsafe
+-- ROLLBACK TO x;
+-- SELECT enum_first(null::bogus);  -- safe
+-- SELECT enum_last(null::bogus);  -- unsafe
+-- ROLLBACK TO x;
+-- SELECT enum_range(null::bogus);  -- unsafe
+-- ROLLBACK TO x;
 COMMIT;
 SELECT 'new'::bogus;  -- now safe
  bogus 

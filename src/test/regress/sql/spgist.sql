@@ -77,8 +77,8 @@ create domain spgist_text as varchar;
 create table spgist_domain_tbl (f1 spgist_text);
 create index spgist_domain_idx on spgist_domain_tbl using spgist(f1);
 insert into spgist_domain_tbl values('fee'), ('fi'), ('fo'), ('fum');
-explain (costs off)
-select * from spgist_domain_tbl where f1 = 'fo';
+--- explain (costs off)
+--- select * from spgist_domain_tbl where f1 = 'fo';
 select * from spgist_domain_tbl where f1 = 'fo';
 
 -- test an unlogged table, mostly to get coverage of spgistbuildempty

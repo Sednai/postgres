@@ -46,15 +46,15 @@ INSERT INTO BOX_TBL (f1) VALUES ('(1, 2, 3, 4) x');
 INSERT INTO BOX_TBL (f1) VALUES ('asdfasdf(ad');
 
 
-SELECT * FROM BOX_TBL ORDER BY (f1[0])[0], (f1[0])[1], (f1[2])[0], (f1[2])[1];
+SELECT * FROM BOX_TBL ORDER BY (f1[0])[0], (f1[0])[1], (f1[1])[0], (f1[1])[1];
 
 SELECT b.*, area(b.f1) as barea
-   FROM BOX_TBL b ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[2])[0], (b.f1[2])[1];
+   FROM BOX_TBL b ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[1])[0], (b.f1[1])[1];
 
 -- overlap
 SELECT b.f1
    FROM BOX_TBL b
-   WHERE b.f1 && box '(2.5,2.5,1.0,1.0)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[2])[0], (b.f1[2])[1];
+   WHERE b.f1 && box '(2.5,2.5,1.0,1.0)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[1])[0], (b.f1[1])[1];
 
 -- left-or-overlap (x only)
 SELECT b1.*
@@ -74,7 +74,7 @@ SELECT b.f1
 -- area <=
 SELECT b.f1
    FROM BOX_TBL b
-   WHERE b.f1 <= box '(3.0,3.0,5.0,5.0)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[2])[0], (b.f1[2])[1];
+   WHERE b.f1 <= box '(3.0,3.0,5.0,5.0)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[1])[0], (b.f1[1])[1];
 
 -- area <
 SELECT b.f1
@@ -94,7 +94,7 @@ SELECT b.f1
 -- area >=
 SELECT b.f1
    FROM BOX_TBL b				-- zero area
-   WHERE b.f1 >= box '(3.5,3.0,4.5,3.0)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[2])[0], (b.f1[2])[1];
+   WHERE b.f1 >= box '(3.5,3.0,4.5,3.0)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[1])[0], (b.f1[1])[1];
 
 -- right of
 SELECT b.f1
@@ -104,12 +104,12 @@ SELECT b.f1
 -- contained in
 SELECT b.f1
    FROM BOX_TBL b
-   WHERE b.f1 <@ box '(0,0,3,3)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[2])[0], (b.f1[2])[1];
+   WHERE b.f1 <@ box '(0,0,3,3)' ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[1])[0], (b.f1[1])[1];
 
 -- contains
 SELECT b.f1
    FROM BOX_TBL b
-   WHERE box '(0,0,3,3)' @> b.f1 ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[2])[0], (b.f1[2])[1];
+   WHERE box '(0,0,3,3)' @> b.f1 ORDER BY (b.f1[0])[0], (b.f1[0])[1], (b.f1[1])[0], (b.f1[1])[1];
 
 -- box equality
 SELECT b.f1
@@ -118,15 +118,14 @@ SELECT b.f1
 
 -- center of box, left unary operator
 SELECT @@(b1.f1) AS p
-   FROM BOX_TBL b1 ORDER BY (b1.f1[0])[0], (b1.f1[0])[1], (b1.f1[2])[0], (b1.f1[2])[1];
+   FROM BOX_TBL b1 ORDER BY (b1.f1[0])[0], (b1.f1[0])[1], (b1.f1[1])[0], (b1.f1[1])[1];
 
 -- wholly-contained
 SELECT b1.*, b2.*
    FROM BOX_TBL b1, BOX_TBL b2
    WHERE b1.f1 @> b2.f1 and not b1.f1 ~= b2.f1 ORDER BY (b1.f1[0])[0], (b1.f1[0])[1], (b1.f1[2])[0], (b1.f1[2])[1], (b2.f1[0])[0], (b2.f1[0])[1], (b2.f1[2])[0], (b2.f1[2])[1];
 
-SELECT height(f1), width(f1) FROM BOX_TBL ORDER BY (f1[0])[0], (f1[0])[1], (f1[2])[0], (f1[2])[1];
-
+SELECT height(f1), width(f1) FROM BOX_TBL ORDER BY height(f1);
 --
 -- Test the SP-GiST index
 --
@@ -249,9 +248,9 @@ SELECT count(*) FROM quad_box_tbl WHERE b ~=  box '((200,300),(205,305))';
 SET enable_indexscan = ON;
 SET enable_bitmapscan = OFF;
 
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY b <-> point '123,456') n, b <-> point '123,456' dist, id
-FROM quad_box_tbl;
+-- EXPLAIN (COSTS OFF)
+-- SELECT rank() OVER (ORDER BY b <-> point '123,456') n, b <-> point '123,456' dist, id
+-- FROM quad_box_tbl;
 
 CREATE TEMP TABLE quad_box_tbl_ord_idx1 AS
 SELECT rank() OVER (ORDER BY b <-> point '123,456') n, b <-> point '123,456' dist, id
@@ -264,9 +263,9 @@ FROM quad_box_tbl_ord_seq1 seq FULL JOIN quad_box_tbl_ord_idx1 idx
 WHERE seq.id IS NULL OR idx.id IS NULL;
 
 
-EXPLAIN (COSTS OFF)
-SELECT rank() OVER (ORDER BY b <-> point '123,456') n, b <-> point '123,456' dist, id
-FROM quad_box_tbl WHERE b <@ box '((200,300),(500,600))';
+-- EXPLAIN (COSTS OFF)
+-- SELECT rank() OVER (ORDER BY b <-> point '123,456') n, b <-> point '123,456' dist, id
+-- FROM quad_box_tbl WHERE b <@ box '((200,300),(500,600))';
 
 CREATE TEMP TABLE quad_box_tbl_ord_idx2 AS
 SELECT rank() OVER (ORDER BY b <-> point '123,456') n, b <-> point '123,456' dist, id

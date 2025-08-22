@@ -831,7 +831,7 @@ SELECT i as pow,
 	round((0.5 * 10 ^ i)::numeric, -i),
 	round((1.5 * 10 ^ i)::numeric, -i),
 	round((2.5 * 10 ^ i)::numeric, -i)
-FROM generate_series(-5,5) AS t(i);
+FROM generate_series(-5,5) AS t(i) ORDER BY pow;
 
 -- Check limits of rounding before the decimal point
 SELECT round(4.4e131071, -131071) = 4e131071;
@@ -950,25 +950,25 @@ SELECT to_char(val, '9999999999999999.999999999999999PR')
 SELECT to_char(val, '9999999999999999.999999999999999S')
 	FROM num_data ORDER BY 1;
 
-SELECT to_char(val, 'MI9999999999999999.999999999999999')     FROM num_data;
-SELECT to_char(val, 'FMS9999999999999999.999999999999999')    FROM num_data;
-SELECT to_char(val, 'FM9999999999999999.999999999999999THPR') FROM num_data;
-SELECT to_char(val, 'SG9999999999999999.999999999999999th')   FROM num_data;
-SELECT to_char(val, '0999999999999999.999999999999999')       FROM num_data;
-SELECT to_char(val, 'S0999999999999999.999999999999999')      FROM num_data;
-SELECT to_char(val, 'FM0999999999999999.999999999999999')     FROM num_data;
-SELECT to_char(val, 'FM9999999999999999.099999999999999') 	FROM num_data;
-SELECT to_char(val, 'FM9999999999990999.990999999999999') 	FROM num_data;
-SELECT to_char(val, 'FM0999999999999999.999909999999999') 	FROM num_data;
-SELECT to_char(val, 'FM9999999990999999.099999999999999') 	FROM num_data;
-SELECT to_char(val, 'L9999999999999999.099999999999999')	FROM num_data;
-SELECT to_char(val, 'FM9999999999999999.99999999999999')	FROM num_data;
-SELECT to_char(val, 'S 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9') FROM num_data;
-SELECT to_char(val, 'FMS 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9') FROM num_data;
-SELECT to_char(val, E'99999 "text" 9999 "9999" 999 "\\"text between quote marks\\"" 9999') FROM num_data;
-SELECT to_char(val, '999999SG9999999999')			FROM num_data;
-SELECT to_char(val, 'FM9999999999999999.999999999999999')	FROM num_data;
-SELECT to_char(val, '9.999EEEE')				FROM num_data;
+SELECT to_char(val, 'MI9999999999999999.999999999999999')     FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FMS9999999999999999.999999999999999')    FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM9999999999999999.999999999999999THPR') FROM num_data ORDER BY 1;
+SELECT to_char(val, 'SG9999999999999999.999999999999999th')   FROM num_data ORDER BY 1;
+SELECT to_char(val, '0999999999999999.999999999999999')       FROM num_data ORDER BY 1;
+SELECT to_char(val, 'S0999999999999999.999999999999999')      FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM0999999999999999.999999999999999')     FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM9999999999999999.099999999999999') 	FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM9999999999990999.990999999999999') 	FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM0999999999999999.999909999999999') 	FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM9999999990999999.099999999999999') 	FROM num_data ORDER BY 1;
+SELECT to_char(val, 'L9999999999999999.099999999999999')	FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM9999999999999999.99999999999999')	FROM num_data ORDER BY 1;
+SELECT to_char(val, 'S 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9') FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FMS 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 . 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9 9') FROM num_data ORDER BY 1;
+SELECT to_char(val, E'99999 "text" 9999 "9999" 999 "\\"text between quote marks\\"" 9999') FROM num_data ORDER BY 1;
+SELECT to_char(val, '999999SG9999999999')			FROM num_data ORDER BY 1;
+SELECT to_char(val, 'FM9999999999999999.999999999999999')	FROM num_data ORDER BY 1;
+SELECT to_char(val, '9.999EEEE')				FROM num_data ORDER BY 1;
 
 WITH v(val) AS
   (VALUES('0'::numeric),('-4.2'),('4.2e9'),('1.2e-5'),('inf'),('-inf'),('nan'))
