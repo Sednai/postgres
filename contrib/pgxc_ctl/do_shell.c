@@ -98,6 +98,7 @@ char
 			break;
 		case GENERAL:
 			snprintf(buf, len-1, "%s/GENERAL_%d_%d", sval(VAR_localTmpDir), getpid(), file_sn++);
+			break;
 		default:
 			return NULL;
 	}

@@ -304,7 +304,7 @@ get_prog_pid(char *host, char *progname, char *dir)
 					host, dir, strerror(errno));
 		return(-1);
 	}
-	fclose(wkf);
+	pclose(wkf);
 	/* Get the second token */
 	line = pid_s;
 	if ((line = get_word(line, &token)) == NULL)

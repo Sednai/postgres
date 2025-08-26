@@ -51,9 +51,6 @@
 #include "utils/sampling.h"
 #include "utils/selfuncs.h"
 
-/* source-code-compatibility hacks for pull_varnos() API change */
-#define make_restrictinfo(a,b,c,d,e,f,g,h,i) make_restrictinfo_new(a,b,c,d,e,f,g,h,i)
-
 PG_MODULE_MAGIC;
 
 /* Default CPU cost to start up a foreign query. */
@@ -1666,12 +1663,9 @@ postgresReScanForeignScan(ForeignScanState *node)
 
 	/*
 	 * If any internal parameters affecting this node have changed, we'd
-	 * better destroy and recreate the cursor.  Otherwise, if the remote
-	 * server is v14 or older, rewinding it should be good enough; if not,
-	 * rewind is only allowed for scrollable cursors, but we don't have a way
-	 * to check the scrollability of it, so destroy and recreate it in any
-	 * case.  If we've only fetched zero or one batch, we needn't even rewind
-	 * the cursor, just rescan what we have.
+	 * better destroy and recreate the cursor.  Otherwise, rewinding it should
+	 * be good enough.  If we've only fetched zero or one batch, we needn't
+	 * even rewind the cursor, just rescan what we have.
 	 */
 	if (node->ss.ps.chgParam != NULL)
 	{
@@ -1681,15 +1675,8 @@ postgresReScanForeignScan(ForeignScanState *node)
 	}
 	else if (fsstate->fetch_ct_2 > 1)
 	{
-		if (PQserverVersion(fsstate->conn) < 150000)
-			snprintf(sql, sizeof(sql), "MOVE BACKWARD ALL IN c%u",
-					 fsstate->cursor_number);
-		else
-		{
-			fsstate->cursor_exists = false;
-			snprintf(sql, sizeof(sql), "CLOSE c%u",
-					 fsstate->cursor_number);
-		}
+		snprintf(sql, sizeof(sql), "MOVE BACKWARD ALL IN c%u",
+				 fsstate->cursor_number);
 	}
 	else
 	{
@@ -5445,7 +5432,7 @@ postgresImportForeignSchema(ImportForeignSchemaStmt *stmt, Oid serverOid)
 				attname = PQgetvalue(res, i, 1);
 				typename = PQgetvalue(res, i, 2);
 				attnotnull = PQgetvalue(res, i, 3);
-				attgenerated = PQgetisnull(res, i, 4) ? (char *) NULL :
+				attdefault = PQgetisnull(res, i, 4) ? (char *) NULL :
 					PQgetvalue(res, i, 4);
 				attgenerated = PQgetisnull(res, i, 5) ? (char *) NULL :
 					PQgetvalue(res, i, 5);

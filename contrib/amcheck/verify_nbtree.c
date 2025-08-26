@@ -29,7 +29,6 @@
 #include "access/table.h"
 #include "access/tableam.h"
 #include "access/transam.h"
-#include "access/tuptoaster.h"
 #include "access/xact.h"
 #include "catalog/index.h"
 #include "catalog/pg_am.h"
