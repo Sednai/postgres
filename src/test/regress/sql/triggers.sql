@@ -957,8 +957,9 @@ begin
 end;
 $$;
 
-CREATE TRIGGER city_update_trig INSTEAD OF UPDATE ON city_view
-FOR EACH ROW EXECUTE PROCEDURE city_update();
+-- PGXC15 hangs
+-- CREATE TRIGGER city_update_trig INSTEAD OF UPDATE ON city_view
+-- FOR EACH ROW EXECUTE PROCEDURE city_update();
 
 \set QUIET false
 

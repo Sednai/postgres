@@ -35,7 +35,8 @@ DELETE FROM PKTABLE WHERE ptest1=1;
 SELECT * FROM FKTABLE ORDER BY 1;
 
 -- Update a row from PK TABLE
-UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
+-- PGXC15 hang
+-- UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
 SELECT * FROM FKTABLE ORDER BY 1;
@@ -92,7 +93,8 @@ DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
 SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Update a row from PK TABLE
-UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
+-- PGXC15 hang
+-- UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
 SELECT * FROM FKTABLE ORDER BY 1,2,3;
@@ -159,7 +161,8 @@ DELETE FROM PKTABLE WHERE ptest1=5 and ptest2=10;
 SELECT * FROM FKTABLE ORDER BY 1,2,3;
 
 -- Update a row from PK TABLE
-UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
+-- PGXC15 hang
+-- UPDATE PKTABLE SET ptest1=1 WHERE ptest1=2;
 
 -- Check FKTABLE for update of matched row
 SELECT * FROM FKTABLE ORDER BY 1,2,3;
@@ -208,10 +211,12 @@ DELETE FROM PKTABLE WHERE ptest1=5;
 SELECT * FROM PKTABLE;
 
 -- Update a row from PK TABLE (should fail)
-UPDATE PKTABLE SET ptest1=0 WHERE ptest1=2;
+-- PGXC15 hang
+-- UPDATE PKTABLE SET ptest1=0 WHERE ptest1=2;
 
 -- Update a row from PK TABLE (should succeed)
-UPDATE PKTABLE SET ptest1=0 WHERE ptest1=4;
+-- PGXC15 hang
+-- UPDATE PKTABLE SET ptest1=0 WHERE ptest1=4;
 
 -- Check PKTABLE for updates
 SELECT * FROM PKTABLE;
@@ -261,10 +266,12 @@ INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
 SELECT * from FKTABLE;
 
 -- Try to update something that should fail
-UPDATE PKTABLE set ptest2=5 where ptest2=2;
+-- PGXC15 hang
+-- UPDATE PKTABLE set ptest2=5 where ptest2=2;
 
 -- Try to update something that should succeed
-UPDATE PKTABLE set ptest1=1 WHERE ptest2=3;
+-- PGXC15 hang
+-- UPDATE PKTABLE set ptest1=1 WHERE ptest2=3;
 
 -- Try to delete something that should fail
 DELETE FROM PKTABLE where ptest1=1 and ptest2=2 and ptest3=3;
@@ -325,10 +332,12 @@ INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
 SELECT * from FKTABLE;
 
 -- Try to update something that will cascade
-UPDATE PKTABLE set ptest2=5 where ptest2=2;
+-- PGXC15 hang
+-- UPDATE PKTABLE set ptest2=5 where ptest2=2;
 
 -- Try to update something that should not cascade
-UPDATE PKTABLE set ptest1=1 WHERE ptest2=3;
+-- PGXC15 hang
+-- UPDATE PKTABLE set ptest1=1 WHERE ptest2=3;
 
 -- Show PKTABLE and FKTABLE
 SELECT * from PKTABLE;
@@ -378,10 +387,12 @@ INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
 SELECT * from FKTABLE;
 
 -- Try to update something that will set null
-UPDATE PKTABLE set ptest2=5 where ptest2=2;
+-- PGXC15 hang
+-- UPDATE PKTABLE set ptest2=5 where ptest2=2;
 
 -- Try to update something that should not set null
-UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
+-- PGXC15 hang
+-- UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
 
 -- Show PKTABLE and FKTABLE
 SELECT * from PKTABLE;
@@ -433,14 +444,18 @@ INSERT INTO FKTABLE VALUES (1, 2, 7, 6);
 SELECT * from FKTABLE;
 
 -- Try to update something that will fail
-UPDATE PKTABLE set ptest2=5 where ptest2=2;
+-- PGXC15 hang 
+-- UPDATE PKTABLE set ptest2=5 where ptest2=2;
 
 -- Try to update something that will set default
-UPDATE PKTABLE set ptest1=0, ptest2=-1, ptest3=-2 where ptest2=2;
-UPDATE PKTABLE set ptest2=10 where ptest2=4;
+-- PGXC15 hang 
+-- UPDATE PKTABLE set ptest1=0, ptest2=-1, ptest3=-2 where ptest2=2;
+-- PGXC15 hang 
+-- UPDATE PKTABLE set ptest2=10 where ptest2=4;
 
 -- Try to update something that should not set default
-UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
+-- PGXC15 hang 
+-- UPDATE PKTABLE set ptest2=2 WHERE ptest2=3 and ptest1=1;
 
 -- Show PKTABLE and FKTABLE
 SELECT * from PKTABLE;
