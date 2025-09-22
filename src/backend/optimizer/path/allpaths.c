@@ -895,7 +895,9 @@ set_tablesample_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 {
 	Relids		required_outer;
 	Path	   *path;
-
+#ifdef PGXC
+	if(!create_fdw_rqpath(root, rel, rte)) {
+#endif
 	/*
 	 * We don't support pushing join clauses into the quals of a samplescan,
 	 * but it could still have required parameterization due to LATERAL refs
@@ -931,6 +933,9 @@ set_tablesample_rel_pathlist(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *
 
 	add_path(rel, path);
 
+#ifdef PGXC
+	}
+#endif
 	/* For the moment, at least, there are no other paths to consider */
 }
 

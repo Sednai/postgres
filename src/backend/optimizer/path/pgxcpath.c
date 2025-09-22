@@ -128,8 +128,14 @@ extern bool
 create_fdw_rqpath(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
 {
 	return create_plainrel_rqpath(root, rel, rte, false);
-
 }
+
+extern bool
+create_ts_rqpath(PlannerInfo *root, RelOptInfo *rel, RangeTblEntry *rte)
+{
+	return create_plainrel_rqpath(root, rel, rte, false);
+}
+
 
 /*
  * create_plainrel_rqpath
